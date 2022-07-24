@@ -1,0 +1,13 @@
+[workspace]
+members = [
+    "crates/lib/raven-core",
+
+    "crates/bin/sandbox",
+]
+
+# include lib package here to bring cargo test into the whole virtual manifest
+default-members = [
+    "crates/bin/sandbox",
+
+    "crates/lib/raven-core",
+]
