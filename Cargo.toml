@@ -1,6 +1,6 @@
 [workspace]
 members = [
-    "crates/lib/raven-core",
+    "crates/lib/raven-engine",
 
     "crates/bin/sandbox",
 ]
@@ -9,5 +9,5 @@ members = [
 default-members = [
     "crates/bin/sandbox",
 
-    "crates/lib/raven-core",
+    "crates/lib/raven-engine",
 ]
