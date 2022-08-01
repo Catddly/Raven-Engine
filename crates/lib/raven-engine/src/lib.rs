@@ -3,7 +3,7 @@ use winit::{
     event_loop::{EventLoop},
     dpi::{LogicalSize},
     window::{Window, WindowBuilder},
-    event::{WindowEvent, Event, VirtualKeyCode}, 
+    event::{WindowEvent, Event, VirtualKeyCode, ElementState}, 
     platform::run_return::EventLoopExtRunReturn,
 };
 
@@ -82,7 +82,7 @@ pub fn main_loop(engine_context: &mut EngineContext) {
                         input,
                         ..
                     } => {
-                        if let Some(VirtualKeyCode::Escape) = input.virtual_keycode {
+                        if Some(VirtualKeyCode::Escape) == input.virtual_keycode && input.state == ElementState::Released {
                             control_flow.set_exit();
                             running = false;
                         }
