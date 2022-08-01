@@ -3,6 +3,8 @@ use fern::colors::{Color, ColoredLevelConfig};
 
 pub use log::LevelFilter as LevelFilter;
 
+use crate::filesystem;
+
 /// Log configuration.
 #[derive(Copy)]
 pub struct LogConfig {
@@ -17,10 +19,12 @@ impl Clone for LogConfig {
 }
 
 /// Initialize log module.
-pub fn init_log(config: LogConfig) {
+pub fn init_log(config: LogConfig) -> anyhow::Result<()> {
+    filesystem::exist_or_create(&filesystem::ProjectFolder::Log)?;
     setup_logger(config).expect("Failed to initialize log module!");
     
-    info!("log initialized!");
+    trace!("log initialized!");
+    Ok(())
 }
 
 fn setup_logger(config: LogConfig) -> anyhow::Result<()> {
@@ -72,7 +76,7 @@ fn setup_logger(config: LogConfig) -> anyhow::Result<()> {
             .create(true)
             .write(true)
             .truncate(true)
-            .open("log.log")?);
+            .open("log/log.txt")?);
 
     // final apply to all the dispatches
     fern::Dispatch::new()
