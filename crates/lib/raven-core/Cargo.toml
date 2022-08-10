@@ -3,11 +3,10 @@ name = "raven-core"
 version = "0.1.0"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
 anyhow = "1.0.0"  # error lib
 log = "0.4"       # logging lib
 fern = { version = "0.6", features = ["colored"] }      # logging lib
 chrono = "0.4"
 structopt = "0.3.0"
+num_cpus = "1.13.1" # get the number of cores of current cpu
