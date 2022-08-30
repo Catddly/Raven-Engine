@@ -17,10 +17,11 @@ use raven_core::filesystem;
 // Raven Engine exposed APIs
 pub use raven_core::filesystem::{ProjectFolder};
 
-/// Global engine context to have control on engine on user side.
-/// Facade Design Pattern to take control on different part of engine without knowing the underlying implementation.
+/// Global engine context to control engine on the user side.
+/// Facade Design Pattern to control different parts of engine without knowing the underlying implementation.
 pub struct EngineContext {
     pub main_window: Window,
+
     event_loop: EventLoop<()>,
 }
 

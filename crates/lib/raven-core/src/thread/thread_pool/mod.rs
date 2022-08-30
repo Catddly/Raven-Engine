@@ -1,107 +1,69 @@
 mod job;
+mod worker;
 
 use std::{
-    sync::atomic::AtomicBool, 
-    thread::{JoinHandle, self}, 
-    sync::{atomic::Ordering, Arc}, collections::VecDeque,
-    cell::RefCell,
+    sync::atomic::AtomicBool,  
+    sync::{atomic::Ordering, Arc},
 };
 
-use super::ThreadSafeQueue;
+use crossbeam_deque::{Injector as GlobalQueue};
 use job::Job;
+use worker::Worker;
 
-//pub type JobFunc = job::JobFunc;
 pub use job::JobHandle;
 
-thread_local! {
-    /// Thread local lazy static work queue for each worker thread in thread pool.
-    /// If this thread is not a worker thread, its LOCAL_QUEUE will be None.
-    static LOCAL_QUEUE: RefCell<Option<VecDeque<Job>>> = RefCell::new(None);
-}
-
-pub struct ThreadPool
-{
+pub struct ThreadPool {
     /// Shared by all the worker threads.
     /// Worker thread can steal jobs from this queue.
-    global_queue: Arc<ThreadSafeQueue<Job>>,
+    global_queue: Arc<GlobalQueue<Job>>,
+    /// Used to control the all the worker threads.
     stop: Arc<AtomicBool>,
-    handles: Vec<JoinHandle<()>>,
-    num_workers: usize,
+    /// All the worker threads.
+    workers: Vec<Worker>,
 }
 
-impl ThreadPool
-{
+impl ThreadPool {
     /// Create a new thread pool with four worker threads.
     pub fn new(num_workers: usize) -> Self {
         assert!(num_workers <= num_cpus::get());
 
+        let workers = Vec::with_capacity(num_workers);
+
         Self { 
-            global_queue: Arc::new(ThreadSafeQueue::new()),
+            global_queue: Arc::new(GlobalQueue::new()),
             stop: Arc::new(AtomicBool::new(false)), 
-            handles: Vec::new(),
-            num_workers,
+            workers,
         }
     }
 
     /// Spawn the worker threads.
     /// Until you call this function, no thread will be created by the thread pool.
+    /// If you call this function while the thread pool is running, you will terminate the old worker threads and spawn new workers.
     pub fn spawn_workers(&mut self) {
-        for index in 0..self.num_workers {
-            let stop = self.stop.clone();
-            let stop_err = self.stop.clone();
+        if !self.workers.is_empty() {
+            self.terminate_block();
+        }
+        self.workers.clear();
+
+        // spawn workers
+        for i in 0..self.workers.capacity() {
             let global = self.global_queue.clone();
 
             // spawn worker threads and store its handles
-            self.handles.push(thread::Builder::new()
-            .name(format!("Worker {}", index))
-            .spawn(move || {
-                // initialize thread local work queue.
-                LOCAL_QUEUE.with(|queue| {
-                    *queue.borrow_mut() = Some(VecDeque::new());
+            let worker = Worker::new(global, format!("Worker {}", i));
+            self.workers.push(worker);
+        }
 
-                    if let Some(q) = &*queue.borrow() {
-                        println!("Local work queue len: {}", q.len());
-                    }
-                });
-                
-                while !stop.load(Ordering::Relaxed) {
-                    let local_executed = LOCAL_QUEUE.with(|local| {
-                        // this thread is a worker thread
-                        if let Some(local) = &mut *local.borrow_mut() {
-                            // try pop task from local work queue
-                            if let Some(ref mut task) = local.pop_front() {
-                                println!("Execute task from local queue!");
-                                task.execute();
-                                return true;
-                            }
-                        }
-                        return false;
-                    });
+        // setup coworkers env and launch worker threads
+        for i in 0..self.workers.capacity() {
+            let stop = self.stop.clone();
 
-                    if local_executed {
-                        continue;
-                    }
+            let stealers: Vec<_> = self.workers.iter()
+                .filter(|w| *w.name() != format!("Worker {}", i))
+                .map(|w| w.stealer())
+                .collect();
 
-                    if let Some(ref mut task) = global.pop() { // try pop task from global work queue
-                        println!("Execute task from global queue!");
-                        task.execute();
-                    } else {
-                        std::thread::yield_now();
-                    }
-                }
-
-                println!("{} is terminated", std::thread::current().name().unwrap());
-
-                // drop thread local work queue.
-                LOCAL_QUEUE.with(|queue| {
-                    let q = queue.borrow_mut().take().expect("Worker thread's local work queue must exist!");
-                    drop(q);
-                });
-            })
-            .unwrap_or_else(move |err| {
-                stop_err.store(true, Ordering::Relaxed);
-                panic!("Failed to create worker threads for thread pool! with {}", err);
-            }));
+            self.workers[i].launch(stealers, stop);
         }
     }
 
@@ -110,20 +72,11 @@ impl ThreadPool
     where
         F : FnOnce() -> () + Send + 'static,
     {
-        assert!(!self.handles.is_empty(), "No worker threads in this thread pool!");
+        assert!(!self.workers.is_empty(), "No worker threads in this thread pool!");
 
         let job = Job::new(Box::new(f));
         let job_handle = job.handle();
-
-        LOCAL_QUEUE.with(|queue| {
-            if let Some(q) = &mut *queue.borrow_mut() {
-                q.push_back(job);
-                println!("add job to local queue!");
-            } else {
-                self.global_queue.push(job);
-                println!("add job to global queue!");
-            }
-        });
+        self.global_queue.push(job);
         job_handle
     }
 
@@ -131,8 +84,8 @@ impl ThreadPool
     /// This can be useful to avoid some deadlock scenarios when some tasks are waiting other tasks to finish,
     /// Or can help mitigate the burden of the thread pool.
     pub fn help_once(&mut self) {
-        // try pop task from queue
-        if let Some(ref mut task) = self.global_queue.pop() {
+        // try pop task from global queue
+        if let Some(ref mut task) = self.global_queue.steal().success() {
             task.execute();
         }
     }
@@ -140,19 +93,19 @@ impl ThreadPool
     /// Terminate all worker threads in the thread pool.
     /// This function will not interupt the thread, thread will terminate until current work is done.
     pub fn terminate(&self) {
-        self.stop.store(true, Ordering::Relaxed);
+        self.stop.store(true, Ordering::SeqCst);
     }
 
     /// Terminate all worker threads in the thread pool.
     /// This function will not interupt the thread, thread will terminate until current work is done.
     /// And this function will wait until all the worker threads are joined. (i.e. this function will block the thread who called this function until current jobs are done)
     pub fn terminate_block(&mut self) {
-        self.stop.store(true, Ordering::Relaxed);
+        self.stop.store(true, Ordering::SeqCst);
 
-        let handles = self.handles.drain(..);
+        let handles = self.workers.drain(..);
 
         for handle in handles {
-            handle.join().expect("Worker thread had been poisoned!");
+            handle.terminate();
         }
 
         // just forget about the rest of the jobs
@@ -162,27 +115,41 @@ impl ThreadPool
     /// Terminate all worker threads in the thread pool.
     /// This function will block the thread who called this function and wait all the jobs are done.
     pub fn terminate_until_finished(&mut self) {
-        // self spin to block this thread
-        // this will cause move intensive thread contension, do not this!
-        // use CondVar to indicate this thread that queue is empty.
         while !self.global_queue.is_empty() {
-            std::thread::yield_now();
+            self.help_once();
+        }
+
+        loop {
+            let mut still_working = false;
+
+            for worker in &self.workers {
+                if !worker.is_finished() {
+                    still_working |= true;
+                    break;
+                }
+            }
+
+            if !still_working {
+                break;
+            } else {
+                self.help_once();
+            }
         }
 
         self.terminate_block();
     }
 }
 
-impl Default for ThreadPool
-{
+impl Default for ThreadPool {
     fn default() -> Self {
         let num_workers = num_cpus::get() / 2;
 
+        let workers = Vec::with_capacity(num_workers);
+
         Self {
-            global_queue: Arc::new(ThreadSafeQueue::new()),
+            global_queue: Arc::new(GlobalQueue::new()),
             stop: Arc::new(AtomicBool::new(false)),
-            handles: Vec::new(),
-            num_workers,
+            workers,
         }
     }
 }

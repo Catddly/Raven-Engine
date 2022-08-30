@@ -18,6 +18,7 @@ impl Job {
         }
     }
 
+    /// Execute the task from current thread, after executing the complete flag will be marked.
     pub(super) fn execute(&mut self) {
         // function call only be executed once.
         if let Some(func) = self.func.take() {
@@ -31,7 +32,7 @@ impl Job {
     }
 }
 
-/// Job handle to check if a job is done.
+/// handle to check if a job is done.
 pub struct JobHandle {
     complete: Arc<AtomicBool>,
 }

@@ -13,3 +13,6 @@ num_cpus = "1.13.1" # get the number of cores of current cpu
 # lazy_static = "1.4.0"
 # mut_static = "5.0.0"
 # thread_local = "1.1.4"
+
+# for concurrent programming
+crossbeam-deque= "0.8.2"
