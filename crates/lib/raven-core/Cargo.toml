@@ -5,14 +5,22 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.0"  # error lib
+thiserror = "1.0.0"
 log = "0.4"       # logging lib
 fern = { version = "0.6", features = ["colored"] }      # logging lib
 chrono = "0.4"
 structopt = "0.3.0"
 num_cpus = "1.13.1" # get the number of cores of current cpu
-# lazy_static = "1.4.0"
+lazy_static = "1.4.0"
 # mut_static = "5.0.0"
 # thread_local = "1.1.4"
+
+hotwatch = "0.4.6"
+bytes = "1.2.0"
+# May write our own on-demand computing library
+turbosloth = "0.2.0"
+
+winit = "0.27.0"  # cross-platform window creation library
 
 # for concurrent programming
 crossbeam-deque= "0.8.2"

@@ -20,7 +20,7 @@ impl Clone for LogConfig {
 
 /// Initialize log module.
 pub fn init_log(config: LogConfig) -> anyhow::Result<()> {
-    filesystem::exist_or_create(&filesystem::ProjectFolder::Log)?;
+    filesystem::exist_or_create(filesystem::ProjectFolder::Log)?;
     setup_logger(config).expect("Failed to initialize log module!");
     
     trace!("log initialized!");

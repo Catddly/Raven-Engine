@@ -1,0 +1,12 @@
+[package]
+name = "raven-rg"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+raven-rhi = { path = "../../lib/raven-rhi/" }
+anyhow = "1.0.0"  # error lib
+log = "0.4"       # logging lib
+
+ash = "0.37.0"
+vk-sync = "0.1.6"

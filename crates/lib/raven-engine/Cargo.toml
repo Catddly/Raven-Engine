@@ -7,6 +7,7 @@ edition = "2021"
 
 [dependencies]
 raven-core = { path = "../../lib/raven-core/" }
+raven-rhi = { path = "../../lib/raven-rhi/" }
+raven-rg = { path = "../../lib/raven-rg/" }
 anyhow = "1.0.0"  # error lib
 log = "0.4"       # logging lib
-winit = "0.27.0"  # cross-platform window creation library

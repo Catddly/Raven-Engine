@@ -1,9 +1,19 @@
 use std::path::PathBuf;
 use std::env::{set_current_dir, current_exe};
+use std::sync::Mutex;
+use std::time::Duration;
+
 use anyhow::bail;
+use lazy_static::lazy_static;
+use hotwatch::Hotwatch;
 
 mod project;
+pub mod lazy;
 pub use project::ProjectFolder as ProjectFolder;
+
+lazy_static! {
+    pub(crate) static ref FILE_HOT_WATCHER: Mutex<Hotwatch> = Mutex::new(Hotwatch::new_with_custom_delay(Duration::from_millis(200)).unwrap());
+}
 
 /// Get the root path of the engine.
 #[inline]
@@ -45,13 +55,24 @@ pub fn set_default_root_path() -> anyhow::Result<()> {
 }
 
 /// Check if ProjectFolder pf exists, if not, create a empty folder.
-pub fn exist_or_create(pf: &ProjectFolder) -> anyhow::Result<()> {
+pub fn exist_or_create(pf: ProjectFolder) -> anyhow::Result<()> {
     let folder_path = project_folder_path(&pf)?;
     if !folder_path.as_path().exists() {
         std::fs::create_dir(folder_path)?;
     }
 
     Ok(())
+}
+
+/// Check if a file exists.
+pub fn exist(file: &PathBuf, folder: ProjectFolder) -> anyhow::Result<bool> {
+    assert!(file.is_file());
+
+    let mut folder_path = project_folder_path(&folder)?;
+    folder_path.extend(file.iter());
+
+    // to avoid symbolic links changed maliciously by someone
+    Ok(std::path::Path::try_exists(&folder_path)?)
 }
 
 /// Mount engine root path to p.

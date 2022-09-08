@@ -1,0 +1,34 @@
+[package]
+name = "raven-rhi"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+raven-core = { path = "../../lib/raven-core/" }
+anyhow = "1.0.0"  # error lib
+log = "0.4"       # logging lib
+
+# should this be removed?
+failure = "0.1.8"
+
+winapi = "0.3.9"
+bytes = "1.2.0"
+relative-path = "1.7.0"
+smol = "1.2.0"
+futures = "0.3.0"
+
+derive_builder = "0.11.0"
+
+# May write our own on-demand computing library
+turbosloth = "0.2.0"
+
+# vulkan
+ash = "0.37.0"
+gpu-allocator = "0.18.0"
+vk-sync = "0.1.6"
+
+hassle-rs = "0.9.0"
+shader-prepper = "0.2.0"
+rspirv-reflect = "0.7.0"

@@ -11,4 +11,6 @@ default-members = [
 
     "crates/lib/raven-engine",
     "crates/lib/raven-core",
+    "crates/lib/raven-rhi",
+    "crates/lib/raven-rg",
 ]

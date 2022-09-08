@@ -8,14 +8,16 @@ use crossbeam_deque::{Worker as LocalQueue, Injector as GlobalQueue, Stealer};
 use super::Job;
 
 pub struct Worker {
+    /// Atomic flag to check if this worker thread had finished its jobs.
     is_finish: Arc<AtomicBool>,
-    // join handle of this worker thread
+    /// Join handle of this worker thread.
     handle: Option<JoinHandle<()>>,
+    /// Coworkers which can steal jobs from.
     stealer: Option<Stealer<Job>>,
-    /// Consider: Will this cause performance issues???
     local_queue: Option<LocalQueue<Job>>,
-    // reference to global queue which can steal jobs from.
+    /// Reference to global queue which can steal jobs from.
     global_queue: Arc<GlobalQueue<Job>>,
+    /// Name of this worker thread.
     id: String,
 }
 
@@ -45,6 +47,7 @@ impl Worker {
         self.handle = Some(thread::Builder::new()
             .name(thread_name.to_owned())
             .spawn(move || {
+                // use local bool flag to avoid atomic contention
                 let mut had_sent_finished = false;
 
                 // if the flag is not true, keep pulling jobs from the queue
@@ -102,11 +105,13 @@ impl Worker {
         }
     }
 
+    /// Used to check if a worker thread had finished its own jobs.
     #[inline]
     pub fn is_finished(&self) -> bool {
         self.is_finish.load(Ordering::Acquire)
     }
 
+    /// Get the name of this worker thread.
     #[inline]
     pub fn name(&self) -> &str {
         self.id.as_str()

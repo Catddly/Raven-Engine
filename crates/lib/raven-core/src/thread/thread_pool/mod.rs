@@ -107,9 +107,7 @@ impl ThreadPool {
         for handle in handles {
             handle.terminate();
         }
-
-        // just forget about the rest of the jobs
-        println!("Left Jobs: {}", self.global_queue.len());
+        // just forget about the rest of the jobs here
     }
 
     /// Terminate all worker threads in the thread pool.
