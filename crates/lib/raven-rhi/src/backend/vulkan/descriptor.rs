@@ -80,7 +80,11 @@ pub fn create_descriptor_set_layout(
                 bindings.push(
                     vk::DescriptorSetLayoutBinding::builder()
                         .binding(binding_idx)
-                        .descriptor_count(1)
+                        .descriptor_count(match binding_info.binding_count {
+                            BindingCount::One => 1,
+                            BindingCount::StaticSized(size) => size as u32,
+                            BindingCount::Unbounded => unimplemented!()
+                        })
                         .descriptor_type(vk_descriptor_type)
                         .stage_flags(stage_flag)
                         .build()
