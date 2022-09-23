@@ -1,8 +1,10 @@
+use std::cell::Cell;
 use std::ffi::{CStr, CString};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::os::raw::c_char;
 use std::collections::HashSet;
 
+use parking_lot::Mutex;
 use ash::{vk, extensions::khr};
 
 use crate::backend::vulkan::allocator::{Allocator, AllocatorCreateDesc, AllocatorDebugSettings};
@@ -10,6 +12,7 @@ use crate::backend::vulkan::buffer::BufferDesc;
 use crate::backend::vulkan::{Instance, PhysicalDevice};
 use crate::backend::vulkan::util::utility;
 use crate::backend::vulkan::constants;
+use crate::draw_frame::DrawFrame;
 
 use super::physical_device::QueueFamily;
 use super::buffer::Buffer;
@@ -20,8 +23,8 @@ use super::buffer::Buffer;
 pub const RESERVED_DESCRIPTOR_COUNT: u32 = 32;
 
 pub struct Queue {
-    raw: vk::Queue,
-    family: QueueFamily,
+    pub raw: vk::Queue,
+    pub family: QueueFamily,
 }
 
 pub struct Device {
@@ -35,12 +38,64 @@ pub struct Device {
     pub global_allocator: Mutex<Allocator>,
     pub global_queue: Queue,
 
-    pub(crate) crash_tracing_buffer: Buffer,
+    pub(crate) crash_tracing_buffer: Cell<Option<Buffer>>,
+
+    current_frame: Cell<u32>,
+    // CPU frames.
+    // Note: In CPU controller side, we only have 2 frames here. But in the swapchain we have 3 images.
+    draw_frames: [Mutex<Arc<DrawFrame>>; 2],
 }
 
 impl Device {
     pub fn builder() -> DeviceBuilder {
         DeviceBuilder::default()
+    }
+
+    pub fn defer_release(&self, pool: vk::DescriptorPool) {
+        let current_frame = self.current_frame.get() as usize;
+        let draw_frame = self.draw_frames[current_frame].lock();
+        let mut defer_release_resources = draw_frame.defer_release_resources.lock();
+
+        defer_release_resources.push(pool);
+    }
+
+    pub fn begin_frame(&self) -> Arc<DrawFrame> {
+        let current_frame = self.current_frame.get() as usize;
+        let mut draw_frame = &mut self.draw_frames[current_frame].lock();
+
+        // make sure user can NOT modify this frame anymore
+        match Arc::get_mut(&mut draw_frame) {
+            Some(frame) => {
+                // wait for current frame to be submitted in the GPU-side, or we may change the command buffer while GPU is submitting.
+                unsafe {
+                    self.raw
+                        .wait_for_fences(&[
+                            frame.main_command_buffer.submit_done_fence,
+                            frame.present_command_buffer.submit_done_fence
+                        ], true, std::u64::MAX)
+                        .unwrap();
+                }
+            },
+            None => panic!("User-side is still using DrawFrame data!"),
+        };
+
+        // release previous frame's stale resources
+        draw_frame.release_stale_resources(&self.raw);
+        draw_frame.clone()
+    }
+
+    pub fn end_frame(&self, frame: Arc<DrawFrame>) {
+        drop(frame);
+
+        let mut current_frame = self.current_frame.get() as usize;
+
+        // check again to make sure no one is modifying this frame.
+        Arc::get_mut(&mut self.draw_frames[current_frame].lock())
+            .unwrap_or_else(|| panic!("Failed to end this frame! User still holding this frame data!"));
+
+        // advance to next frame
+        current_frame = (current_frame + 1) % self.draw_frames.len();
+        self.current_frame.set(current_frame as u32);
     }
 
     fn check_extensions_supported(required_extensions: &Vec<&'static CStr>, device_extensions: &HashSet<String>) -> bool {
@@ -151,9 +206,13 @@ impl Device {
             .collect();
 
         let mut buffer_device_address_feature = ash::vk::PhysicalDeviceBufferDeviceAddressFeatures::default();
+        let mut descriptor_indexing = vk::PhysicalDeviceDescriptorIndexingFeaturesEXT::default();
+        let mut imageless_framebuffer = vk::PhysicalDeviceImagelessFramebufferFeaturesKHR::default();
 
         let mut features2 = vk::PhysicalDeviceFeatures2::builder()
             .push_next(&mut buffer_device_address_feature)
+            .push_next(&mut descriptor_indexing)
+            .push_next(&mut imageless_framebuffer)
             .build();
 
         // get device features
@@ -213,6 +272,11 @@ impl Device {
             "crash_tracking_buffer"
         )?;
 
+        let draw_frames = [
+            Mutex::new(Arc::new(DrawFrame::new(&device, &global_queue.family))),
+            Mutex::new(Arc::new(DrawFrame::new(&device, &global_queue.family)))
+        ];
+
         Ok(Self {
             raw: device,
             physical_device: physical_device.clone(),
@@ -220,7 +284,10 @@ impl Device {
             global_allocator: Mutex::new(global_allocator),
             global_queue,
 
-            crash_tracing_buffer,
+            crash_tracing_buffer: Cell::new(Some(crash_tracing_buffer)),
+
+            current_frame: Cell::new(0),
+            draw_frames,
         })
     }
 
@@ -232,6 +299,12 @@ impl Device {
                 .max_per_stage_descriptor_sampled_images
                 - RESERVED_DESCRIPTOR_COUNT
         )
+    }
+
+    pub(crate) fn release_debug_resources(&self) {
+        if let Some(crash_tracking_buffer) = self.crash_tracing_buffer.take() {
+            self.destroy_buffer(crash_tracking_buffer);
+        }
     }
 }
 

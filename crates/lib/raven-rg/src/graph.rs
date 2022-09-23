@@ -1,31 +1,23 @@
-use std::collections::HashMap;
 use std::marker::PhantomData;
-use std::sync::Arc;
-use std::collections::hash_map;
+use std::sync::{Arc};
 
-use raven_rhi::backend::{Device, ImageDesc, Image, Buffer, BufferDesc, barrier};
-use vk_sync::AccessType;
-use anyhow::Context;
 // WARN: should not directly using render api relative data structures.
 use ash::vk;
+
+use raven_rhi::backend::{ImageDesc, Image, Buffer, barrier, ImageType, AccessType};
+use raven_rhi::pipeline_cache::{PipelineCache};
 
 use crate::graph_resource::{
     GraphResource, GraphResourceHandle, 
     ExportableGraphResource, 
-    ExportedHandle, ExportedResourceHandle, 
+    ExportedHandle, 
     GraphResourceCreatedData, GraphResourceDesc, GraphResourceImportedData, RenderGraphRasterPipeline, RenderGraphComputePipeline
 };
 use crate::resource::{Resource, ResourceDesc, TypeEqualTo};
 
 use super::pass::{Pass, PassBuilder};
 use super::graph_resource::Handle;
-
-pub enum RenderGraphState {
-    Pending,
-    Compiling,
-    Executing,
-    Dying,
-}
+use super::compiled_graph::{RenderGraphPipelineHandles, CompiledRenderGraph};
 
 pub trait RenderGraphImportExportResource
 where
@@ -115,10 +107,9 @@ impl RenderGraphImportExportResource for Image {
 /// Render graph.
 pub struct RenderGraph {
     /// TODO: maybe add parallel ability to this. Vec is linear and not suitable for doing parallel dispatching.
-    passes: Vec<Pass>,
-    resources: Vec<GraphResource>,
-    exported_resources: Vec<(ExportableGraphResource, AccessType)>,
-    pub(crate) graph_state: RenderGraphState,
+    pub(crate) passes: Vec<Pass>,
+    pub(crate) resources: Vec<GraphResource>,
+    pub(crate) exported_resources: Vec<(ExportableGraphResource, AccessType)>,
 
     pub(crate) raster_pipelines: Vec<RenderGraphRasterPipeline>,
     pub(crate) compute_pipelines: Vec<RenderGraphComputePipeline>,
@@ -130,7 +121,6 @@ impl RenderGraph {
             passes: Vec::new(),
             resources: Vec::new(),
             exported_resources: Vec::new(),
-            graph_state: RenderGraphState::Pending,
 
             raster_pipelines: Vec::new(),
             compute_pipelines: Vec::new(),
@@ -182,7 +172,7 @@ impl RenderGraph {
         handle
     }
 
-    pub fn import<ResourceType: RenderGraphImportExportResource>(
+    pub(crate) fn import<ResourceType: RenderGraphImportExportResource>(
         &mut self,
         resource: Arc<ResourceType>,
         access: AccessType,
@@ -191,7 +181,7 @@ impl RenderGraph {
         RenderGraphImportExportResource::import(resource, self, access)
     }
     
-    pub fn export<ResourceType: RenderGraphImportExportResource>(
+    pub(crate) fn export<ResourceType: RenderGraphImportExportResource>(
         &mut self,
         handle: Handle<ResourceType>,
         access: AccessType,
@@ -199,17 +189,48 @@ impl RenderGraph {
         // add this resource render graph ExportableResource and get back an ExportedHandle to user.
         RenderGraphImportExportResource::export(handle, self, access)
     }
+
+    /// # Safety 
+    /// 
+    /// DO NOT call this function multiple times in a frame.
+    /// There is a problem with this implementation, if user call get_swapchain() multiple times,
+    /// render graph will have multiple swpachain image handles, and this will lead to some crashes.
+    pub fn get_swapchain(&mut self, extent: [u32; 2]) -> Handle<Image> {
+        // just create a new resource
+        let handle = GraphResourceHandle {
+            id: self.resources.len() as u32,
+            generation: 0,
+        };
+
+        self.resources.push(GraphResource::Imported(GraphResourceImportedData::SwapchainImage));
+
+        Handle {
+            handle,
+            desc: ImageDesc {
+                extent: [extent[0], extent[1], 1],
+                image_type: ImageType::Tex2d,
+                usage: vk::ImageUsageFlags::default(),
+                flags: vk::ImageCreateFlags::empty(),
+                format: vk::Format::B8G8R8A8_UNORM,
+                sample: vk::SampleCountFlags::TYPE_1,
+                tiling: vk::ImageTiling::OPTIMAL,
+                array_elements: 1,
+                mip_levels: 1,
+            },
+            _marker: PhantomData,
+        }
+    }
 }
 
 #[derive(Debug)]
-struct ResourceLifetime {
+pub(crate) struct ResourceLifetime {
     /// The pass idx of the last access pass.
     last_access: Option<usize>,
 }
 
 #[derive(Clone, Debug)]
-// WARN: should NOT directly using render api relative data structures.
-enum ResourceUsage {
+// WARN: should NOT directly using graphic api relative data structures.
+pub(crate) enum ResourceUsage {
     Empty,
     Image(vk::ImageUsageFlags),
     Buffer(vk::BufferUsageFlags),
@@ -221,14 +242,15 @@ impl Default for ResourceUsage {
     }
 }
 
-struct AnalyzedResourceInfo {
-    lifetimes: Vec<ResourceLifetime>,
-    resource_usages: Vec<ResourceUsage>,
+pub(crate) struct AnalyzedResourceInfos {
+    #[allow(dead_code)]
+    pub(crate) lifetimes: Vec<ResourceLifetime>,
+    pub(crate) resource_usages: Vec<ResourceUsage>,
 }
 
 /// Compile Render Graph relative functions.
 impl RenderGraph {
-    fn analyze_resources(&self) -> AnalyzedResourceInfo {
+    fn analyze_resources(&self) -> AnalyzedResourceInfos {
         // lifetime infos initialization
         let mut lifetimes: Vec<ResourceLifetime> = self.resources.iter()
             .map(|res| {
@@ -261,7 +283,10 @@ impl RenderGraph {
                     desc: GraphResourceDesc::Buffer(desc),
                 }) => {
                     resource_usages[idx] = ResourceUsage::Buffer(desc.usage);
-                }
+                },
+                GraphResource::Imported(GraphResourceImportedData::SwapchainImage) => {
+                    resource_usages[idx] = ResourceUsage::Image(vk::ImageUsageFlags::default());
+                },
                 _ => {}
             }
         }
@@ -343,28 +368,34 @@ impl RenderGraph {
             }
         }
 
-        AnalyzedResourceInfo {
+        AnalyzedResourceInfos {
             lifetimes,
             resource_usages
         }
     }
 
-    // Resolve resource informations from passes and exported resources.
-    pub fn compile(self) -> CompiledRenderGraph {
-        assert!(matches!(self.graph_state, RenderGraphState::Compiling));
-
+    // Resolve resource information from passes and register its pipelines.
+    pub(crate) fn compile(self, pipeline_cache: &mut PipelineCache) -> CompiledRenderGraph {
         let resource_infos = self.analyze_resources();
 
-        
+        let raster_pipeline_handles = self.raster_pipelines.iter()
+            .map(|rg_raster| pipeline_cache.register_raster_pipeline(&rg_raster.stages, &rg_raster.desc))
+            .collect::<Vec<_>>();
+
+        let compute_pipeline_handles = self.compute_pipelines.iter()
+            .map(|rg_compute| pipeline_cache.register_compute_pipeline(&rg_compute.desc))
+            .collect::<Vec<_>>();
 
         CompiledRenderGraph {
+            render_graph: self,
             resource_infos,
+
+            pipelines: RenderGraphPipelineHandles {
+                raster_pipeline_handles,
+                compute_pipeline_handles,
+            },
         }
     }
-}
-
-pub struct CompiledRenderGraph {
-    resource_infos: AnalyzedResourceInfo,
 }
 
 fn image_access_mask_to_usage_flags(access_mask: vk::AccessFlags) -> vk::ImageUsageFlags {
@@ -411,258 +442,5 @@ fn buffer_access_mask_to_usage_flags(access_mask: vk::AccessFlags) -> vk::Buffer
             vk::BufferUsageFlags::STORAGE_BUFFER
         }
         _ => panic!("Invalid buffer access mask: {:?}", access_mask),
-    }
-}
-
-/// Cainozoic Render Graph.
-/// It is used to prepare resources and contexts for all the passes.
-/// User can create temporary resources for preparing.
-pub struct CainozoicRenderGraph {
-    device: Arc<Device>,
-    render_graph: RenderGraph,
-    temporal_resources: HashMap<TemporalResourceKey, TemporalResourceState>,
-}
-
-/// CainozoicRenderGraph IS A render graph, but in specific lifetime.
-impl std::ops::Deref for CainozoicRenderGraph {
-    type Target = RenderGraph;
-
-    fn deref(&self) -> &Self::Target {
-        &self.render_graph
-    }
-}
-
-/// CainozoicRenderGraph IS A render graph, but in specific lifetime.
-impl std::ops::DerefMut for CainozoicRenderGraph {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.render_graph
-    }
-}
-
-impl CainozoicRenderGraph {
-    pub fn new(device: Arc<Device>) -> Self {
-        Self {
-            device,
-            render_graph: RenderGraph::new(),
-            temporal_resources: HashMap::new(),
-        }
-    }
-
-    pub fn device(&self) -> &Device {
-        self.device.as_ref()
-    }
-}
-
-/// Resource that is temporary used by render graph.
-/// Because it is temporal, it is not a handle of render graph.
-#[derive(Clone)]
-pub(crate) enum TemporalResource {
-    Image(Arc<Image>),
-    Buffer(Arc<Buffer>),
-}
-
-/// TemporalResourceState itself contains the resource itself.
-pub(crate) enum TemporalResourceState {
-    /// Resource that is created but not yet referenced by render graph.
-    Inert {
-        resource: TemporalResource,
-        access: AccessType,
-    },
-    /// Resource that is imported as read resource by some pass in the render graph.
-    Imported {
-        resource: TemporalResource,
-        handle: ExportableGraphResource,
-    },
-    /// Resource that is imported as write resource by some pass in the render graph.
-    Exported {
-        resource: TemporalResource,
-        handle: ExportedResourceHandle,
-    }
-}
-
-#[derive(Hash, PartialEq, Eq, Debug, Clone)]
-pub struct TemporalResourceKey(String);
-
-impl<'a> From<&'a str> for TemporalResourceKey {
-    fn from(s: &'a str) -> Self {
-        TemporalResourceKey(String::from(s))
-    }
-}
-
-impl From<String> for TemporalResourceKey {
-    fn from(s: String) -> Self {
-        TemporalResourceKey(s)
-    }
-}
-
-pub trait GetOrCreateTemporal<Desc: ResourceDesc> {
-    /// Get Or Create a temporal resource for user to use.
-    /// The newly created or fetched resources will be imported into the render graph is user Get Or Create a temporal resource.
-    fn get_or_create_temporal(
-        &mut self,
-        name: impl Into<TemporalResourceKey>,
-        desc: Desc,
-    ) -> anyhow::Result<Handle<<Desc as ResourceDesc>::Resource>>
-    where
-        Desc: TypeEqualTo<Other = <<Desc as ResourceDesc>::Resource as Resource>::Desc>;
-}
-
-impl GetOrCreateTemporal<ImageDesc> for CainozoicRenderGraph {
-    fn get_or_create_temporal(
-        &mut self,
-        name: impl Into<TemporalResourceKey>,
-        desc: ImageDesc,
-    ) -> anyhow::Result<Handle<<ImageDesc as ResourceDesc>::Resource>> {
-        let key = name.into();
-
-        match self.temporal_resources.entry(key.clone()) {
-            hash_map::Entry::Occupied(mut entry) => {
-                let state = entry.get_mut();
-                
-                match state {
-                    TemporalResourceState::Inert { resource, access } => {
-                        // this clone is actually a Arc::clone().
-                        let resource = resource.clone();
-                    
-                        match &resource {
-                            TemporalResource::Image(image) => {
-                                let handle = self.render_graph.import(image.clone(), *access);
-                                // DO NOT forget to changed the state of this resource
-                                *state = TemporalResourceState::Imported { 
-                                    resource, 
-                                    handle: ExportableGraphResource::Image(handle.clone_unchecked())
-                                };
-                                Ok(handle)
-                            }
-                            TemporalResource::Buffer(..) => {
-                                anyhow::bail!("Required an image resource, but pass in a buffer name! {:?}", key)
-                            },
-                        }
-                    },
-                    TemporalResourceState::Imported { .. } => {
-                        Err(anyhow::anyhow!("This temporal resource is already taken by {:?}", key))
-                    },
-                    TemporalResourceState::Exported { .. } => {
-                        unreachable!()
-                    }
-                }
-            },
-            hash_map::Entry::Vacant(entry) => {
-                let resource = Arc::new(
-                    self.device
-                        .create_image(desc)
-                        .with_context(|| format!("Failed to create image: {:?}", desc))?,
-                );
-                let handle = self.render_graph.import(resource.clone(), AccessType::Nothing);
-                entry.insert(TemporalResourceState::Imported {
-                    resource: TemporalResource::Image(resource),
-                    handle: ExportableGraphResource::Image(handle.clone_unchecked()),
-                });
-                Ok(handle)
-            }
-        }
-    }
-}
-
-impl GetOrCreateTemporal<BufferDesc> for CainozoicRenderGraph {
-    fn get_or_create_temporal(
-        &mut self,
-        name: impl Into<TemporalResourceKey>,
-        desc: BufferDesc,
-    ) -> anyhow::Result<Handle<<BufferDesc as ResourceDesc>::Resource>> {
-        let key = name.into();
-
-        match self.temporal_resources.entry(key.clone()) {
-            hash_map::Entry::Occupied(mut entry) => {
-                let state = entry.get_mut();
-                
-                match state {
-                    TemporalResourceState::Inert { resource, access } => {
-                        // this clone is actually a Arc::clone().
-                        let resource = resource.clone();
-                    
-                        match &resource {
-                            TemporalResource::Buffer(buffer) => {
-                                let handle = self.render_graph.import(buffer.clone(), *access);
-                                // DO NOT forget to changed the state of this resource
-                                *state = TemporalResourceState::Imported { 
-                                    resource, 
-                                    handle: ExportableGraphResource::Buffer(handle.clone_unchecked())
-                                };
-                                Ok(handle)
-                            }
-                            TemporalResource::Image(..) => {
-                                anyhow::bail!("Required a buffer resource, but pass in a image name! {:?}", key)
-                            },
-                        }
-                    },
-                    TemporalResourceState::Imported { .. } => {
-                        Err(anyhow::anyhow!("This temporal resource is already taken by {:?}", key))
-                    },
-                    TemporalResourceState::Exported { .. } => {
-                        unreachable!()
-                    }
-                }
-            },
-            hash_map::Entry::Vacant(entry) => {
-                let resource = Arc::new(
-                    self.device
-                        .create_buffer(desc, "render graph temporal resource")
-                        .with_context(|| format!("Failed to create buffer: {:?}", desc))?,
-                );
-                let handle = self.render_graph.import(resource.clone(), AccessType::Nothing);
-                entry.insert(TemporalResourceState::Imported {
-                    resource: TemporalResource::Buffer(resource),
-                    handle: ExportableGraphResource::Buffer(handle.clone_unchecked()),
-                });
-                Ok(handle)
-            }
-        }
-    }
-}
-
-/// Just a wrapper over TemporalResourceState.
-/// Use a new type to distinguish between exported resources.
-pub struct ExportedTemporalResourceState(pub(crate) HashMap<TemporalResourceKey, TemporalResourceState>);
-
-impl CainozoicRenderGraph {
-    pub fn export_all_imported_resources(self) -> (RenderGraph, ExportedTemporalResourceState) {
-        let mut render_graph = self.render_graph;
-        let mut temporal_resources = self.temporal_resources;
-
-        for state in temporal_resources.values_mut() {
-            match state {
-                TemporalResourceState::Inert { .. } => {
-                    // if the resources are not referenced by render graph, it is no need to export them.
-                }
-                TemporalResourceState::Imported { resource, handle } => match handle {
-                    ExportableGraphResource::Image(handle) => {
-                        let handle = render_graph.export(handle.clone_unchecked(), AccessType::Nothing);
-
-                        // change state from imported to exported
-                        *state = TemporalResourceState::Exported {
-                            resource: resource.clone(),
-                            handle: ExportedResourceHandle::Image(handle),
-                        }
-                    }
-                    ExportableGraphResource::Buffer(handle) => {
-                        let handle = render_graph.export(handle.clone_unchecked(), AccessType::Nothing);
-
-                        // change state from imported to exported
-                        *state = TemporalResourceState::Exported {
-                            resource: resource.clone(),
-                            handle: ExportedResourceHandle::Buffer(handle),
-                        }
-                    }
-                },
-                TemporalResourceState::Exported { .. } => {
-                    // there can be any exported resources!
-                    unreachable!()
-                }
-            }
-        }
-
-        render_graph.graph_state = RenderGraphState::Compiling;
-        (render_graph, ExportedTemporalResourceState(temporal_resources))
     }
 }

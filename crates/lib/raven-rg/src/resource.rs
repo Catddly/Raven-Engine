@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use raven_rhi::backend::{Buffer, BufferDesc, Image, ImageDesc};
 
 use super::graph_resource::GraphResourceDesc;
@@ -64,7 +62,7 @@ pub struct UAV;
 /// Render Target.
 pub struct RT;
 
-/// Used as compiled time marker to determine a resource's view type.
+/// Used as compile-time marker to determine a resource's view type.
 pub trait ResourceView {
     const IS_WRITABLE: bool;
 }

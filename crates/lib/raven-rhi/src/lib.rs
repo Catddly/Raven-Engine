@@ -4,6 +4,7 @@ extern crate derive_builder;
 pub mod backend;
 pub mod pipeline_cache;
 pub mod shader_compiler;
+pub mod draw_frame;
 
 use std::sync::Arc;
 use raven_core::winit::window::Window;
@@ -21,7 +22,7 @@ pub struct RHIConfig {
 // this is only a facade to vulkan
 pub struct RHI {
     pub device: Arc<Device>,
-    pub swapchain: Arc<Swapchain>,
+    pub swapchain: Swapchain,
 }
 
 impl RHI {
@@ -29,7 +30,11 @@ impl RHI {
         let instance = Instance::builder().build()?;
         let surface = Arc::new(Surface::new(&instance, &window)?);
 
-        let (_debug_util, _debug_messager) = debug::setup_debug_utils(config.enable_debug, &instance.entry, &instance.raw);
+        let (_debug_util, _debug_messager) = debug::setup_debug_utils(
+            config.enable_debug, 
+            &instance.entry, 
+            &instance.raw
+        );
 
         let physical_device = Arc::new(physical_device::pick_suitable_physical_device(&instance, &surface));
         glog::trace!("Selected Physical Device: {:#?}", unsafe {
@@ -47,8 +52,14 @@ impl RHI {
 
         Ok(Self {
             device: device.clone(),
-            swapchain: swapchain.clone(),
+            swapchain: swapchain,
         })
+    }
+}
+
+impl Drop for RHI {
+    fn drop(&mut self) {
+        self.device.release_debug_resources();
     }
 }
 

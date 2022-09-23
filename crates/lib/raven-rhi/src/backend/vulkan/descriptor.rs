@@ -5,6 +5,13 @@ use ash::vk;
 
 use super::{Device};
 
+/// Descriptor set binding information to bind the actual resource to descriptor.
+pub enum DescriptorSetBinding {
+    Image(vk::DescriptorImageInfo),
+    ImageArray(Vec<vk::DescriptorImageInfo>),
+    Buffer(vk::DescriptorBufferInfo),
+}
+
 /// One Descriptor Set and its bindings information.
 pub type PipelineSetBindings = BTreeMap<u32, DescriptorInfo>;
 /// Descriptor Sets used in one pipeline.

@@ -1,28 +1,104 @@
-use std::sync::Arc;
+use std::{sync::Arc, ops::{Deref, DerefMut}};
 
 use ash::vk;
 
-use super::{Surface, Device, Image, ImageDesc, ImageType, ImageViewDesc};
+use super::{Surface, Device, Image, ImageDesc, RHIError};
+
+pub struct SwapchainImage {
+    pub image: Arc<Image>,
+    pub acquire_semaphore: vk::Semaphore,
+    pub render_finished_semaphore: vk::Semaphore,
+    pub frame_index: u32,
+}
+
+impl Deref for SwapchainImage {
+    type Target = Arc<Image>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.image
+    }
+}
+
+impl DerefMut for SwapchainImage {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.image
+    }
+}
 
 pub struct Swapchain {
     pub(crate) raw: vk::SwapchainKHR,
     pub(crate) func_loader: ash::extensions::khr::Swapchain,
 
-    pub extent: vk::Extent2D,
-    pub enable_vsync: bool,
     pub images: Vec<Arc<Image>>,
-
+    pub acquire_semaphores: Vec<vk::Semaphore>,
+    pub render_finished_semaphores: Vec<vk::Semaphore>,
+    pub current_frame: u32,
+    
     // since instance and physical device are only valid if and only if device is valid,
     // so keep a atomic reference counter here to avoid incorrect dropping.
     // for convenience purpose, too.
     // aka. Aggregate Design
     pub(crate) device: Arc<Device>,
+    #[allow(dead_code)]
     pub(crate) surface: Arc<Surface>,
+
+    pub extent: vk::Extent2D,
+    pub enable_vsync: bool,
 }
 
 impl Swapchain {
     pub fn builder() -> SwapchainBuilder {
         Default::default()
+    }
+
+    pub fn acquire_next_image(&mut self) -> anyhow::Result<SwapchainImage, RHIError> {
+        let current_frame = &mut self.current_frame;
+        let acquire_semaphore = self.acquire_semaphores[*current_frame as usize];
+
+        unsafe {
+            match self.func_loader.acquire_next_image(self.raw, std::u64::MAX, acquire_semaphore, vk::Fence::null()) {
+                Ok((idx, _)) => { 
+                    assert_eq!(idx, *current_frame);
+
+                    *current_frame = (*current_frame + 1) % (self.images.len() as u32);
+                    Ok(SwapchainImage {
+                        image: self.images[idx as usize].clone(),
+                        acquire_semaphore: acquire_semaphore,
+                        render_finished_semaphore: self.render_finished_semaphores[idx as usize],
+                        frame_index: idx,
+                    })
+                },
+                Err(err) if err == vk::Result::ERROR_OUT_OF_DATE_KHR ||
+                    err == vk::Result::SUBOPTIMAL_KHR => {
+                    Err(RHIError::FramebufferInvalid)
+                }
+                Err(err) => {
+                    Err(RHIError::AcquiredImageFailed { err })
+                }
+            }
+        }
+    }
+
+    pub fn present(&self, image: SwapchainImage) {
+        let present_info = vk::PresentInfoKHR::builder()
+            .image_indices(std::slice::from_ref(&image.frame_index))
+            .swapchains(std::slice::from_ref(&self.raw))
+            .wait_semaphores(std::slice::from_ref(&image.render_finished_semaphore))
+            .build();
+
+        let result = unsafe {
+            self.func_loader
+                .queue_present(self.device.global_queue.raw, &present_info)      
+        };
+
+        match result {
+            Ok(_) => {},
+            Err(err) if err == vk::Result::ERROR_OUT_OF_DATE_KHR ||
+                err == vk::Result::SUBOPTIMAL_KHR => { /* handle this when acquiring image in the next frame */ }
+            _ => {
+                panic!("Vulkan Failed on presenting image!");
+            }
+        }
     }
 
     fn enumerate_available_surface_format(device: &Arc<Device>, surface: &Arc<Surface>) -> anyhow::Result<Vec<vk::SurfaceFormatKHR>> {
@@ -138,37 +214,46 @@ impl Swapchain {
         let raw_images = unsafe { func_loader.get_swapchain_images(swapchain) }.expect("Failed to get swapchain images!");
 
         // directly construct image
-        let mut images: Vec<_> = raw_images.into_iter()
+        let images: Vec<_> = raw_images.into_iter()
             .map(|raw| 
                 Arc::new(Image {
                     raw: raw,
-                    desc: ImageDesc {
-                        extent: [1280, 720, 1],
-                        image_type: ImageType::Tex2d,
-                        usage: vk::ImageUsageFlags::STORAGE,
-                        flags: vk::ImageCreateFlags::empty(),
-                        format: vk::Format::B8G8R8A8_UNORM,
-                        tiling: vk::ImageTiling::OPTIMAL,
-                        sample: vk::SampleCountFlags::TYPE_1,
-                        array_elements: 1,
-                        mip_levels: 1,
-                    },
+                    desc: ImageDesc::new_2d([builder.extent.width, builder.extent.height], vk::Format::B8G8R8A8_UNORM)
+                        .usage_flags(vk::ImageUsageFlags::STORAGE),
                     views: Default::default(),
             }))
             .collect();
         assert_eq!(images.len() as u32, image_count);
 
         // create image views
-        for image in &mut images {
-            image.view(&device, &ImageViewDesc {
-                view_type: None,
-                format: None,
-                aspect_mask: vk::ImageAspectFlags::COLOR,
-                base_mip_level: 0,
-                level_count: Some(1),
-            })
-            .expect("Failed to create image view for swapchain images!");
-        }
+        // for image in &mut images {
+        //     image.view(&device, &ImageViewDesc {
+        //         view_type: None,
+        //         format: None,
+        //         aspect_mask: vk::ImageAspectFlags::COLOR,
+        //         base_mip_level: 0,
+        //         level_count: Some(1),
+        //     })
+        //     .expect("Failed to create image view for swapchain images!");
+        // }
+
+        let acquire_semaphores = (0..images.len()).into_iter()
+            .map(|_| unsafe { 
+                device.raw
+                    .create_semaphore(&vk::SemaphoreCreateInfo::default(), None)
+                    .unwrap()
+                }
+            )
+            .collect();
+
+        let render_finished_semaphores = (0..images.len()).into_iter()
+            .map(|_| unsafe { 
+                device.raw
+                    .create_semaphore(&vk::SemaphoreCreateInfo::default(), None)
+                    .unwrap()
+                }
+            )
+            .collect();
 
         Ok(Self {
             raw: swapchain,
@@ -177,6 +262,10 @@ impl Swapchain {
             enable_vsync: builder.enable_vsync,
 
             images,
+            acquire_semaphores,
+            render_finished_semaphores,
+            current_frame: 0,
+
             device: device.clone(),
             surface: surface.clone(),
         })
@@ -193,8 +282,8 @@ impl Default for SwapchainBuilder {
         Self {
             // TODO: this is not the same as outside in the window setups
             extent: vk::Extent2D {
-                width: 1280,
-                height: 720,
+                width: 0,
+                height: 0,
             },
             enable_vsync: false,
         }
@@ -215,7 +304,7 @@ impl SwapchainBuilder {
         self
     }
 
-    pub fn build(self, device: &Arc<Device>, surface: &Arc<Surface>) -> anyhow::Result<Arc::<Swapchain>> {
-        Ok(Arc::new(Swapchain::new(self, device, surface)?))
+    pub fn build(self, device: &Arc<Device>, surface: &Arc<Surface>) -> anyhow::Result<Swapchain> {
+        Ok(Swapchain::new(self, device, surface)?)
     }
 }

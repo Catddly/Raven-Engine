@@ -18,15 +18,32 @@ impl From<PathBuf> for ShaderSource {
     }
 }
 
+impl From<&str> for ShaderSource {
+    fn from(s: &str) -> Self {
+        ShaderSource::Hlsl { path: PathBuf::from(s) }
+    }
+}
+
 pub struct ShaderBinary {
     // This path must in ProjectFolder::ShaderBinary
     pub path: Option<PathBuf>,
     pub spirv: Bytes,
 }
 
+impl Drop for ShaderBinary {
+    fn drop(&mut self) {
+        if let Some(path) = &mut self.path {
+            glog::debug!("Shader binary {:?} dropped!", path);
+        } else {
+            glog::debug!("Shader binary dropped!");
+        }
+    }
+}
+
 pub struct ShaderBinaryStage {
     pub stage: PipelineShaderStage,
-    pub binary: Arc<ShaderBinary>,
+    pub entry: String,
+    pub binary: Option<Arc<ShaderBinary>>,
 }
 
 #[derive(Clone, Copy, Hash, Eq, PartialEq, Debug)]
@@ -43,5 +60,19 @@ pub struct PipelineShaderDesc {
     pub push_constants_bytes: usize, // push constants for the according shader stage.
     #[builder(default = "\"main\".to_owned()")]
     pub entry: String,
+    #[builder(setter(custom))]
     pub source: ShaderSource,
+}
+
+impl PipelineShaderDescBuilder {
+    pub fn source(mut self, source: impl Into<ShaderSource>) -> Self {
+        self.source = Some(source.into());
+        self
+    }
+}
+
+impl PipelineShaderDesc {
+    pub fn builder() -> PipelineShaderDescBuilder {
+        Default::default()
+    }
 }

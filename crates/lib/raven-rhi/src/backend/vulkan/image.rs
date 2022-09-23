@@ -1,9 +1,10 @@
 use std::collections::HashMap;
-use std::sync::Mutex;
 
+use parking_lot::Mutex;
 use ash::vk::{self};
+use derive_builder::Builder;
 
-use super::allocator::{MemoryLocation, AllocationCreateDesc};
+use super::allocator::{MemoryLocation, AllocationCreateDesc, self};
 use super::{Device, RHIError};
 
 // image type is associated with image view type.
@@ -47,7 +48,7 @@ impl Image {
         device: &Device,
         view_desc: &ImageViewDesc,
     ) -> anyhow::Result<vk::ImageView, RHIError> {
-        let mut views = self.views.lock().unwrap();
+        let mut views = self.views.lock();
 
         if let Some(view) = views.get(view_desc) {
             Ok(*view)
@@ -107,11 +108,10 @@ impl Device {
 
         let allocation = self.global_allocator
             .lock()
-            .unwrap()
             .allocate(&AllocationCreateDesc {
                 name: "image",
                 requirements,
-                location: MemoryLocation::GpuOnly,
+                location: allocator::to_inner_memory_location(&MemoryLocation::GpuOnly),
                 linear: false,
             })
             .map_err(|err| RHIError::AllocationFailure {
@@ -170,17 +170,121 @@ pub struct ImageDesc {
     pub mip_levels: u16,
 }
 
-impl ImageDesc {
-
+impl Default for ImageDesc {
+    fn default() -> Self {
+        Self {
+            extent: [0, 0, 0],
+            format: vk::Format::UNDEFINED,
+            image_type: ImageType::Tex2d,
+            // we can infer usage by its AccessType, so user do not need to explicitly fill in here
+            // but we still give user choice to add usage flags if needed
+            usage: vk::ImageUsageFlags::default(),
+            flags: vk::ImageCreateFlags::empty(),
+            sample: vk::SampleCountFlags::TYPE_1,
+            tiling: vk::ImageTiling::OPTIMAL,
+            array_elements: 1,
+            mip_levels: 1,
+        }
+    }
 }
 
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+impl ImageDesc {  
+    pub fn new_1d(extent: u32, format: vk::Format) -> Self {
+        Self {
+            extent: [extent, 1, 1],
+            format,
+            image_type: ImageType::Tex1d,
+            ..Default::default()
+        }
+    }
+
+    pub fn new_1d_array(extent: u32, format: vk::Format, array_elements: u32) -> Self {
+        Self::new_1d(extent, format).array_elements(array_elements).image_type(ImageType::Tex1dArray)
+    }
+
+    pub fn new_2d(extent: [u32; 2], format: vk::Format) -> Self {
+        Self {
+            extent: [extent[0], extent[1], 1],
+            format,
+            image_type: ImageType::Tex2d,
+            ..Default::default()
+        }
+    }
+
+    pub fn new_2d_array(extent: [u32; 2], format: vk::Format, array_elements: u32) -> Self {
+        Self::new_2d(extent, format).array_elements(array_elements).image_type(ImageType::Tex2dArray)
+    }
+
+    pub fn new_3d(extent: [u32; 3], format: vk::Format) -> Self {
+        Self {
+            extent,
+            format,
+            image_type: ImageType::Tex3d,
+            ..Default::default()
+        }
+    }
+
+    pub fn new_cube(extent: u32, format: vk::Format) -> Self {
+        Self {
+            extent: [extent, extent, 1],
+            format,
+            image_type: ImageType::Cube,
+            ..Default::default()
+        }.array_elements(6).create_flags(vk::ImageCreateFlags::CUBE_COMPATIBLE)
+    }
+    
+    #[inline]
+    pub fn array_elements(mut self, num: u32) -> Self {
+        self.array_elements = num;
+        self
+    }
+
+    #[inline]
+    pub fn create_flags(mut self, flags: vk::ImageCreateFlags) -> Self {
+        self.flags = flags;
+        self
+    }
+
+    #[inline]
+    pub fn usage_flags(mut self, flags: vk::ImageUsageFlags) -> Self {
+        self.usage = flags;
+        self
+    }
+
+    #[inline]
+    pub fn image_type(mut self, image_type: ImageType) -> Self {
+        self.image_type = image_type;
+        self
+    }
+}
+
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Builder)]
+#[builder(pattern = "owned", derive(Clone))]
 pub struct ImageViewDesc {
+    /// If this is None, infer from image type
+    #[builder(setter(strip_option), default)]
     pub view_type: Option<vk::ImageViewType>,
+    /// If this is None, use same image format for image view
+    #[builder(setter(strip_option), default)]
     pub format: Option<vk::Format>,
+    #[builder(default = "vk::ImageAspectFlags::COLOR")]
     pub aspect_mask: vk::ImageAspectFlags,
+    #[builder(default = "0")]
     pub base_mip_level: u32,
+    #[builder(default = "None")]
     pub level_count: Option<u32>,
+}
+
+impl ImageViewDesc {
+    pub fn builder() -> ImageViewDescBuilder {
+        Default::default()
+    }
+}
+
+impl Default for ImageViewDesc {
+    fn default() -> Self {
+        ImageViewDescBuilder::default().build().unwrap()
+    }
 }
 
 pub fn get_image_create_info(desc: &ImageDesc, with_initial_data: bool) -> vk::ImageCreateInfo {

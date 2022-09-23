@@ -5,15 +5,27 @@ use std::collections::hash_map::Entry;
 use turbosloth::*;
 
 use crate::{
-    backend::{RasterPipeline, ShaderBinary, RasterPipelineDesc, ComputePipelineDesc, ComputePipeline, PipelineShaderDesc, ShaderSource, ShaderBinaryStage, RHIError, Device},
+    backend::{RasterPipeline, ShaderBinary, RasterPipelineDesc, ComputePipelineDesc, ComputePipeline, PipelineShaderDesc, ShaderSource, ShaderBinaryStage, Device, pipeline},
     shader_compiler::{CompileShader, CompileShaderStage}
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct RasterPipelineHandle(usize);
 
+impl std::fmt::Display for RasterPipelineHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Raster Pipeline handle: {}", self.0)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ComputePipelineHandle(usize);
+
+impl std::fmt::Display for ComputePipelineHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Compute Pipeline handle: {}", self.0)
+    }    
+}
 
 struct RasterPipelineEntry {
     desc: RasterPipelineDesc,
@@ -23,7 +35,7 @@ struct RasterPipelineEntry {
 }
 
 struct ComputePipelineEntry {
-    desc: ComputePipelineDesc,
+    _desc: ComputePipelineDesc,
     pipeline: Option<Arc<ComputePipeline>>,
     // compile the shader when you need to build the pipeline.
     lazy_binary: Lazy<ShaderBinary>,
@@ -81,6 +93,15 @@ impl PipelineCache {
         RasterPipelineHandle(idx)
     }
 
+    pub fn get_raster_pipeline(&self, handle: RasterPipelineHandle) -> Arc<RasterPipeline> {
+        self.raster_pipelines_entry
+            .get(&handle)
+            .unwrap()
+            .pipeline
+            .clone()
+            .unwrap()
+    }
+
     pub fn register_compute_pipeline(&mut self, desc: &ComputePipelineDesc) -> ComputePipelineHandle {
         // found a cached pipeline, just return it.
         if let Entry::Occupied(entry) = self.desc_to_compute_handle.entry(desc.clone()) {
@@ -95,7 +116,7 @@ impl PipelineCache {
         };
 
         self.compute_pipelines_entry.insert(ComputePipelineHandle(idx), ComputePipelineEntry {
-            desc: desc.clone(),
+            _desc: desc.clone(),
             pipeline: None,
             lazy_binary: CompileShader { 
                 source,
@@ -108,11 +129,45 @@ impl PipelineCache {
         ComputePipelineHandle(idx)
     }
 
+    pub fn get_compute_pipeline(&self, handle: ComputePipelineHandle) -> Arc<ComputePipeline> {
+        self.compute_pipelines_entry
+            .get(&handle)
+            .unwrap()
+            .pipeline
+            .clone()
+            .unwrap()
+    }
+
     pub fn prepare(&mut self) -> anyhow::Result<()>{
         self.discard_stale_pipelines();
         self.parallel_compile_shaders()?;
 
         Ok(())
+    }
+
+    pub fn update_pipelines(&mut self, device: &Device) {
+        for (handle, cache) in &self.raster_pipeline_spirv_cache {
+            let raster_pipe_entry = self.raster_pipelines_entry.get_mut(handle).unwrap();
+
+            let raster_pipe = pipeline::create_raster_pipeline(&device, raster_pipe_entry.desc.clone(), cache.as_slice())
+                .expect(format!("Failed to create new raster pipeline for {}", handle).as_str());
+
+            raster_pipe_entry.pipeline = Some(Arc::new(raster_pipe));
+        }
+        
+        for (handle, cache) in &self.compute_pipeline_spirv_cache {
+            let compute_pipe_entry = self.compute_pipelines_entry.get_mut(handle).unwrap();
+            
+            let compute_pipe = pipeline::create_compute_pipeline(&device, &cache)
+            .expect(format!("Failed to create new raster pipeline for {}", handle).as_str());
+            
+            compute_pipe_entry.pipeline = Some(Arc::new(compute_pipe));
+        }
+        
+        //glog::debug!("Pipelines are ready, going to drop spirvs!");
+        // at this point, all the pipeline that is necessary to update is updated, clear the spirv
+        self.raster_pipeline_spirv_cache.clear();
+        self.compute_pipeline_spirv_cache.clear();
     }
 
     fn discard_stale_pipelines(&mut self) {
@@ -183,12 +238,6 @@ impl PipelineCache {
         }
 
         Ok(())
-    }
-
-    fn update_pipelines(&mut self, device: Arc<Device>) {
-        for (handle, cache) in &mut self.raster_pipeline_spirv_cache {
-            
-        }
     }
 }
 

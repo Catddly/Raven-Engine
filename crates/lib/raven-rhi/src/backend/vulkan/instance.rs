@@ -19,7 +19,9 @@ impl Instance {
 
     fn new(builder: InstanceBuilder) -> anyhow::Result<Self> {
         // load vulkan dll
-        let entry = unsafe { ash::Entry::load()? };
+        //let entry = unsafe { ash::Entry::load()? };
+        let entry = unsafe { ash::Entry::new()? };
+        
         // if in debug build, check if the validation layer is supported
         if constants::ENABLE_DEBUG && !debug::check_validation_layer_support(&entry, &constants::REQUIRED_VALIDATION_LAYERS.to_vec()) {
             glog::error!("vulkan validation layer not support, but requested!");

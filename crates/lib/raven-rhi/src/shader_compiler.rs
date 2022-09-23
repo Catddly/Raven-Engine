@@ -48,6 +48,7 @@ impl IncludeProvider for ShaderIncludeProvider {
 pub struct CompileShader {
     pub source: PathBuf,
     pub profile: String,
+    pub entry: String,
     pub force_recompile: bool,
 }
 
@@ -56,6 +57,7 @@ impl Default for CompileShader {
         Self {
             source: PathBuf::new(),
             profile: String::new(),
+            entry: String::new(),
             force_recompile: true,
         }
     }
@@ -103,9 +105,12 @@ impl LazyWorker for CompileShader {
             }
             "glsl" => unimplemented!(),
             "hlsl" => {
-                let file_path = self.source.to_str().unwrap().to_owned();
+                let file_name = PathBuf::from(self.source.to_str().unwrap().to_owned());
+                let mut path = filesystem::project_folder_path(&filesystem::ProjectFolder::ShaderSource)?;
+                path.extend(file_name.iter());
+
                 let source = shader_prepper::process_file(
-                    &file_path,
+                    &path.to_string_lossy(),
                     &mut ShaderIncludeProvider { ctx },
                     String::new(),
                 );
@@ -139,7 +144,7 @@ impl LazyWorker for CompileShaderStage {
     
     async fn run(self, ctx: RunContext) -> Self::Output {
         let stages: Vec<_> = self.shaders.iter()
-            .map(|(stage, _)| stage.clone())
+            .map(|(stage, compile_info)| (stage.clone(), compile_info.entry.clone()))
             .collect();
 
         let compiled_shaders: Vec<Arc<ShaderBinary>> = futures::future::try_join_all(self.shaders.into_iter()
@@ -150,9 +155,10 @@ impl LazyWorker for CompileShaderStage {
 
         Ok(compiled_shaders.into_iter()
             .zip(stages.into_iter())
-            .map(|(binary, stage)| ShaderBinaryStage {
-                stage,
-                binary: binary.clone(),
+            .map(|(binary, compile_info)| ShaderBinaryStage {
+                stage: compile_info.0,
+                entry: compile_info.1,
+                binary: Some(binary.clone()),
             })
             .collect::<Vec<_>>())
     }
@@ -175,7 +181,7 @@ pub struct CompileShaderStagesBuilder {
 }
 
 impl CompileShaderStagesBuilder {
-    pub fn add_stage(mut self, stage: PipelineShaderStage, source: PathBuf, force_recompile: bool) -> Self {
+    pub fn add_stage(mut self, stage: PipelineShaderStage, source: PathBuf, entry: String, force_recompile: bool) -> Self {
         self.shaders.push((stage,
             CompileShader {
             source,
@@ -183,6 +189,7 @@ impl CompileShaderStagesBuilder {
                 PipelineShaderStage::Vertex => "vs",
                 PipelineShaderStage::Pixel => "ps",
             }.to_owned(),
+            entry,
             force_recompile,
         }));
 
@@ -203,6 +210,7 @@ impl CompileShaderStagesBuilder {
                     PipelineShaderStage::Vertex => "vs",
                     PipelineShaderStage::Pixel => "ps",
                 }.to_owned(),
+                entry: shader.entry.clone(),
                 ..Default::default()
             }))
         }

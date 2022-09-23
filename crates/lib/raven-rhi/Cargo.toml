@@ -19,15 +19,20 @@ relative-path = "1.7.0"
 smol = "1.2.0"
 futures = "0.3.0"
 
+# More compact and efficient implementations of the standard synchronization primitives.
+parking_lot = "0.12.0"
+
+arrayvec = "0.7.0"
+byte-slice-cast = "1.2.0"
 derive_builder = "0.11.0"
 
 # May write our own on-demand computing library
 turbosloth = "0.2.0"
 
 # vulkan
-ash = "0.37.0"
-gpu-allocator = "0.18.0"
-vk-sync = "0.1.6"
+ash = "0.33"
+gpu-allocator = "0.11.0"
+vk-sync = { git = "https://github.com/gwihlidal/vk-sync-rs", rev = "496dbbc" }
 
 hassle-rs = "0.9.0"
 shader-prepper = "0.2.0"

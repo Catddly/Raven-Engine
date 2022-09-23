@@ -10,3 +10,7 @@ pub(crate) const REQUIRED_VALIDATION_LAYERS: [&str; 1] = ["VK_LAYER_KHRONOS_vali
 pub(crate) const ENABLE_GPU_RAY_TRACING : bool = true;
 #[cfg(not(feature = "ray_tracing"))]
 pub(crate) const ENABLE_GPU_RAY_TRACING : bool = false;
+
+pub const MAX_RENDERPASS_ATTACHMENTS: usize = 9;
+
+pub const MAX_DESCRIPTOR_SET_COUNT: usize = 4;

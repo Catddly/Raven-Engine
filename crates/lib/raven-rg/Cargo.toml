@@ -8,5 +8,11 @@ raven-rhi = { path = "../../lib/raven-rhi/" }
 anyhow = "1.0.0"  # error lib
 log = "0.4"       # logging lib
 
-ash = "0.37.0"
-vk-sync = "0.1.6"
+arrayvec = "0.7.0"
+
+# May write our own on-demand computing library
+turbosloth = "0.2.0"
+
+ash = "0.33.0"
+lazy_static = "1.4.0"
+vk-sync = { git = "https://github.com/gwihlidal/vk-sync-rs", rev = "496dbbc" }

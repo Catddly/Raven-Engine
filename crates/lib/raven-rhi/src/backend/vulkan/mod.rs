@@ -1,6 +1,6 @@
 //mod context;
 mod util;
-mod constants;
+pub mod constants;
 
 mod instance;
 mod surface;
@@ -8,23 +8,24 @@ pub mod physical_device;
 mod device;
 mod swapchain;
 
-mod allocator;
+pub mod allocator;
 mod buffer;
 mod image;
 
 mod shader;
 pub mod descriptor;
-mod pipeline;
-mod render_pass;
+pub mod pipeline;
+pub mod render_pass;
 
 pub mod barrier;
+mod command;
 mod error;
 
 pub use instance::Instance;
 pub use surface::Surface;
-pub use physical_device::{PhysicalDevice};
+pub use physical_device::{PhysicalDevice, QueueFamily};
 pub use device::Device;
-pub use swapchain::Swapchain;
+pub use swapchain::{Swapchain, SwapchainImage};
 pub use buffer::{Buffer, BufferDesc};
 pub use image::{Image, ImageDesc, ImageType, ImageViewDesc};
 
@@ -32,6 +33,9 @@ pub use shader::{ShaderSource, ShaderBinary, ShaderBinaryStage, PipelineShaderSt
 pub use pipeline::{RasterPipelineDesc, ComputePipelineDesc, RasterPipeline, ComputePipeline};
 pub use render_pass::RenderPass;
 
+pub use barrier::{AccessType, ImageBarrier, BufferBarrier};
+
+pub use command::CommandBuffer;
 pub use error::RHIError;
 
 pub use util::debug;

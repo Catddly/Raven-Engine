@@ -5,9 +5,10 @@ use vk_sync::AccessType;
 use raven_rhi::backend::{Image, ImageDesc, Buffer, BufferDesc, RasterPipelineDesc, ComputePipelineDesc, PipelineShaderDesc};
 
 use crate::resource::ResourceDesc;
-use super::graph::RenderGraph;
 use super::resource::{Resource, ResourceView};
 
+/// Description for render graph resource.
+/// 
 /// Because GraphResource can NOT have any generic type parameters,
 /// we have to create a ResourceDesc for render graph to hold the data.
 /// But GraphResourceDesc is the same as ResourceDesc in resource.rs .
@@ -17,10 +18,18 @@ pub enum GraphResourceDesc {
     Buffer(BufferDesc),
 }
 
+/// Resource which will be created and hold by render graph.
+/// 
+/// Render graph will assumed that this resource will be used permanently in this application lifetime.
+#[derive(Clone)]
 pub(crate) struct GraphResourceCreatedData {
     pub desc: GraphResourceDesc,
 }
 
+/// Resource which can be imported from outside the render graph.
+/// 
+/// Notice that SwapchainImage has no extra data, because we delayed the swapchain import when we actually need to use swapchain image.
+#[derive(Clone)]
 pub(crate) enum GraphResourceImportedData {
     Image {
         raw: Arc<Image>,
@@ -33,11 +42,16 @@ pub(crate) enum GraphResourceImportedData {
     SwapchainImage,
 }
 
+/// Render graph resource.
+#[derive(Clone)]
 pub(crate) enum GraphResource {
+    /// Will be lately created and owned by render graph
     Created(GraphResourceCreatedData),
+    /// Imported from outer resource.
     Imported(GraphResourceImportedData),
 }
 
+/// Exportable render graph resource.
 pub(crate) enum ExportableGraphResource {
     Image(Handle<Image>),
     Buffer(Handle<Buffer>),
@@ -126,6 +140,7 @@ impl<ResourceType: Resource> Eq for Handle<ResourceType> {}
 /// It is actually the same thing as Handle.
 /// But use different types to distinguish resources under different lifetimes (Or we say, different usage).
 /// Because the exported resource must be created, so we do not need the ResourceDesc anymore.
+#[derive(Debug)]
 pub struct ExportedHandle<ResourceType: Resource> {
     /// Handle of the render graph resources.
     pub(crate) handle: GraphResourceHandle,
@@ -133,10 +148,21 @@ pub struct ExportedHandle<ResourceType: Resource> {
     pub(crate) _marker: PhantomData<ResourceType>,
 }
 
+impl<ResourceType: Resource> Clone for ExportedHandle<ResourceType> {
+    fn clone(&self) -> Self {
+        Self {
+            handle: self.handle,
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<ResourceType: Resource> Copy for ExportedHandle<ResourceType> { }
+
 /// Same as Handle, but add ResourceView as a marker to indicate the view type to be used in renderpass building.
 pub struct GraphResourceRef<ResType: Resource, ViewType: ResourceView> {
     pub(crate) handle: GraphResourceHandle,
-    pub(crate) desc: <ResType as Resource>::Desc,
+    //pub(crate) desc: <ResType as Resource>::Desc,
     pub(crate) _marker: PhantomData<(ResType, ViewType)>,
 }
 

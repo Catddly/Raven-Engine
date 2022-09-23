@@ -1,23 +1,27 @@
 use std::marker::PhantomData;
 use std::path::PathBuf;
 
-use vk_sync::AccessType;
-use ash::vk;
+use raven_rhi::backend::{
+    self, RHIError, ComputePipelineDesc, PipelineShaderDesc, RasterPipelineDesc, AccessType,
+};
 
-use raven_rhi::backend::{self, RHIError, ComputePipelineDesc, PipelineShaderDesc, RasterPipelineDesc};
-
+use crate::pass_context::PassContext;
 use crate::graph_resource::{GraphComputePipelineHandle, RenderGraphComputePipeline, GraphRasterPipelineHandle, RenderGraphRasterPipeline};
 use crate::resource::{ResourceView, ResourceDesc};
 
 use super::graph_resource::{GraphResourceHandle, Handle, GraphResourceRef};
-use super::resource_registry::ResourceRegistry;
 use super::graph::RenderGraph;
 use super::resource::{TypeEqualTo, Resource, SRV, UAV, RT};
 
-pub type RenderFunc = dyn FnOnce(&mut RenderPassContext) -> anyhow::Result<(), RHIError>;
+pub type RenderFunc = dyn FnOnce(&mut PassContext) -> anyhow::Result<(), RHIError>;
 
+/// Pass resources access type.
+/// 
+/// This type indicated which access will be used when the resource is used in this pass.
+#[derive(Debug, Clone)]
 pub(crate) struct PassResourceAccessType {
     pub(crate) access_type: AccessType,
+    pub(crate) skip_sync_if_same: bool,
 }
 
 /// Resource handle of the resource in the render graph and the access type.
@@ -26,20 +30,15 @@ pub(crate) struct PassResourceHandle {
     pub access: PassResourceAccessType,
 }
 
-/// Render pass context to give user to do custom command buffer recording ability and etc.
-pub struct RenderPassContext<'a> {
-    /// Command Buffer to record rendering commands to.
-    pub cb: &'a vk::CommandBuffer,
-    /// Context Relative Resources to be used inside this render pass. 
-    pub resources: &'a mut ResourceRegistry,
-}
-
-/// Render Pass in the render graph.
+/// Pass in the render graph.
+/// 
+/// It may actually contain no renderpass, or more than one renderpass.
 /// Each Pass instructs how GPU should do rendering at a given region of time.
 /// Each Pass may import some render resources and may output some too.
 /// So Pass must hold the barrier transition infos between Passes.
 pub(crate) struct Pass {
     /// Slot id of the passes in the render graph.
+    #[allow(dead_code)]
     pub id: usize,
     /// Name of this pass.
     pub name: String,
@@ -73,7 +72,7 @@ pub struct PassBuilder<'rg> {
 impl<'rg> Drop for PassBuilder<'rg> {
     /// When dropping, add the built pass back into the render graph to finish adding.
     fn drop(&mut self) {
-        glog::debug!("Dropping PassBuilder!");
+        //glog::debug!("Dropping PassBuilder!");
         self.rg.finish_add_pass(self.pass.take().unwrap());
     }
 }
@@ -95,7 +94,7 @@ impl<'rg> PassBuilder<'rg> {
     /// Constrain: access_type must be the read operation.
     pub fn read<ResType: Resource>(
         &mut self, 
-        handle: &mut Handle<ResType>,
+        handle: &Handle<ResType>,
         access_type: AccessType,
     ) -> GraphResourceRef<ResType, SRV> {
         assert!(backend::barrier::is_read_only_access(&access_type), "Invalid read access type: {:?}", &access_type);
@@ -114,7 +113,6 @@ impl<'rg> PassBuilder<'rg> {
         assert!(backend::barrier::is_write_only_access(&access_type), "Invalid write access type: {:?}", &access_type);
 
         self.write_impl(handle, access_type)
-
     }
 
     /// Read-In Resource to be used in this pass.
@@ -146,7 +144,7 @@ impl<'rg> PassBuilder<'rg> {
     /// Add render function to this pass.
     pub fn render(
         mut self,
-        func: impl (FnOnce(&mut RenderPassContext) -> anyhow::Result<(), RHIError>) + 'static,    
+        func: impl (FnOnce(&mut PassContext) -> anyhow::Result<(), RHIError>) + 'static,    
     ) {
         let pass = self.pass.as_mut().unwrap();
         
@@ -166,19 +164,20 @@ impl<'rg> PassBuilder<'rg> {
             handle: handle.handle, // write to the old generation
             access: PassResourceAccessType {
                 access_type,
+                skip_sync_if_same: false,
             },
         });
 
         GraphResourceRef {
             handle: handle.handle.expired(), // after written, it is a new generation
-            desc: handle.desc.clone(),
+            //desc: handle.desc.clone(),
             _marker: PhantomData,
         }
     }
 
     fn read_impl<ResType: Resource, ViewType: ResourceView>(
         &mut self,
-        handle: &mut Handle<ResType>,
+        handle: &Handle<ResType>,
         access_type: AccessType,
     ) -> GraphResourceRef<ResType, ViewType> {
         let pass = self.pass.as_mut().unwrap();
@@ -187,12 +186,13 @@ impl<'rg> PassBuilder<'rg> {
             handle: handle.handle,
             access: PassResourceAccessType {
                 access_type,
+                skip_sync_if_same: true,
             },
         });
 
         GraphResourceRef {
             handle: handle.handle,
-            desc: handle.desc.clone(),
+            //desc: handle.desc.clone(),
             _marker: PhantomData,
         }
     }
@@ -212,17 +212,6 @@ impl<'rg> PassBuilder<'rg> {
     pub(crate) fn register_compute_pipeline_with_desc(&mut self, desc: ComputePipelineDesc) -> GraphComputePipelineHandle {
         let idx = self.rg.compute_pipelines.len();
 
-        // copy predefined descriptor set layouts to pipeline set layouts
-        // for (set_idx, layout) in &self.rg.predefined_descriptor_set_layouts {
-        //     desc.descriptor_set_opts[*set_idx as usize] = Some((
-        //         *set_idx,
-        //         DescriptorSetLayoutOpts::builder()
-        //             .replace(layout.bindings.clone())
-        //             .build()
-        //             .unwrap(),
-        //     ));
-        // }
-
         self.rg.compute_pipelines.push(RenderGraphComputePipeline { desc });
 
         GraphComputePipelineHandle { idx }
@@ -230,16 +219,6 @@ impl<'rg> PassBuilder<'rg> {
 
     pub fn register_raster_pipeline(&mut self, shaders: &[PipelineShaderDesc], desc: RasterPipelineDesc) -> GraphRasterPipelineHandle {
         let idx = self.rg.raster_pipelines.len();
-
-        // for (set_idx, layout) in &self.rg.predefined_descriptor_set_layouts {
-        //     desc.descriptor_set_opts[*set_idx as usize] = Some((
-        //         *set_idx,
-        //         DescriptorSetLayoutOpts::builder()
-        //             .replace(layout.bindings.clone())
-        //             .build()
-        //             .unwrap(),
-        //     ));
-        // }
 
         self.rg.raster_pipelines.push(RenderGraphRasterPipeline {
             desc,

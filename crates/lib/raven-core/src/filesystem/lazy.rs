@@ -30,7 +30,6 @@ impl LazyWorker for LoadFile {
 
         FILE_HOT_WATCHER
             .lock()
-            .unwrap()
             .watch(self.path.clone(), move |event| {
                 if matches!(event, hotwatch::Event::Write(_) | hotwatch::Event::NoticeWrite(_)) {
                     // The period between LoadFile begin to run on another thread and loading from the file,

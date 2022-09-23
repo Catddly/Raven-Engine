@@ -1,0 +1,543 @@
+use std::sync::Arc;
+
+// TODO: remove this (render graph should not directly contain eny graphic API)
+use ash::vk;
+use arrayvec::ArrayVec;
+
+use raven_rhi::{
+    backend::{Device, ImageViewDesc, Image, Buffer, RasterPipeline, ComputePipeline, CommandBuffer, RenderPass},
+    backend::constants,
+    backend::RHIError,
+    backend::render_pass::FrameBufferCacheKey,
+    backend::pipeline::CommonPipeline,
+    backend::descriptor::DescriptorSetBinding,
+    pipeline_cache::PipelineCache,
+};
+
+use super::{
+    resource::{SRV, UAV, RT},
+    compiled_graph::{RenderGraphPipelineHandles, RegisteredResource, GraphPreparedResourceRef},
+    graph_resource::{GraphResourceHandle, GraphResourceRef, GraphRasterPipelineHandle, GraphComputePipelineHandle},
+};
+
+pub struct PassImageBinding {
+    handle: GraphResourceHandle,
+    view_desc: ImageViewDesc,
+    layout: vk::ImageLayout,
+}
+
+pub struct PassBufferBinding {
+    handle: GraphResourceHandle,
+}
+
+pub enum RenderGraphPassBinding {
+    Image(PassImageBinding),
+    ImageArray(Vec<PassImageBinding>),
+    Buffer(PassBufferBinding),
+}
+
+pub trait RenderGraphPassBindable {
+    fn bind(&self) -> RenderGraphPassBinding;
+}
+
+impl RenderGraphPassBindable for GraphResourceRef<Image, SRV> {
+    fn bind(&self) -> RenderGraphPassBinding {
+        RenderGraphPassBinding::Image(PassImageBinding {
+            handle: self.handle.clone(),
+            view_desc: ImageViewDesc::default(),
+            layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+        })
+    }
+}
+
+impl RenderGraphPassBindable for Vec<GraphResourceRef<Image, SRV>> {
+    fn bind(&self) -> RenderGraphPassBinding {
+        RenderGraphPassBinding::ImageArray(self.iter()
+            .map(|refer| {
+                PassImageBinding {
+                    handle: refer.handle.clone(),
+                    view_desc: ImageViewDesc::default(),
+                    layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                }
+            })    
+            .collect()
+        )
+    }
+}
+
+impl RenderGraphPassBindable for GraphResourceRef<Image, UAV> {
+    fn bind(&self) -> RenderGraphPassBinding {
+        RenderGraphPassBinding::Image(PassImageBinding {
+            handle: self.handle.clone(),
+            view_desc: ImageViewDesc::default(),
+            layout: vk::ImageLayout::GENERAL,
+        })
+    }
+}
+
+impl RenderGraphPassBindable for Vec<GraphResourceRef<Image, UAV>> {
+    fn bind(&self) -> RenderGraphPassBinding {
+        RenderGraphPassBinding::ImageArray(self.iter()
+            .map(|refer| {
+                PassImageBinding {
+                    handle: refer.handle.clone(),
+                    view_desc: ImageViewDesc::default(),
+                    layout: vk::ImageLayout::GENERAL,
+                }
+            })    
+            .collect()
+        )
+    }
+}
+
+#[derive(Default)]
+pub struct PipelineSetLayoutBindings<'a> {
+    /// Pipeline will create descriptor set for user, and release the descriptor in the next frame.
+    bindings: ArrayVec<(u32, &'a [RenderGraphPassBinding]), { constants::MAX_DESCRIPTOR_SET_COUNT }>,
+}
+
+pub struct PipelineBindings<'a, HandleType> {
+    pipeline_handle: HandleType,
+    pub(crate) set_layouts: PipelineSetLayoutBindings<'a>,
+}
+
+impl<'a, HandleType> PipelineBindings<'a, HandleType> {
+    pub fn new(pipeline_handle: HandleType) -> Self {
+        Self {
+            pipeline_handle,
+            set_layouts: Default::default(),
+        }
+    }
+
+    pub fn descriptor_set(mut self, set_idx: u32, bindings: &'a [RenderGraphPassBinding]) -> Self {
+        self.set_layouts.bindings.push((set_idx, bindings));
+        self
+    }
+}
+
+pub trait IntoPipelineDescriptorBindings : Sized {
+    fn into_bindings<'a>(self) -> PipelineBindings<'a, Self>;
+}
+
+impl IntoPipelineDescriptorBindings for GraphRasterPipelineHandle {
+    fn into_bindings<'a>(self) -> PipelineBindings<'a, Self> {
+        PipelineBindings::new(self)
+    }
+}
+
+impl IntoPipelineDescriptorBindings for GraphComputePipelineHandle {
+    fn into_bindings<'a>(self) -> PipelineBindings<'a, Self> {
+        PipelineBindings::new(self)
+    }
+}
+
+pub struct BoundComputePipeline<'context, 'a> {
+    context: &'context PassContext<'a>,
+    pipeline: Arc<ComputePipeline>,
+}
+
+impl<'context, 'a> BoundComputePipeline<'context, 'a> {
+    pub fn dispatch(
+        &self,
+        threads: [u32; 3],
+    ) {
+        let dispatch_groups = self.pipeline.dispatch_groups;
+
+        unsafe {
+            self.context.context.device.raw.cmd_dispatch(
+                self.context.cb.raw,
+                // divide_ceil
+                (threads[0] / dispatch_groups[0]) + 1,
+                (threads[1] / dispatch_groups[1]) + 1,
+                (threads[2] / dispatch_groups[2]) + 1
+            );
+        }
+    }
+
+    pub fn push_constants(
+        &self,
+        stage_flags: vk::ShaderStageFlags,
+        offset: u32,
+        bytes: &[u8],
+    ) {
+        unsafe {
+            self.context.context.device.raw.cmd_push_constants(
+                self.context.cb.raw, 
+                self.pipeline.pipeline.pipeline_layout,
+                stage_flags, 
+                offset, 
+                bytes
+            );
+        }
+    }
+}
+
+pub struct BoundRasterPipeline<'context, 'a> {
+    context: &'context PassContext<'a>,
+    pipeline: Arc<RasterPipeline>,
+}
+
+impl<'context, 'a> BoundRasterPipeline<'context, 'a> {
+    pub fn push_constants(
+        &self,
+        stage_flags: vk::ShaderStageFlags,
+        offset: u32,
+        bytes: &[u8],
+    ) {
+        unsafe {
+            self.context.context.device.raw.cmd_push_constants(
+                self.context.cb.raw, 
+                self.pipeline.pipeline_layout, 
+                stage_flags, 
+                offset, 
+                bytes
+            );
+        }
+    }
+}
+
+pub struct ExecuteContext<'a> {
+    pub device: &'a Device,
+
+    pub(crate) pipelines: &'a RenderGraphPipelineHandles,
+    pub(crate) pipeline_cache: &'a mut PipelineCache,
+
+    pub(crate) registered_resources: &'a Vec<RegisteredResource>,
+}
+
+impl<'a> ExecuteContext<'a> {
+    pub(crate) fn get_image_view(&self, handle: GraphResourceHandle, view_desc: &ImageViewDesc) -> anyhow::Result<vk::ImageView, RHIError> {
+        let image = match self.registered_resources[handle.id as usize].resource.borrow() {
+            GraphPreparedResourceRef::Image(image) => image,
+            _ => panic!("Expect image, but pass in a non-image graph resource handle!"),
+        };
+
+        image.view(&self.device, &view_desc)
+    }
+
+    pub(crate) fn get_image(&self, handle: GraphResourceHandle) -> &Image {
+        let image = match self.registered_resources[handle.id as usize].resource.borrow() {
+            GraphPreparedResourceRef::Image(image) => image,
+            _ => panic!("Expect image, but pass in a non-image graph resource handle!"),
+        };
+
+        image
+    }
+
+    pub(crate) fn get_buffer(&self, handle: GraphResourceHandle) -> &Buffer {
+        let buffer = match self.registered_resources[handle.id as usize].resource.borrow() {
+            GraphPreparedResourceRef::Buffer(buffer) => buffer,
+            _ => panic!("Expect buffer, but pass in a non-buffer graph resource handle!"),
+        };
+
+        buffer
+    }
+
+    pub(crate) fn get_raster_pipeline(&self, handle: GraphRasterPipelineHandle) -> Arc<RasterPipeline> {
+        let pipeline = self.pipelines.raster_pipeline_handles[handle.idx];
+        self.pipeline_cache.get_raster_pipeline(pipeline)
+    }
+
+    pub(crate) fn get_compute_pipeline(&self, handle: GraphComputePipelineHandle) -> Arc<ComputePipeline> {
+        let pipeline = self.pipelines.compute_pipeline_handles[handle.idx];
+        self.pipeline_cache.get_compute_pipeline(pipeline)
+    }
+}
+
+/// Render pass context to give user to do custom command buffer recording ability and etc.
+pub struct PassContext<'a> {
+    /// Command Buffer to record rendering commands to.
+    pub cb: &'a CommandBuffer,
+    /// Context Relative Resources to be used inside this render pass. 
+    pub context: ExecuteContext<'a>,
+}
+
+impl<'a> PassContext<'a> {
+    pub fn device(&self) -> &Device {
+        &self.context.device
+    }
+
+    pub fn begin_render_pass(
+        &mut self,
+        render_pass: &RenderPass,
+        extent: [u32; 2],
+        color_attachments: &[(GraphResourceRef<Image, RT>, &ImageViewDesc)],
+        depth_attachment: Option<(GraphResourceRef<Image, RT>, &ImageViewDesc)>,
+    ) -> anyhow::Result<(), RHIError> {
+        let device = self.context.device;
+
+        // get or create the framebuffer from the cache
+        let framebuffer = render_pass.frame_buffer_cache.get_or_create(device, FrameBufferCacheKey::new(
+            extent, 
+            color_attachments.iter().map(|(refer, _)| {
+                // TODO: is this verbose?
+                //&refer.desc
+                &self.context.get_image(refer.handle).desc
+            }), 
+            depth_attachment.as_ref().map(|(refer, _)| {
+                //&refer.desc
+                &self.context.get_image(refer.handle).desc
+            })
+        ));
+
+        // collect all image views
+        let attachments = color_attachments.iter()
+            .chain(depth_attachment.as_ref().into_iter())
+            .map(|(refer, view)| self.context.get_image_view(refer.handle, &view))
+            .collect::<anyhow::Result<ArrayVec<vk::ImageView, { constants::MAX_RENDERPASS_ATTACHMENTS + 1 }>, RHIError>>();
+        let attachments = attachments?;
+
+        // fill in the image view for bindless framebuffer
+        let mut render_pass_attachments = vk::RenderPassAttachmentBeginInfoKHR::builder()
+            .attachments(&attachments)
+            .build();
+
+        let renderpass_begin_info = vk::RenderPassBeginInfo::builder()
+            .push_next(&mut render_pass_attachments)
+            .render_pass(render_pass.raw)
+            .render_area(vk::Rect2D {
+                extent: vk::Extent2D {
+                    width: extent[0],
+                    height: extent[1],
+                },
+                offset: vk::Offset2D {
+                    x: 0, y: 0,
+                },
+            })
+            .framebuffer(framebuffer)
+            .build();
+
+        unsafe {
+            device.raw.cmd_begin_render_pass(
+                self.cb.raw, 
+                &renderpass_begin_info, 
+                vk::SubpassContents::INLINE
+            );
+        }
+
+        Ok(())
+    }
+
+    #[inline]
+    pub fn end_render_pass(
+        &mut self,
+    ) {
+        unsafe {
+            self.context.device.raw.cmd_end_render_pass(self.cb.raw);
+        }
+    }
+
+    #[inline]
+    pub fn set_default_viewport_and_scissor(&self, [width, height]: [u32; 2]) {
+        self.set_viewport([width, height]);
+        self.set_scissor([width, height]);
+    }
+
+    #[inline]
+    pub fn set_viewport(&self, [width, height]: [u32; 2]) {
+        unsafe {
+            self.context.device.raw.cmd_set_viewport(
+                self.cb.raw, 
+                0,
+                // negative height of viewport to flip vulkan y screen coordinates
+                &[vk::Viewport {
+                    x: 0.0, y: (height as f32),
+                    width: width as f32, 
+                    height: -(height as f32),
+                    min_depth: 0.0,
+                    max_depth: 1.0,
+                }]
+            );
+        }
+    }
+
+    #[inline]
+    pub fn set_scissor(&self, [width, height]: [u32; 2]) {
+        unsafe {
+            self.context.device.raw.cmd_set_scissor(
+                self.cb.raw,
+                0,
+                &[
+                    vk::Rect2D {
+                        offset: vk::Offset2D {
+                            x: 0, y: 0
+                        },
+                        extent: vk::Extent2D {
+                            width,
+                            height,
+                        },
+                    }
+                ]
+            );
+        }
+    }
+
+    pub fn bind_raster_pipeline(&self, bindings: PipelineBindings<'_, GraphRasterPipelineHandle>) -> anyhow::Result<BoundRasterPipeline, RHIError> {
+        let pipeline = self.context.get_raster_pipeline(bindings.pipeline_handle);
+        self.bind_pipeline(&self.context.device, pipeline.as_ref(), &bindings.set_layouts)?;
+
+        Ok(BoundRasterPipeline {
+            context: self,
+            pipeline,
+        })
+    }
+
+    pub fn bind_compute_pipeline(&self, bindings: PipelineBindings<'_, GraphComputePipelineHandle>) -> anyhow::Result<BoundComputePipeline, RHIError> {
+        let pipeline = self.context.get_compute_pipeline(bindings.pipeline_handle);
+        self.bind_pipeline(&self.context.device, pipeline.as_ref(), &bindings.set_layouts)?;
+
+        Ok(BoundComputePipeline {
+            context: self,
+            pipeline,
+        })
+    }
+
+    /// bind pipeline and pipeline's descriptors
+    fn bind_pipeline(
+        &self,
+        device: &Device,
+        pipeline: &CommonPipeline,
+        set_layout: &PipelineSetLayoutBindings,
+    ) -> anyhow::Result<(), RHIError> {
+        // bind pipeline
+        unsafe {
+            device.raw
+                .cmd_bind_pipeline(self.cb.raw, pipeline.pipeline_bind_point, pipeline.pipeline);
+        }
+
+        // create and bind pipeline's descriptor sets
+        for (set_idx, bindings) in set_layout.bindings.iter() {
+            // trying to bind a resource that is not defined in pipeline's shader
+            if pipeline.set_layout_infos.get(*set_idx as usize).is_none() {
+                continue;
+            }
+
+            let bindings: anyhow::Result<Vec<_>, RHIError> = bindings.iter()
+                .map(|pass_bingding| {
+                    Ok(match &pass_bingding {
+                        RenderGraphPassBinding::Image(image) => DescriptorSetBinding::Image(vk::DescriptorImageInfo::builder()
+                            .image_layout(image.layout)
+                            .image_view(self.context.get_image_view(image.handle, &image.view_desc)?)
+                            .build()
+                        ),
+                        RenderGraphPassBinding::ImageArray(images) => DescriptorSetBinding::ImageArray(
+                                images.iter()
+                                .map(|image| {
+                                    Ok(vk::DescriptorImageInfo::builder()
+                                        .image_layout(image.layout)
+                                        .image_view(self.context.get_image_view(image.handle, &image.view_desc)?)
+                                        .build())
+                                })
+                                .collect::<anyhow::Result<Vec<_>, RHIError>>()?
+                        ),
+                        RenderGraphPassBinding::Buffer(buffer) => DescriptorSetBinding::Buffer(vk::DescriptorBufferInfo::builder()
+                            .buffer(self.context.get_buffer(buffer.handle).raw)
+                            .offset(0)
+                            .range(vk::WHOLE_SIZE)
+                            .build()
+                        ),
+                    })
+                })
+                .collect();
+            let bindings = bindings?;
+
+            self.bind_descriptor_set(&pipeline, *set_idx, &bindings);
+        }
+
+        Ok(())
+    }
+
+    fn bind_descriptor_set(
+        &self,
+        pipeline: &CommonPipeline,
+        set_index: u32,
+        bindings: &[DescriptorSetBinding],
+    ) {
+        let raw_device = &self.context.device.raw;
+
+        let pool = {
+            let descriptor_pool_ci = vk::DescriptorPoolCreateInfo::builder()
+                .max_sets(1)
+                .pool_sizes(&pipeline.descriptor_pool_sizes);
+    
+            unsafe { raw_device.create_descriptor_pool(&descriptor_pool_ci, None) }.unwrap()
+        };
+
+        // release in next frame
+        self.context.device.defer_release(pool);
+
+        // create descriptor set
+        let descriptor_set = {
+            let allocate_info = vk::DescriptorSetAllocateInfo::builder()
+                .descriptor_pool(pool)
+                .set_layouts(std::slice::from_ref(
+                    &pipeline.descriptor_set_layouts[set_index as usize],
+                ));
+    
+            unsafe { raw_device.allocate_descriptor_sets(&allocate_info) }.unwrap()[0]
+        };
+
+        let set_layout_info = if let Some(set_layout_info) = pipeline.set_layout_infos.get(set_index as usize) {
+            set_layout_info
+        } else {
+            panic!("Expect set {} but not found in pipeline shader!", set_index)
+        };
+
+        // update descriptor set and bind it
+        let descriptor_writes = bindings.iter()
+            .enumerate()
+            // the binding must be defined in the pipeline shader
+            .filter(|(binding_idx, _)| set_layout_info.contains_key(&(*binding_idx as u32)))
+            .map(|(binding_idx, binding)| {
+                let write = vk::WriteDescriptorSet::builder()
+                    .dst_set(descriptor_set)
+                    .dst_binding(binding_idx as u32)
+                    .dst_array_element(0);
+
+                match binding {
+                    DescriptorSetBinding::Image(image) => write
+                        .descriptor_type(match image.image_layout {
+                            vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL => {
+                                vk::DescriptorType::SAMPLED_IMAGE
+                            }
+                            vk::ImageLayout::GENERAL => vk::DescriptorType::STORAGE_IMAGE,
+                            _ => unimplemented!(),
+                        })
+                        .image_info(std::slice::from_ref(image))
+                        .build(),
+                    DescriptorSetBinding::ImageArray(images) => {
+                        assert!(!images.is_empty());
+
+                        write.descriptor_type(match images[0].image_layout {
+                            vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL => {
+                                vk::DescriptorType::SAMPLED_IMAGE
+                            }
+                            vk::ImageLayout::GENERAL => vk::DescriptorType::STORAGE_IMAGE,
+                            _ => unimplemented!(),
+                        })
+                        .image_info(images.as_slice())
+                        .build()
+                    },
+                    DescriptorSetBinding::Buffer(buffer) => write
+                        // all is storage buffer??
+                        .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                        .buffer_info(std::slice::from_ref(buffer))
+                        .build(),
+                }
+            })
+            .collect::<Vec<_>>();
+
+        unsafe {
+            raw_device.update_descriptor_sets(&descriptor_writes, &[]);
+
+            raw_device.cmd_bind_descriptor_sets(
+                self.cb.raw, 
+                pipeline.pipeline_bind_point, 
+                pipeline.pipeline_layout, 
+                set_index, 
+                &[descriptor_set], 
+                &[]
+            );
+        }
+    }
+}

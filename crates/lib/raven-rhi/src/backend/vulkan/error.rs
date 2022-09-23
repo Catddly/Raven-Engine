@@ -14,6 +14,12 @@ pub enum RHIError {
 
     // #[error("Shader Failed to compile with: {error:?}")]
     // ShaderCompilation { error: LazyEvalError },
+
+    #[error("Vulkan framebuffer is invalid, need to reconstruct!")]
+    FramebufferInvalid,
+
+    #[error("Vulkan failed on acquiring next image: {err:?}")]
+    AcquiredImageFailed { err: ash::vk::Result },
 }
 
 impl From<ash::vk::Result> for RHIError {

@@ -1,6 +1,8 @@
+use std::hash::Hash;
+
 use ash::vk;
 
-use super::allocator::{Allocator, MemoryLocation, AllocationCreateDesc, Allocation};
+use super::allocator::{Allocator, MemoryLocation, AllocationCreateDesc, Allocation, self};
 use super::{Device, error};
 use super::RHIError;
 
@@ -10,7 +12,7 @@ pub struct Buffer {
     pub allocation: Allocation,
 }
 
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct BufferDesc {
     pub size: usize,
     pub alignment: Option<usize>,
@@ -54,7 +56,7 @@ impl Device {
         desc: BufferDesc,
         name: &str,
     ) -> anyhow::Result<Buffer, RHIError> {
-        let buffer = Self::create_buffer_internal(&self.raw, &mut self.global_allocator.lock().unwrap(), desc, &name)?;
+        let buffer = Self::create_buffer_internal(&self.raw, &mut self.global_allocator.lock(), desc, &name)?;
 
         Ok(buffer)
     }
@@ -68,7 +70,6 @@ impl Device {
         }
         self.global_allocator
             .lock()
-            .unwrap()
             .free(buffer.allocation)
             .expect("Failed to free memory of vulkan buffer!");
     }
@@ -99,7 +100,7 @@ impl Device {
             .allocate(&AllocationCreateDesc {
                 name,
                 requirements,
-                location: desc.memory_location,
+                location: allocator::to_inner_memory_location(&desc.memory_location),
                 linear: true, // buffer is always consecutive in memory
             })
             .map_err(move |err| RHIError::AllocationFailure { 

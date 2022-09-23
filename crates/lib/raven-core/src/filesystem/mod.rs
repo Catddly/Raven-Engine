@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 use std::env::{set_current_dir, current_exe};
-use std::sync::Mutex;
 use std::time::Duration;
 
+use parking_lot::Mutex;
 use anyhow::bail;
 use lazy_static::lazy_static;
 use hotwatch::Hotwatch;

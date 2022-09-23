@@ -1,0 +1,167 @@
+use std::sync::Arc;
+use std::cell::Cell;
+
+use raven_rhi::{
+    backend::{Device, Image, Buffer, AccessType},
+    pipeline_cache::{PipelineCache, RasterPipelineHandle, ComputePipelineHandle},
+};
+
+use crate::{
+    graph::{RenderGraph, AnalyzedResourceInfos, ResourceUsage},
+    graph_resource::{GraphResource, GraphResourceDesc, GraphResourceImportedData},
+    executing_graph::ExecutingRenderGraph,
+    transient_resource_cache::TransientResourceCache,
+};
+
+/// Pipeline handles to the pipeline cache.
+pub struct RenderGraphPipelineHandles {
+    pub raster_pipeline_handles: Vec<RasterPipelineHandle>,
+    pub compute_pipeline_handles: Vec<ComputePipelineHandle>,
+}
+
+pub(crate) struct CompiledRenderGraph {
+    pub(crate) render_graph: RenderGraph,
+    pub(crate) resource_infos: AnalyzedResourceInfos,
+
+    pub(crate) pipelines: RenderGraphPipelineHandles,
+}
+
+pub(crate) enum GraphPreparedResource {
+    CreatedImage(Image),
+    ImportedImage(Arc<Image>),
+    CreatedBuffer(Buffer),
+    ImportedBuffer(Arc<Buffer>),
+
+    Delayed(GraphResource),
+}
+
+impl GraphPreparedResource {
+    pub fn borrow(&self) -> GraphPreparedResourceRef {
+        match &self {
+            GraphPreparedResource::CreatedImage(image) => GraphPreparedResourceRef::Image(image),
+            GraphPreparedResource::ImportedImage(image) => GraphPreparedResourceRef::Image(&*image),
+
+            GraphPreparedResource::CreatedBuffer(buffer) => GraphPreparedResourceRef::Buffer(buffer),
+            GraphPreparedResource::ImportedBuffer(buffer) => GraphPreparedResourceRef::Buffer(&*buffer),
+
+            GraphPreparedResource::Delayed(_) => panic!("Can not borrow GraphPreparedResource::Delayed resource, it doesn't exist!"),
+        }
+    }
+}
+
+// used to borrow inner resource from GraphPreparedResource, and flatten out the differences of Created or Imported.
+pub(crate) enum GraphPreparedResourceRef<'a> {
+    Image(&'a Image),
+    Buffer(&'a Buffer),
+}
+
+pub struct RegisteredResource {
+    pub(crate) resource: GraphPreparedResource,
+    access: Cell<AccessType>,
+}
+
+impl RegisteredResource {
+    pub fn get_current_access(&self) -> AccessType {
+        self.access.get()
+    }
+
+    pub fn transition_to(&self, dst_access: AccessType) {
+        self.access.set(dst_access);
+    }
+}
+
+impl CompiledRenderGraph {
+    /// Gather or create all the resources.
+    #[must_use]
+    pub(crate) fn prepare_execute<'a, 'b>(
+        self, 
+        device: &'a Device,
+        pipeline_cache: &'b mut PipelineCache,
+        cache: &mut TransientResourceCache,
+    ) -> ExecutingRenderGraph<'a, 'b> {
+        let registered_resources = self.render_graph.resources.iter()
+            .enumerate()
+            .map(|(idx, resource)| {
+                match resource {
+                    GraphResource::Created(created) => {
+                        match created.desc {
+                            GraphResourceDesc::Image(mut desc) => {
+                                if let ResourceUsage::Image(usage) = self.resource_infos.resource_usages[idx] {
+                                    desc.usage = usage;
+                                } else {
+                                    panic!("Expect image description, but not found in the analyzed resource infos!");
+                                }
+
+                                // get image from the cache of the last frame
+                                let image = if let Some(image) = cache.get_image(&desc) {
+                                    image
+                                } else {
+                                    device.create_image(desc.clone()).unwrap()
+                                };
+
+                                RegisteredResource {
+                                    // this resource is owned by the render graph, it doesn't matter what its access type is at first.
+                                    access: Cell::new(AccessType::Nothing),
+                                    resource: GraphPreparedResource::CreatedImage(image),
+                                }
+                            },
+                            GraphResourceDesc::Buffer(mut desc) => {
+                                if let ResourceUsage::Buffer(usage) = self.resource_infos.resource_usages[idx] {
+                                    desc.usage = usage;
+                                } else {
+                                    panic!("Expect buffer description, but not found in the analyzed resource infos!");
+                                }
+
+                                let buffer = if let Some(buffer) = cache.get_buffer(&desc) {
+                                    buffer
+                                } else {
+                                    device.create_buffer(desc.clone(), "rg_created_buffer").unwrap()
+                                };
+
+                                RegisteredResource {
+                                    // this resource is owned by the render graph, it doesn't matter what its access type is at first.
+                                    access: Cell::new(AccessType::Nothing),
+                                    resource: GraphPreparedResource::CreatedBuffer(buffer),
+                                }
+                            }
+                        }
+                    },
+                    GraphResource::Imported(imported) => {
+                        match imported {
+                            GraphResourceImportedData::Image{ raw, access } => {
+                                RegisteredResource {
+                                    access: Cell::new(*access),
+                                    resource: GraphPreparedResource::ImportedImage(raw.clone()),
+                                }
+                            },
+                            GraphResourceImportedData::Buffer{ raw, access } => {
+                                RegisteredResource {
+                                    access: Cell::new(*access),
+                                    resource: GraphPreparedResource::ImportedBuffer(raw.clone()),
+                                }
+                            },
+                            GraphResourceImportedData::SwapchainImage => {
+                                RegisteredResource {
+                                    access: Cell::new(AccessType::ComputeShaderWrite),
+                                    resource: GraphPreparedResource::Delayed(resource.clone()),
+                                }
+                            }
+                        }
+                    }
+                }
+            })
+            .collect::<Vec<_>>();
+
+        ExecutingRenderGraph {
+            device,
+            pipeline_cache,
+
+            passes: self.render_graph.passes.into(),
+            native_resources: self.render_graph.resources,
+            registered_resources,
+            exported_resources: self.render_graph.exported_resources,
+
+            pipelines: self.pipelines,
+        }
+    }
+}
