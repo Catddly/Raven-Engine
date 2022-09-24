@@ -4,7 +4,7 @@ use parking_lot::Mutex;
 use ash::vk::{self};
 use derive_builder::Builder;
 
-use super::allocator::{MemoryLocation, AllocationCreateDesc, self};
+use super::allocator::{MemoryLocation, AllocationCreateDesc, self, Allocation};
 use super::{Device, RHIError};
 
 // image type is associated with image view type.
@@ -34,6 +34,9 @@ pub fn image_type_to_view_type(image_type: ImageType) -> vk::ImageViewType {
 
 pub struct Image {
     pub raw: vk::Image,
+    // TODO: shared memory images
+    // why Option? because swapchain image doesn't have Allocation, but we want a unified representation of Image.
+    pub allocation: Option<Allocation>,
     pub desc: ImageDesc,
     pub views: Mutex<HashMap<ImageViewDesc, vk::ImageView>>,
 }
@@ -120,7 +123,6 @@ impl Device {
             })?;
 
         // bind memory
-        // TODO: shared memory images
         unsafe {
             self.raw
                 .bind_image_memory(image, allocation.memory(), allocation.offset())
@@ -129,6 +131,7 @@ impl Device {
 
         Ok(Image {
             raw: image,
+            allocation: Some(allocation),
             desc,
             views: Mutex::new(HashMap::new()),
         })
@@ -154,6 +157,25 @@ impl Device {
         };
 
         Ok(unsafe { self.raw.create_image_view(&create_info, None)? })
+    }
+
+    pub fn destroy_image(&self, image: Image) {
+        let views = image.views.into_inner();
+        for (_, view) in views {
+            unsafe {
+                self.raw
+                    .destroy_image_view(view, None);
+            }
+        }
+
+        if let Some(alloc) = image.allocation {
+            self.global_allocator.lock().free(alloc).expect("Failed to free vulkan image memory!");
+        }
+
+        unsafe {
+            self.raw
+                .destroy_image(image.raw, None);
+        }
     }
 }
 

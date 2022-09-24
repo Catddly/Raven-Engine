@@ -71,7 +71,7 @@ impl LazyWorker for StoreFile {
     type Output = anyhow::Result<PathBuf>;
 
     async fn run(self, _ctx: RunContext) -> Self::Output {
-        let mut path = super::project_folder_path(&self.folder).unwrap();
+        let mut path = super::get_project_folder_path_absolute(self.folder).unwrap();
         path.extend(self.name.iter());
         assert!(path.is_file());
 

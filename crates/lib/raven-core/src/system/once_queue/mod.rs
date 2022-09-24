@@ -1,8 +1,24 @@
 use std::collections::VecDeque;
 
+use parking_lot::{Once, OnceState};
+use thiserror::Error;
+
 use crate::reflection::function::*;
 
-type OnceJob = Box<dyn FnOnce() -> anyhow::Result<()> + 'static>;
+type OnceJobFunc = Box<dyn FnOnce() -> anyhow::Result<()> + 'static>;
+
+#[derive(Debug, Error)]
+pub enum OnceQueueError {
+    #[error("Once queue execution failed on {func_name}")]
+    ExecutionPoisoned {
+        func_name: String,
+    },
+}
+
+struct OnceJob {
+    once: Once,
+    job: OnceJobFunc,
+}
 
 /// Queue to do all job once and check if they all success.
 pub struct OnceQueue {
@@ -21,20 +37,25 @@ impl OnceQueue {
         F: FnOnce() -> anyhow::Result<()> + 'static,
     {
         let func_name = get_function_name(&func).to_string();
-        self.queue.push_back((Box::new(func), func_name));
+        self.queue.push_back((OnceJob {
+            once: Once::new(),
+            job: Box::new(func)
+        }, func_name));
     }
 
-    pub fn execute(&mut self) -> anyhow::Result<()> {
+    pub fn execute(&mut self) -> anyhow::Result<(), OnceQueueError> {
         let drained_queue = self.queue.drain(..);
 
         for job in drained_queue {
             let (job, name) = job;
-            
-            let result = job();
-            if let Err(err) = &result {
-                // log module may not be initialized, so use eprintln! here.
-                eprintln!("Failed to execute once queue job: {}, with error: {}", name, err);
-                return result;
+            let job_func = job.job;
+
+            // here we call unwarp(), it this once call failed, we get poisoned result.
+            job.once.call_once(move || { job_func().unwrap() });
+            let result = job.once.state();
+
+            if let OnceState::Poisoned = &result {
+                return Err(OnceQueueError::ExecutionPoisoned { func_name: name });
             }
         }
 

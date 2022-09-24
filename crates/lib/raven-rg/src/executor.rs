@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use ash::vk;
-use turbosloth::LazyCache;
 
 use raven_rhi::{RHI, backend::{Device, barrier::{self, ImageBarrier}, Swapchain}, pipeline_cache::PipelineCache};
 
@@ -36,7 +35,7 @@ impl Executor {
             device: rhi.device.clone(),
 
             compiled_rg: None,
-            pipeline_cache: PipelineCache::new(LazyCache::create()),
+            pipeline_cache: PipelineCache::new(),
 
             transient_resource_cache: TransientResourceCache::new(),
             temporal_resources: Default::default(),
@@ -71,7 +70,7 @@ impl Executor {
         self.compiled_rg = Some(rg.compile(&mut self.pipeline_cache));
 
         // update and compile pipeline shaders
-        match self.pipeline_cache.prepare() {
+        match self.pipeline_cache.prepare(&self.device) {
             Ok(()) => {
                 // If this frame is successfully prepared, we get all the resources ready to be drawn
                 self.temporal_resources = RenderGraphTemporalResources::Exported(exported_temp_resources);
@@ -258,5 +257,13 @@ impl Executor {
 
         // take this frame back, we want to keep only one owner when we start a new frame (see begin_frame())
         self.device.end_frame(draw_frame);
+    }
+
+    /// Explicitly clean up all the resources using inside a render graph.
+    pub fn shutdown(self) {
+        self.device.wait_idle();
+
+        self.pipeline_cache.clean(&self.device);
+        self.transient_resource_cache.clean(&self.device);
     }
 }

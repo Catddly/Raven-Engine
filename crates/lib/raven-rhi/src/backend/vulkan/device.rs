@@ -51,6 +51,12 @@ impl Device {
         DeviceBuilder::default()
     }
 
+    pub fn wait_idle(&self) {
+        unsafe {
+            self.raw.device_wait_idle().expect("Failed to wait device idle!");
+        }
+    }
+
     pub fn defer_release(&self, pool: vk::DescriptorPool) {
         let current_frame = self.current_frame.get() as usize;
         let draw_frame = self.draw_frames[current_frame].lock();

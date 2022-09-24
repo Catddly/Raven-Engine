@@ -42,6 +42,7 @@ struct ComputePipelineEntry {
 }
 
 pub struct PipelineCache {
+    /// Storing all the spirv binaries
     lazy_cache: Arc<LazyCache>,
 
     raster_pipelines_entry: HashMap<RasterPipelineHandle, RasterPipelineEntry>,
@@ -56,9 +57,9 @@ pub struct PipelineCache {
 }
 
 impl PipelineCache {
-    pub fn new(lazy_cache: Arc<LazyCache>) -> Self {
+    pub fn new() -> Self {
         Self {
-            lazy_cache,
+            lazy_cache: LazyCache::create(),
 
             raster_pipelines_entry: HashMap::new(),
             compute_pipelines_entry: HashMap::new(),
@@ -138,16 +139,16 @@ impl PipelineCache {
             .unwrap()
     }
 
-    pub fn prepare(&mut self) -> anyhow::Result<()>{
-        self.discard_stale_pipelines();
+    pub fn prepare(&mut self, device: &Device) -> anyhow::Result<()>{
+        self.discard_stale_pipelines(&device);
         self.parallel_compile_shaders()?;
 
         Ok(())
     }
 
     pub fn update_pipelines(&mut self, device: &Device) {
-        for (handle, cache) in &self.raster_pipeline_spirv_cache {
-            let raster_pipe_entry = self.raster_pipelines_entry.get_mut(handle).unwrap();
+        for (handle, cache) in self.raster_pipeline_spirv_cache.drain() {
+            let raster_pipe_entry = self.raster_pipelines_entry.get_mut(&handle).unwrap();
 
             let raster_pipe = pipeline::create_raster_pipeline(&device, raster_pipe_entry.desc.clone(), cache.as_slice())
                 .expect(format!("Failed to create new raster pipeline for {}", handle).as_str());
@@ -155,28 +156,26 @@ impl PipelineCache {
             raster_pipe_entry.pipeline = Some(Arc::new(raster_pipe));
         }
         
-        for (handle, cache) in &self.compute_pipeline_spirv_cache {
-            let compute_pipe_entry = self.compute_pipelines_entry.get_mut(handle).unwrap();
+        for (handle, cache) in self.compute_pipeline_spirv_cache.drain() {
+            let compute_pipe_entry = self.compute_pipelines_entry.get_mut(&handle).unwrap();
             
             let compute_pipe = pipeline::create_compute_pipeline(&device, &cache)
-            .expect(format!("Failed to create new raster pipeline for {}", handle).as_str());
+                .expect(format!("Failed to create new raster pipeline for {}", handle).as_str());
             
             compute_pipe_entry.pipeline = Some(Arc::new(compute_pipe));
         }
-        
-        //glog::debug!("Pipelines are ready, going to drop spirvs!");
-        // at this point, all the pipeline that is necessary to update is updated, clear the spirv
-        self.raster_pipeline_spirv_cache.clear();
-        self.compute_pipeline_spirv_cache.clear();
     }
 
-    fn discard_stale_pipelines(&mut self) {
+    fn discard_stale_pipelines(&mut self, device: &Device) {
         // wipe out all the stale pipelines
         for (_, entry) in &mut self.raster_pipelines_entry {
             // if the shader binary is not up-to-date, the pipeline need to be reconstructed
             if !entry.lazy_binary.is_up_to_date() {
-                if let Some(_pipe) = &mut entry.pipeline {
-                    // TODO: release old pipeline
+                if let Some(pipe) = entry.pipeline.take() {
+                    // make sure no one is still using this pipeline
+                    let pipe = Arc::try_unwrap(pipe).expect("User holding a smart pointer to some stale raster pipeline!");
+                    pipeline::destroy_raster_pipeline(&device, pipe);
+
                     entry.pipeline = None;
                 }
             }
@@ -185,8 +184,11 @@ impl PipelineCache {
         for (_, entry) in &mut self.compute_pipelines_entry {
             // if the shader binary is not up-to-date, the pipeline need to be reconstructed
             if !entry.lazy_binary.is_up_to_date() {
-                if let Some(_pipe) = &mut entry.pipeline {
-                    // TODO: release old pipeline
+                if let Some(pipe) = entry.pipeline.take() {
+                    // make sure no one is still using this pipeline
+                    let pipe = Arc::try_unwrap(pipe).expect("User holding a smart pointer to some stale compute pipeline!");
+                    pipeline::destroy_compute_pipeline(&device, pipe);
+
                     entry.pipeline = None;
                 }
             }
@@ -238,6 +240,25 @@ impl PipelineCache {
         }
 
         Ok(())
+    }
+
+    /// Clean all the pipelines.
+    pub fn clean(self, device: &Device) {
+        for (_, entry) in self.raster_pipelines_entry {
+            if let Some(pipe) = entry.pipeline {
+                // make sure no one is still using this pipeline
+                let pipe = Arc::try_unwrap(pipe).expect("User holding a smart pointer to some stale raster pipeline!");
+                pipeline::destroy_raster_pipeline(&device, pipe);
+            }
+        }
+        
+        for (_, entry) in self.compute_pipelines_entry {
+            if let Some(pipe) = entry.pipeline {
+                // make sure no one is still using this pipeline
+                let pipe = Arc::try_unwrap(pipe).expect("User holding a smart pointer to some stale compute pipeline!");
+                pipeline::destroy_compute_pipeline(&device, pipe);
+            }
+        }
     }
 }
 

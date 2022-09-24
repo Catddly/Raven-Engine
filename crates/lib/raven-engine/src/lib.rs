@@ -4,7 +4,7 @@ use ash::vk;
 
 use raven_core::winit::{
     event_loop::{EventLoop},
-    dpi::{LogicalSize},
+    dpi::{LogicalSize, LogicalPosition},
     window::{Window, WindowBuilder},
     event::{WindowEvent, Event, VirtualKeyCode, ElementState}, 
     platform::run_return::EventLoopExtRunReturn,
@@ -30,14 +30,17 @@ pub struct EngineContext {
     pub main_window: Window,
     event_loop: EventLoop<()>,
 
-    pub rhi: RHI,
-    pub rg_executor: Executor,
+    rhi: RHI,
+    rg_executor: Executor,
 
-    pub main_renderpass: Arc<backend::RenderPass>,
+    main_renderpass: Arc<backend::RenderPass>,
 }
 
 fn init_filesystem_module() -> anyhow::Result<()> {
     filesystem::set_default_root_path()?;
+    
+    filesystem::set_custom_mount_point(ProjectFolder::ShaderSource, "../../resource/shader_src/")?;
+
     Ok(())
 }
 
@@ -55,8 +58,8 @@ fn init_log_module() -> anyhow::Result<()> {
 pub fn init() -> anyhow::Result<EngineContext> {
     let mut init_queue = OnceQueue::new();
 
-    init_queue.push_job(init_filesystem_module); // init filesystem
-    init_queue.push_job(init_log_module); // init log
+    init_queue.push_job(init_filesystem_module);
+    init_queue.push_job(init_log_module);
 
     init_queue.execute()?;
 
@@ -68,12 +71,24 @@ pub fn init() -> anyhow::Result<EngineContext> {
         .next()
         .expect("Must have at least one video modes!");
 
+    let primary_monitor = event_loop.primary_monitor()
+        .expect("Must have at least one monitor!");
+    let scale_factor = primary_monitor.scale_factor();
+    let monitor_resolution = primary_monitor.size().to_logical::<f64>(scale_factor);
+
+    let window_resolution = LogicalSize::new(
+        1920.0,
+        1080.0
+    );
+    let window_position = LogicalPosition::new (
+        (monitor_resolution.width - window_resolution.width) / 2.0,
+        (monitor_resolution.height - window_resolution.height) / 2.0,
+    );  
+
     // create main window
     let main_window = WindowBuilder::new()
-        .with_inner_size(LogicalSize::new(
-            1280.0,
-            720.0
-        ))
+        .with_inner_size(window_resolution)
+        .with_position(window_position)
         .with_resizable(false)
         .with_title("Raven Engine")
         .build(&event_loop)
@@ -89,7 +104,7 @@ pub fn init() -> anyhow::Result<EngineContext> {
 
     let rg_executor = Executor::new(&rhi)?;
 
-    // TODO: stick this inside a renderer
+    // TODO: put this inside a renderer
     let main_renderpass = backend::render_pass::create_render_pass(&rhi.device, 
         backend::render_pass::RenderPassDesc {
             color_attachments: &[backend::render_pass::RenderPassAttachmentDesc::new(vk::Format::R8G8B8A8_UNORM).useless_input()],
@@ -271,7 +286,7 @@ pub fn main_loop(engine_context: &mut EngineContext) {
 }
 
 /// Shutdown raven engine.
-pub fn shutdown(_engine_context: EngineContext) {
-    // here will have a OnceQueue to shutdown.
+pub fn shutdown(engine_context: EngineContext) {
+    engine_context.rg_executor.shutdown();
     glog::trace!("Raven Engine shutdown.");
 }

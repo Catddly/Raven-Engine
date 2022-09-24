@@ -106,7 +106,7 @@ impl LazyWorker for CompileShader {
             "glsl" => unimplemented!(),
             "hlsl" => {
                 let file_name = PathBuf::from(self.source.to_str().unwrap().to_owned());
-                let mut path = filesystem::project_folder_path(&filesystem::ProjectFolder::ShaderSource)?;
+                let mut path = filesystem::get_project_folder_path_absolute(filesystem::ProjectFolder::ShaderSource)?;
                 path.extend(file_name.iter());
 
                 let source = shader_prepper::process_file(
@@ -255,7 +255,7 @@ fn compile_shader_hlsl(
     )
     .map_err(|err| anyhow::anyhow!("{}", err))?;
 
-    glog::trace!("DX Compiler compile {} with {:?}", name, t.elapsed());
+    glog::info!("DX Compiler compile {} with {:?}", name, t.elapsed());
 
     Ok(spirv.into())
 }

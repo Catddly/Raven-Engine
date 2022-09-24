@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use std::env::{set_current_dir, current_exe};
+use std::env;
 use std::time::Duration;
 
 use parking_lot::Mutex;
@@ -10,6 +10,7 @@ use hotwatch::Hotwatch;
 mod project;
 pub mod lazy;
 pub use project::ProjectFolder as ProjectFolder;
+use project::CUSTUM_MOUNT_POINT;
 
 lazy_static! {
     pub(crate) static ref FILE_HOT_WATCHER: Mutex<Hotwatch> = Mutex::new(Hotwatch::new_with_custom_delay(Duration::from_millis(200)).unwrap());
@@ -20,7 +21,6 @@ lazy_static! {
 pub fn root_path() -> anyhow::Result<PathBuf> {
     Ok(std::env::current_dir()?)
 }
-
 
 /// Set the root path of the engine.
 pub fn set_root_path(p: impl Into<PathBuf>) -> anyhow::Result<()> {
@@ -33,15 +33,45 @@ pub fn set_root_path(p: impl Into<PathBuf>) -> anyhow::Result<()> {
     Ok(())
 }
 
+pub fn set_custom_mount_point(pf: ProjectFolder, relative_path: impl Into<PathBuf>) -> anyhow::Result<()> {
+    let relative_path = relative_path.into();
+    if relative_path.is_absolute() {
+        anyhow::bail!("Try to set custom mount point with absolute path!")
+    }
+
+    CUSTUM_MOUNT_POINT.lock().set_custom_mount_point(pf, relative_path);
+    Ok(())
+}
+
+fn to_relative(path: PathBuf) -> anyhow::Result<PathBuf> {
+    if path.is_absolute() {
+        let current_dir = root_path()?;
+        if !path.starts_with(current_dir.clone()) {
+            anyhow::bail!("Pass in absolute path is an invalid path for engine!");
+        }
+
+        let path = path.strip_prefix(current_dir).unwrap();
+        Ok(path.to_path_buf())
+    } else {
+        anyhow::bail!("Pass in a relative path, required absolute path!");
+    }
+}
+
 /// Get the absolute path of ProjectFolder pf.
 #[inline]
-pub fn project_folder_path(pf: &ProjectFolder) -> anyhow::Result<PathBuf> {
+pub fn get_project_folder_path_absolute(pf: ProjectFolder) -> anyhow::Result<PathBuf> {
     Ok(project::get_project_folder_path(&root_path()?, pf))
+}
+
+/// Get the relative path of ProjectFolder pf.
+#[inline]
+pub fn get_project_folder_path_relative(pf: ProjectFolder) -> anyhow::Result<PathBuf> {
+    Ok(to_relative(project::get_project_folder_path(&root_path()?, pf))?)
 }
 
 /// Set current engine root path to the path where the .exe exists.
 pub fn set_default_root_path() -> anyhow::Result<()> {
-    let exe_path = current_exe().expect("Failed to fetch vaild exe path!");
+    let exe_path = env::current_exe().expect("Failed to fetch vaild exe path!");
     let mut ancestors = exe_path.ancestors();
     ancestors.next();
 
@@ -56,7 +86,7 @@ pub fn set_default_root_path() -> anyhow::Result<()> {
 
 /// Check if ProjectFolder pf exists, if not, create a empty folder.
 pub fn exist_or_create(pf: ProjectFolder) -> anyhow::Result<()> {
-    let folder_path = project_folder_path(&pf)?;
+    let folder_path = get_project_folder_path_absolute(pf)?;
     if !folder_path.as_path().exists() {
         std::fs::create_dir(folder_path)?;
     }
@@ -68,7 +98,7 @@ pub fn exist_or_create(pf: ProjectFolder) -> anyhow::Result<()> {
 pub fn exist(file: &PathBuf, folder: ProjectFolder) -> anyhow::Result<bool> {
     assert!(file.is_file());
 
-    let mut folder_path = project_folder_path(&folder)?;
+    let mut folder_path = get_project_folder_path_absolute(folder)?;
     folder_path.extend(file.iter());
 
     // to avoid symbolic links changed maliciously by someone
@@ -81,7 +111,7 @@ fn mount(p: impl Into<PathBuf>) -> anyhow::Result<()> {
     if !p.is_dir() {
         bail!("Invalid root path: {}", p.display())
     } else {
-        set_current_dir(p)?
+        env::set_current_dir(p)?
     }
     Ok(())
 }

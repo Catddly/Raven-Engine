@@ -218,6 +218,7 @@ impl Swapchain {
             .map(|raw| 
                 Arc::new(Image {
                     raw: raw,
+                    allocation: None,
                     desc: ImageDesc::new_2d([builder.extent.width, builder.extent.height], vk::Format::B8G8R8A8_UNORM)
                         .usage_flags(vk::ImageUsageFlags::STORAGE),
                     views: Default::default(),

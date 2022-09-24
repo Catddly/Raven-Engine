@@ -7,6 +7,7 @@ use byte_slice_cast::AsSliceOf;
 
 use super::{RenderPass, ShaderSource, Device, ShaderBinaryStage, RHIError, descriptor::{self, PipelineSetLayouts}, PipelineShaderStage, ShaderBinary};
 
+#[derive(Debug)]
 pub struct CommonPipeline {
     pub pipeline_layout: vk::PipelineLayout,
     pub pipeline: vk::Pipeline,
@@ -25,8 +26,6 @@ pub struct RasterPipelineDesc {
     pub culling: bool,
     #[builder(default = "true")]
     pub depth_write: bool,
-    #[builder(default)]
-    pub push_constants_bytes: usize,  // push constants for the whole raster pipeline.
 }
 
 impl RasterPipelineDesc {
@@ -35,6 +34,7 @@ impl RasterPipelineDesc {
     }
 }
 
+#[derive(Debug)]
 pub struct RasterPipeline {
     pub pipeline: CommonPipeline,
 }
@@ -63,6 +63,7 @@ impl ComputePipelineDesc {
     }
 }
 
+#[derive(Debug)]
 pub struct ComputePipeline {
     pub pipeline: CommonPipeline,
     pub dispatch_groups: [u32; 3],
@@ -261,6 +262,22 @@ pub fn create_raster_pipeline(
             pipeline_bind_point: vk::PipelineBindPoint::GRAPHICS,
         }
     })
+}
+
+pub fn destroy_raster_pipeline(device: &Device, pipeline: RasterPipeline) {
+    destroy_pipeline_common(device, pipeline.pipeline);
+}
+
+pub fn destroy_compute_pipeline(device: &Device, pipeline: ComputePipeline) {
+    destroy_pipeline_common(device, pipeline.pipeline);
+}
+
+#[inline]
+fn destroy_pipeline_common(device: &Device, pipeline: CommonPipeline) {
+    unsafe {
+        device.raw
+            .destroy_pipeline(pipeline.pipeline, None);
+    }
 }
 
 pub fn create_compute_pipeline(

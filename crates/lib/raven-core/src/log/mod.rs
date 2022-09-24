@@ -23,7 +23,7 @@ pub fn init_log(config: LogConfig) -> anyhow::Result<()> {
     filesystem::exist_or_create(filesystem::ProjectFolder::Log)?;
     setup_logger(config).expect("Failed to initialize log module!");
     
-    trace!("log initialized!");
+    glog::trace!("log initialized!");
     Ok(())
 }
 
