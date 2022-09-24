@@ -43,6 +43,7 @@ pub fn set_custom_mount_point(pf: ProjectFolder, relative_path: impl Into<PathBu
     Ok(())
 }
 
+#[deprecated = "Get an relative path of ProjectFolder may conflict with custom project path!"]
 fn to_relative(path: PathBuf) -> anyhow::Result<PathBuf> {
     if path.is_absolute() {
         let current_dir = root_path()?;
@@ -64,8 +65,9 @@ pub fn get_project_folder_path_absolute(pf: ProjectFolder) -> anyhow::Result<Pat
 }
 
 /// Get the relative path of ProjectFolder pf.
-#[inline]
+#[deprecated = "Get an relative path of ProjectFolder may conflict with custom project path!"]
 pub fn get_project_folder_path_relative(pf: ProjectFolder) -> anyhow::Result<PathBuf> {
+    #[allow(deprecated)]
     Ok(to_relative(project::get_project_folder_path(&root_path()?, pf))?)
 }
 
