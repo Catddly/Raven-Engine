@@ -65,14 +65,12 @@ pub fn init() -> anyhow::Result<EngineContext> {
 
     // init event loop
     let event_loop = EventLoop::new();
-    event_loop.primary_monitor()
-        .expect("Must have at least one monitor!")
-        .video_modes()
+    let primary_monitor = event_loop.primary_monitor()
+        .expect("Must have at least one monitor!");
+    primary_monitor.video_modes()
         .next()
         .expect("Must have at least one video modes!");
 
-    let primary_monitor = event_loop.primary_monitor()
-        .expect("Must have at least one monitor!");
     let scale_factor = primary_monitor.scale_factor();
     let monitor_resolution = primary_monitor.size().to_logical::<f64>(scale_factor);
 

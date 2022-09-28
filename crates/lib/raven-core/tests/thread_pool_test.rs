@@ -1,4 +1,4 @@
-use raven_core::thread::ThreadPool;
+use raven_core::concurrent::ThreadPool;
 
 #[test]
 fn thread_pool_works() {

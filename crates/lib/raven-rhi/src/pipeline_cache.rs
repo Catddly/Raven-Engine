@@ -4,6 +4,8 @@ use std::collections::hash_map::Entry;
 
 use turbosloth::*;
 
+use raven_core::concurrent::executor;
+
 use crate::{
     backend::{RasterPipeline, ShaderBinary, RasterPipelineDesc, ComputePipelineDesc, ComputePipeline, PipelineShaderDesc, ShaderSource, ShaderBinaryStage, Device, pipeline},
     shader_compiler::{CompileShader, CompileShaderStage}
@@ -200,7 +202,7 @@ impl PipelineCache {
             .filter_map(|(&handle, entry)| {
                 entry.pipeline.is_none().then(|| {
                     let future = entry.lazy_binary.eval(&self.lazy_cache);
-                    smol::spawn(async move {
+                    executor::spawn(async move {
                         future.await
                             .map(|binaries| CompiledShaderOutput::Raster { handle, binaries })
                     })
@@ -211,7 +213,7 @@ impl PipelineCache {
             .filter_map(|(&handle, entry)| {
                 entry.pipeline.is_none().then(|| {
                     let future = entry.lazy_binary.eval(&self.lazy_cache);
-                    smol::spawn(async move {
+                    executor::spawn(async move {
                         future.await
                             .map(|binary| CompiledShaderOutput::Compute { handle, binary })
                     })

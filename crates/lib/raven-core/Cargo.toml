@@ -14,6 +14,8 @@ num_cpus = "1.13.1" # get the number of cores of current cpu
 lazy_static = "1.4.0"
 # mut_static = "5.0.0"
 # thread_local = "1.1.4"
+memmap2 = "0.5.0"
+byteorder = "1.4.0"
 
 # More compact and efficient implementations of the standard synchronization primitives.
 parking_lot = "0.12.0"
@@ -24,6 +26,11 @@ hotwatch = "0.4.6"
 bytes = "1.2.0"
 # May write our own on-demand computing library
 turbosloth = "0.2.0"
+
+# async
+async-io = "1.9.0"
+once_cell = "1.15.0"
+smol = "1.2.0"
 
 winit = "0.27.0"  # cross-platform window creation library
 

@@ -1,9 +1,10 @@
 extern crate log as glog; // to avoid name collision with my log module
 
 pub mod log;
+pub mod asset;
 pub mod console;
 pub mod filesystem;
-pub mod thread;
+pub mod concurrent;
 pub mod system;
 pub mod reflection;
 pub mod container;

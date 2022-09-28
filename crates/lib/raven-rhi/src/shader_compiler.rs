@@ -68,6 +68,8 @@ impl LazyWorker for CompileShader {
     type Output = anyhow::Result<ShaderBinary>;
     
     async fn run(self, ctx: RunContext) -> Self::Output {
+        //glog::debug!("Run {:?} on thread: {:?}", self.source, std::thread::current().name());
+
         let ext = self
             .source
             .extension()
@@ -143,6 +145,8 @@ impl LazyWorker for CompileShaderStage {
     type Output = anyhow::Result<Vec<ShaderBinaryStage>>;
     
     async fn run(self, ctx: RunContext) -> Self::Output {
+        //glog::debug!("Run batched on thread: {:?}", std::thread::current().name());
+
         let stages: Vec<_> = self.shaders.iter()
             .map(|(stage, compile_info)| (stage.clone(), compile_info.entry.clone()))
             .collect();
