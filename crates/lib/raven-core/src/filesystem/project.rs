@@ -27,6 +27,8 @@ impl ProjectFolder {
     pub const Template: Self = Self(5);
     #[allow(non_upper_case_globals)]
     pub const Vendor: Self = Self(6);
+    #[allow(non_upper_case_globals)]
+    pub const Baked: Self = Self(7);
 
     fn to_raw(&self) -> i32 {
         self.0
@@ -39,7 +41,7 @@ impl ProjectFolder {
 }
 
 pub struct CustomProjectMountPoint {
-    pub mount_points: [Option<PathBuf>; 7],
+    pub mount_points: [Option<PathBuf>; 8],
 }
 
 impl CustomProjectMountPoint {
@@ -58,7 +60,8 @@ impl CustomProjectMountPoint {
             ProjectFolder::ShaderSource |
             ProjectFolder::ShaderBinary |
             ProjectFolder::Template |
-            ProjectFolder::Vendor => self.mount_points[pf.to_raw() as usize] = Some(path),
+            ProjectFolder::Vendor |
+            ProjectFolder::Baked => self.mount_points[pf.to_raw() as usize] = Some(path),
             _ => panic!("Invalid project folder!"),
         }
     }
@@ -72,7 +75,8 @@ impl CustomProjectMountPoint {
             ProjectFolder::ShaderSource |
             ProjectFolder::ShaderBinary |
             ProjectFolder::Template |
-            ProjectFolder::Vendor => self.mount_points[pf.to_raw() as usize].as_ref(),
+            ProjectFolder::Vendor |
+            ProjectFolder::Baked => self.mount_points[pf.to_raw() as usize].as_ref(),
             _ => panic!("Invalid project folder!"),
         }
     }
@@ -87,7 +91,8 @@ fn get_project_folder_path_impl(root: &PathBuf, folder: ProjectFolder) -> PathBu
         ProjectFolder::ShaderSource |
         ProjectFolder::ShaderBinary |
         ProjectFolder::Template |
-        ProjectFolder::Vendor => {
+        ProjectFolder::Vendor |
+        ProjectFolder::Baked => {
             if let Some(path) = CUSTUM_MOUNT_POINT.lock().get_custom_mount_point(folder) {
                 path.canonicalize().unwrap().to_owned()
             } else {
@@ -99,6 +104,7 @@ fn get_project_folder_path_impl(root: &PathBuf, folder: ProjectFolder) -> PathBu
                     ProjectFolder::ShaderBinary => root.join("shader_bin"),
                     ProjectFolder::Template => root.join("template"),
                     ProjectFolder::Vendor => root.join("vendor"),
+                    ProjectFolder::Baked => root.join("baked"),
                     _ => unreachable!(),
                 }
             }

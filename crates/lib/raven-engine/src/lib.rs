@@ -16,6 +16,7 @@ extern crate log as glog;
 use raven_core::log;
 use raven_core::console;
 use raven_core::filesystem;
+use raven_core::asset::loader::{AssetLoader, mesh_loader};
 use raven_rhi::{RHIConfig, RHI, backend::{self, PipelineShaderDesc, PipelineShaderStage, RasterPipelineDesc}};
 use raven_rg::{Executor, IntoPipelineDescriptorBindings, RenderGraphPassBindable};
 
@@ -39,6 +40,7 @@ pub struct EngineContext {
 fn init_filesystem_module() -> anyhow::Result<()> {
     filesystem::set_default_root_path()?;
     
+    filesystem::set_custom_mount_point(ProjectFolder::Assets, "../../resource/assets/")?;
     filesystem::set_custom_mount_point(ProjectFolder::ShaderSource, "../../resource/shader_src/")?;
 
     Ok(())
@@ -101,6 +103,10 @@ pub fn init() -> anyhow::Result<EngineContext> {
     let rhi = RHI::new(rhi_config, &main_window)?;
 
     let rg_executor = Executor::new(&rhi)?;
+
+    // Temporary
+    let loader: Box<dyn AssetLoader> = Box::new(mesh_loader::GltfMeshLoader::new(std::path::PathBuf::from("mesh/cube.glb")));
+    loader.load()?;
 
     // TODO: put this inside a renderer
     let main_renderpass = backend::render_pass::create_render_pass(&rhi.device, 

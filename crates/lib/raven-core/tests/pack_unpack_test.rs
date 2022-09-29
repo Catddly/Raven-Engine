@@ -11,7 +11,7 @@ lazy_static::lazy_static! {
 
 const PACKED_FILE_NAME: &'static str = "test.packed";
 
-fn write_pack_byte_buffer() {
+fn write_packed_byte_buffer() {
     let test = Test::Asset {
         field_0: 8,
         field_1: 23,
@@ -27,7 +27,7 @@ fn write_pack_byte_buffer() {
 fn test_pack_unpacked() {
     use memmap2;
 
-    write_pack_byte_buffer();
+    write_packed_byte_buffer();
 
     // read back using memory mapped buffer
     let mut asset_map = ASSET_MMAPS.lock();

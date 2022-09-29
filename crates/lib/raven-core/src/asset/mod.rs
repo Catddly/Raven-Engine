@@ -1,4 +1,5 @@
 mod pack_unpack;
+pub mod loader;
 
 use std::marker::PhantomData;
 
