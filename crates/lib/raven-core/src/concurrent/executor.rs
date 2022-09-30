@@ -25,7 +25,14 @@ impl Future for AlwaysPending {
 
 pub fn spawn<T: Send + 'static>(future: impl Future<Output = T> + 'static + Send) -> Task<T> {
     static GLOBAL_EXECUTORS: Lazy<Executor<'_>> = Lazy::new(|| {
-        for i in 0..4 {
+        let num_cpus = num_cpus::get();
+        let num_threads = if num_cpus >= 4 {
+            4
+        } else {
+            1
+        };
+
+        for i in 0..num_threads {
             std::thread::Builder::new()
                 .name(format!("Executor {}", i))
                 .spawn(|| {

@@ -1,6 +1,8 @@
 mod pack_unpack;
 pub mod loader;
 
+mod raw_asset;
+
 use std::marker::PhantomData;
 
 use crate::container::{TreeByteBuffer, TreeByteBufferNode};

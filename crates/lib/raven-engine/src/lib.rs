@@ -105,7 +105,9 @@ pub fn init() -> anyhow::Result<EngineContext> {
     let rg_executor = Executor::new(&rhi)?;
 
     // Temporary
-    let loader: Box<dyn AssetLoader> = Box::new(mesh_loader::GltfMeshLoader::new(std::path::PathBuf::from("mesh/cube.glb")));
+    //let loader: Box<dyn AssetLoader> = Box::new(mesh_loader::GltfMeshLoader::new(std::path::PathBuf::from("mesh/cube.glb")));
+    //let loader: Box<dyn AssetLoader> = Box::new(mesh_loader::GltfMeshLoader::new(std::path::PathBuf::from("mesh/cornell_box/scene.gltf")));
+    let loader: Box<dyn AssetLoader> = Box::new(mesh_loader::GltfMeshLoader::new(std::path::PathBuf::from("mesh/336_lrm/scene.gltf")));
     loader.load()?;
 
     // TODO: put this inside a renderer

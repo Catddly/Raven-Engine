@@ -2,21 +2,25 @@ use std::{path::PathBuf};
 
 use thiserror::Error;
 
+#[derive(Debug)]
 pub enum LoadAssetImageType {
     Png,
     Dds,
 }
 
+#[derive(Debug)]
 pub enum LoadAssetMeshType {
     Gltf,
     Obj,
 }
 
+#[derive(Debug)]
 pub enum LoadAssetSceneType {
     RavenScene,
     JsonScene,
 }
 
+#[derive(Debug)]
 pub enum LoadAssetType {
     Image(LoadAssetImageType),
     Mesh(LoadAssetMeshType),
