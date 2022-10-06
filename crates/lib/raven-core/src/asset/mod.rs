@@ -1,12 +1,43 @@
 mod pack_unpack;
 pub mod loader;
 
-mod raw_asset;
-
-use std::marker::PhantomData;
+use std::{marker::PhantomData, fmt::Debug, any::{Any, TypeId}};
 
 use crate::container::{TreeByteBuffer, TreeByteBufferNode};
 use pack_unpack::*;
+
+pub enum AssetType {
+    Mesh,
+}
+
+impl Debug for AssetType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AssetType::Mesh => write!(f, "Mesh Asset")
+        }
+    }
+}
+
+pub trait RawAsset {
+    fn asset_type(&self) -> AssetType;
+
+    fn as_any(&self) -> &dyn Any;
+}
+
+/// Downcast have 1us or 2us overhead
+pub fn try_downcast_asset<T: 'static>(raw_asset: &Box<dyn RawAsset>) -> anyhow::Result<&T> {
+    // do a double check here
+    // we can use downcast_ref_unchecked() instead, but this is a unstable features, so we use downcast_ref()
+    match raw_asset.asset_type() {
+        AssetType::Mesh => {
+            if TypeId::of::<T>() != TypeId::of::<Mesh::Raw>() {
+                anyhow::bail!("Try to downcast mesh raw asset to invalid raw asset type!");
+            }
+
+            Ok(raw_asset.as_any().downcast_ref::<T>().unwrap())
+        },
+    }
+}
 
 macro_rules! define_asset {
     // pack Vec (compound type)
@@ -69,6 +100,9 @@ macro_rules! define_asset {
     };
 
     (
+        $(
+            #[derive($($derive:tt)+)]
+        )?
         $struct_name:ident {
             $(
                 $field_name:ident { $($type:tt)+ }
@@ -79,13 +113,14 @@ macro_rules! define_asset {
         pub mod $struct_name {
             use super::*;
 
-            pub struct Asset {
+            $(#[derive($($derive)+)])?
+            pub struct Raw {
                 $(
                     pub $field_name: define_asset!(@asset_ty $($type)+),
                 )+
             }
 
-            impl Asset {
+            impl Raw {
                 pub fn write_packed(&self, writer: &mut impl std::io::Write) {
                     let mut byte_buffer = TreeByteBuffer::new();
 
@@ -95,6 +130,16 @@ macro_rules! define_asset {
                     )+
 
                     byte_buffer.write_packed(writer);
+                }
+            }
+
+            impl RawAsset for Raw {
+                fn asset_type(&self) -> AssetType {
+                    AssetType::$struct_name
+                }
+
+                fn as_any(&self) -> &dyn Any {
+                    self
                 }
             }
 
@@ -132,12 +177,15 @@ macro_rules! define_asset {
     };
 }
 
-// TODO: remove this
 define_asset!{
-    Test {
-        field_0 { u16 }
-        field_1 { u32 }
-        field_2 { u64 }
-        field_3 { Vec(u64) }
+    #[derive(Default, Debug)]
+    Mesh {
+        positions { Vec([f32; 3]) }
+        normals { Vec([f32; 3]) }
+        colors { Vec([f32; 4]) }
+        uvs { Vec([f32; 2]) }
+        tangents { Vec([f32; 4]) }
+        material_ids { Vec(u32) }
+        indices { Vec(u32) }
     }
 }

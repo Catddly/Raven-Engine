@@ -32,7 +32,7 @@ pub(super) fn packed_vec_header(writer: &mut Vec<u8>, len: u64) -> usize {
 }
 
 /// Unpack FlatVec from raw bytes.
-pub(super) fn read_flat_vec<'a, T: Sized>(flat_vec_addr: *const FlatVec<T>) -> &'a [T] {
+pub(super) fn read_flat_vec<'a, T: Sized + Copy>(flat_vec_addr: *const FlatVec<T>) -> &'a [T] {
     unsafe {
         let offset_addr = (flat_vec_addr as *const u8).add(std::mem::size_of::<u64>());
         let data = offset_addr.add((*flat_vec_addr).offset as usize);

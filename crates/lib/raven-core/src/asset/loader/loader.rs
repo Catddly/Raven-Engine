@@ -2,6 +2,8 @@ use std::{path::PathBuf};
 
 use thiserror::Error;
 
+use crate::asset::RawAsset;
+
 #[derive(Debug)]
 pub enum LoadAssetImageType {
     Png,
@@ -49,5 +51,5 @@ pub(crate) fn extract_mesh_type(name: &PathBuf) -> anyhow::Result<LoadAssetMeshT
 }
 
 pub trait AssetLoader {
-    fn load(&self) -> anyhow::Result<()>;
+    fn load(&self) -> anyhow::Result<Box<dyn RawAsset>>;
 }
