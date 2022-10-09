@@ -4,12 +4,13 @@ use std::{
     path::PathBuf,
 };
 
-use gltf::{Gltf, Document, buffer::Source as BufferSource, Error, image::Source as ImageSource, mesh::Mode};
+use gltf::{Gltf, Document, buffer::Source as BufferSource, Error, image::Source as ImageSource, mesh::Mode, Material as GltfMaterial, texture::TextureTransform};
 use bytes::Bytes;
 use glam::{Mat4, Vec3, Vec4};
 
-use crate::{filesystem::{self, ProjectFolder}, asset::{loader::loader::LoadAssetMeshType, Mesh, RawAsset}};
+use crate::{filesystem::{self, ProjectFolder}, asset::{loader::loader::LoadAssetMeshType, Mesh, RawAsset, Material, TextureDesc, TextureGammaSpace, Texture, TextureSource}};
 use super::super::loader::{self, AssetLoader};
+use crate::asset::util::GenTangentContext;
 
 pub struct GltfMeshLoader {
     path: PathBuf,
@@ -30,7 +31,7 @@ impl AssetLoader for GltfMeshLoader {
 
         let dir = filesystem::get_project_folder_path_absolute(ProjectFolder::Assets)?;
         let path = dir.join(self.path.clone());
-        assert!(path.is_file(), "Path may not exists or this path is not a file!");
+        assert!(path.is_file(), "Path may not exists or this path is not a file! {:?}", path);
 
         let file = fs::File::open(&path)?;
         let reader = io::BufReader::new(file);
@@ -144,10 +145,124 @@ where
     Ok(())
 }
 
-fn load_gltf_default_scene(doc: &Document, buffers: &[Bytes], _images: &[Bytes]) -> anyhow::Result<Mesh::Raw> {
-    let scene = doc.default_scene().ok_or(anyhow::anyhow!("Failed to load default scene from gltf!"))?;
+fn load_gltf_material(mat: &GltfMaterial, images: &[Bytes]) -> anyhow::Result<(Vec<Texture::Raw>, Material::Raw)> {
+    const DEFAULT_TEX_XFORM : [f32; 6] = [
+        1.0, 0.0,
+        0.0, 1.0,
+        0.0, 0.0
+    ];
 
-    glog::debug!("Loading gltf scene: {}", scene.name().unwrap());
+    fn texture_transform_to_matrix(xform: Option<TextureTransform>) -> [f32; 6] {
+        if let Some(xform) = xform {
+            let r = xform.rotation();
+            let s = xform.scale();
+            let o = xform.offset();
+
+            [
+                 r.cos() * s[0], r.sin() * s[1],
+                -r.sin() * s[0], r.cos() * s[1],
+                 o[0],           o[1]
+            ]
+        } else {
+            DEFAULT_TEX_XFORM
+        }
+    }
+
+    let (albedo_tex, albedo_tex_xform) = mat.pbr_metallic_roughness()
+        .base_color_texture()
+        .or_else(|| mat.pbr_specular_glossiness()?.diffuse_texture())
+        .map_or(
+            (Texture::Raw {
+                source: TextureSource::Placeholder([255, 255, 255, 255]),
+                desc: Default::default(),
+            }, DEFAULT_TEX_XFORM),
+            |tex|{
+                let xform = texture_transform_to_matrix(tex.texture_transform());
+                let img_bytes = images[tex.texture().source().index()].clone();
+
+                (Texture::Raw {
+                    source: TextureSource::Bytes(img_bytes),
+                    desc: TextureDesc {
+                        gamma_space: TextureGammaSpace::Srgb,
+                        use_mipmap: true,
+                    },
+                }, xform)
+            }
+        );
+
+    let normal_tex = mat
+        .normal_texture()
+        .map_or(Texture::Raw { 
+            source: TextureSource::Placeholder([255, 255, 255, 255]),
+            desc: Default::default(),
+        }, 
+        |tex| {
+            let img_bytes = images[tex.texture().source().index()].clone();
+
+            Texture::Raw {
+                source: TextureSource::Bytes(img_bytes),
+                desc: TextureDesc {
+                    gamma_space: TextureGammaSpace::Linear,
+                    use_mipmap: true,
+                },
+            }
+        });
+
+    let (specular_tex, specular_tex_xform) = mat
+        .pbr_metallic_roughness()
+        .metallic_roughness_texture()
+        .map_or((Texture::Raw { 
+                source: TextureSource::Placeholder([255, 0, 255, 255]),
+                desc: Default::default(),
+            }, DEFAULT_TEX_XFORM),
+            |tex| {
+                let xform = texture_transform_to_matrix(tex.texture_transform());
+                let img_bytes = images[tex.texture().source().index()].clone();
+
+                (Texture::Raw {
+                    source: TextureSource::Bytes(img_bytes),
+                    desc: TextureDesc {
+                        gamma_space: TextureGammaSpace::Linear,
+                        use_mipmap: true,
+                    },
+                }, xform)
+            }
+        );
+
+    let (emissive_tex, emissive_tex_xform) = mat
+        .emissive_texture()
+        .map_or((Texture::Raw { 
+                source: TextureSource::Placeholder([255, 255, 255, 255]),
+                desc: Default::default(),
+            }, DEFAULT_TEX_XFORM),
+            |tex| {
+                let xform = texture_transform_to_matrix(tex.texture_transform());
+                let img_bytes = images[tex.texture().source().index()].clone();
+
+                (Texture::Raw {
+                    source: TextureSource::Bytes(img_bytes),
+                    desc: TextureDesc {
+                        gamma_space: TextureGammaSpace::Srgb,
+                        use_mipmap: true,
+                    },
+                }, xform)
+            }
+        );
+
+    let material = Material::Raw {
+        metallic: mat.pbr_metallic_roughness().metallic_factor(),
+        roughness: mat.pbr_metallic_roughness().roughness_factor(),
+        base_color: mat.pbr_metallic_roughness().base_color_factor(),
+        emissive: mat.emissive_factor(),
+        texture_mapping: [0, 1, 2, 3],
+        texture_transform: [albedo_tex_xform, DEFAULT_TEX_XFORM, specular_tex_xform, emissive_tex_xform],
+    };
+
+    Ok((vec![albedo_tex, normal_tex, specular_tex, emissive_tex], material))
+}
+
+fn load_gltf_default_scene(doc: &Document, buffers: &[Bytes], images: &[Bytes]) -> anyhow::Result<Mesh::Raw> {
+    let scene = doc.default_scene().ok_or(anyhow::anyhow!("Failed to load default scene from gltf!"))?;
 
     let universal_trans = Mat4::IDENTITY;
     let mut raw_mesh = Mesh::Raw::default();
@@ -155,16 +270,22 @@ fn load_gltf_default_scene(doc: &Document, buffers: &[Bytes], _images: &[Bytes])
     let mut read_node_func = |node: &gltf::Node, transform: Mat4| -> anyhow::Result<()>  {
         // only load mesh data right now
         if let Some(mesh) = node.mesh() {
-            glog::debug!("Loading gltf mesh: {}", scene.name().unwrap());
-            
             for prim in mesh.primitives() {
-                // TODO: load material
+                // load material
+                let (mut textures, mut material) = load_gltf_material(&prim.material(), images)?;
 
-                // only support triangles for now
-                assert!(matches!(prim.mode(), Mode::Triangles));
+                let current_material_id = raw_mesh.materials.len() as u32;
+                // offset material index by textures
+                let texture_base = raw_mesh.material_textures.len() as u32;
+                for map in material.texture_mapping.iter_mut() {
+                    *map += texture_base;
+                }
+
+                raw_mesh.materials.push(material);
+                raw_mesh.material_textures.append(&mut textures);
 
                 let attrib_reader = prim.reader(|buffer| Some(&buffers[buffer.index()]));
-            
+
                 // must have position
                 let positions = if let Some(iter) = attrib_reader.read_positions() {
                     iter.collect::<Vec<_>>()
@@ -201,12 +322,14 @@ fn load_gltf_default_scene(doc: &Document, buffers: &[Bytes], _images: &[Bytes])
                 };
 
                 // material id for this every vertex
-                // TODO: temporary, assume only one material is used for this whole mesh
-                let mut material_ids = vec![0; positions.len()];
+                let mut material_ids = vec![current_material_id; positions.len()];
 
                 let mut indices = if let Some(indices) = attrib_reader.read_indices() {
                     indices.into_u32().collect::<Vec<_>>()
                 } else {
+                    // only support triangles for now
+                    assert!(matches!(prim.mode(), Mode::Triangles));
+
                     // get indices from positions
                     // assume that each three vertices construct into a triangle
                     (0..positions.len() as u32).collect::<Vec<_>>()
@@ -226,7 +349,7 @@ fn load_gltf_default_scene(doc: &Document, buffers: &[Bytes], _images: &[Bytes])
                 // if this mesh contain uv, we assume it have textures on it.
                 // so we need tangents to build TBN matrix for normal mapping etc.
                 if found_uv && !found_tangent {
-                    glog::info!("Generating tangents for texture mesh!");
+                    glog::trace!("Generating tangents for texture mesh!");
                     mikktspace::generate_tangents(&mut GenTangentContext {
                         positions: positions.as_slice(),
                         normals: normals.as_slice(),
@@ -286,44 +409,82 @@ fn load_gltf_default_scene(doc: &Document, buffers: &[Bytes], _images: &[Bytes])
     Ok(raw_mesh)
 }
 
-struct GenTangentContext<'a> {
-    positions: &'a [[f32; 3]],
-    normals: &'a [[f32; 3]],
-    uvs: &'a [[f32; 2]],
-    indices: &'a [u32],
-    tangents: &'a mut [[f32; 4]],
+#[test]
+fn test_asset_load_gltf() {
+    use crate::filesystem;
+
+    filesystem::set_custom_mount_point(filesystem::ProjectFolder::Assets, "../../../resource/assets/").unwrap();
+
+    let loader: Box<dyn AssetLoader> = Box::new(GltfMeshLoader::new(std::path::PathBuf::from("mesh/cube.glb")));
+    let asset = loader.load().unwrap();
+    println!("Load in {:?}", asset.asset_type());
+    
+    let now = std::time::Instant::now();
+    let mesh_asset = asset.as_mesh().unwrap();
+    println!("Cast time {:?} ns", now.elapsed().as_nanos());
+
+    println!("{:?}", mesh_asset.positions);
+    println!("{:?}", mesh_asset.material_ids);
+    println!("{:#?}", mesh_asset.materials);
+    println!("{:#?}", mesh_asset.material_textures);
 }
 
-impl<'a> GenTangentContext<'a> {
-    #[inline(always)]
-    fn base_index(&self, face: usize, vert: usize) -> usize {
-        self.indices[face * 3 + vert] as usize
-    }
-}
+//#[test] 
+// fn test_asset_pack_unpack_gltf() {
+//     use std::collections::HashMap;
 
-impl<'a> mikktspace::Geometry for GenTangentContext<'a> {
-    fn normal(&self, face: usize, vert: usize) -> [f32; 3] {
-        self.normals[self.base_index(face, vert)]
-    }
+//     use crate::filesystem;
 
-    fn num_faces(&self) -> usize {
-        self.indices.len() / 3
-    }
+//     use once_cell::sync::Lazy;
+//     use parking_lot::Mutex;
 
-    fn num_vertices_of_face(&self, _face: usize) -> usize {
-        3
-    }
+//     filesystem::set_custom_mount_point(ProjectFolder::Assets, "../../../resource/assets/").unwrap();
 
-    fn position(&self, face: usize, vert: usize) -> [f32; 3] {
-        self.positions[self.base_index(face, vert)]
-    }
+//     let loader: Box<dyn AssetLoader> = Box::new(GltfMeshLoader::new(std::path::PathBuf::from("mesh/cube.glb")));
+//     let asset = loader.load().unwrap();
+//     println!("Load in {:?}", asset.asset_type());
+    
+//     let mesh_asset = asset.as_mesh().unwrap();
 
-    fn tex_coord(&self, face: usize, vert: usize) -> [f32; 2] {
-        self.uvs[self.base_index(face, vert)]
-    }
+//     let origin_positions = mesh_asset.positions.clone();
+//     let origin_normals = mesh_asset.normals.clone();
+//     let origin_colors = mesh_asset.colors.clone();
+//     let origin_tangents = mesh_asset.tangents.clone();
+//     let origin_uvs = mesh_asset.uvs.clone();
+//     let origin_material_ids = mesh_asset.material_ids.clone();
 
-    fn set_tangent_encoded(&mut self, tangent: [f32; 4], face: usize, vert: usize) {
-        // stick tangent back
-        self.tangents[self.base_index(face, vert)] = tangent;
-    }
-}
+//     let mut file = std::fs::File::create("cube.mesh").unwrap();
+//     mesh_asset.write_packed(&mut file);
+
+//     static ASSET_MMAPS: Lazy<Mutex<HashMap<PathBuf, memmap2::Mmap>>> = Lazy::new(|| {
+//         Mutex::new(HashMap::new())
+//     });
+
+//     // read back using memory mapped buffer
+//     let mut asset_map = ASSET_MMAPS.lock();
+//     let field_reader;
+//     {
+//         let data: &[u8] = {
+//             asset_map.entry(PathBuf::from("cube.mesh")).or_insert_with(|| {
+//                 let file = std::fs::File::open("cube.mesh").unwrap();
+    
+//                 unsafe { memmap2::MmapOptions::new().map(&file).unwrap() }
+//             })
+//         };
+    
+//         field_reader = Mesh::get_field_reader(data);
+//     }
+//     let readback_positions = field_reader.positions().to_vec();
+//     let readback_normals = field_reader.normals().to_vec();
+//     let readback_colors = field_reader.colors().to_vec();
+//     let readback_tangents = field_reader.tangents().to_vec();
+//     let readback_uvs = field_reader.uvs().to_vec();
+//     let readback_material_ids = field_reader.material_ids().to_vec();
+    
+//     assert_eq!(origin_positions, readback_positions);
+//     assert_eq!(origin_normals, readback_normals);
+//     assert_eq!(origin_colors, readback_colors);
+//     assert_eq!(origin_tangents, readback_tangents);
+//     assert_eq!(origin_uvs, readback_uvs);
+//     assert_eq!(origin_material_ids, readback_material_ids);
+// }

@@ -2,13 +2,15 @@ use std::{collections::VecDeque, sync::Arc};
 
 use ash::vk;
 
-use raven_core::{winit::{
-    event_loop::{EventLoop},
-    dpi::{LogicalSize, LogicalPosition},
-    window::{Window, WindowBuilder},
-    event::{WindowEvent, Event, VirtualKeyCode, ElementState}, 
-    platform::run_return::EventLoopExtRunReturn,
-}, asset::Mesh};
+use raven_core::{
+    winit::{
+        event_loop::{EventLoop},
+        dpi::{LogicalSize, LogicalPosition},
+        window::{Window, WindowBuilder},
+        event::{WindowEvent, Event, VirtualKeyCode, ElementState}, 
+        platform::run_return::EventLoopExtRunReturn
+    }
+};
 
 extern crate log as glog;
 
@@ -16,7 +18,6 @@ extern crate log as glog;
 use raven_core::log;
 use raven_core::console;
 use raven_core::filesystem;
-use raven_core::asset::{self, loader::{AssetLoader, mesh_loader}};
 use raven_rhi::{RHIConfig, RHI, backend::{self, PipelineShaderDesc, PipelineShaderStage, RasterPipelineDesc}};
 use raven_rg::{Executor, IntoPipelineDescriptorBindings, RenderGraphPassBindable};
 
@@ -103,14 +104,6 @@ pub fn init() -> anyhow::Result<EngineContext> {
     let rhi = RHI::new(rhi_config, &main_window)?;
 
     let rg_executor = Executor::new(&rhi)?;
-
-    // Temporary
-    let loader: Box<dyn AssetLoader> = Box::new(mesh_loader::GltfMeshLoader::new(std::path::PathBuf::from("mesh/cube.glb")));
-    //let loader: Box<dyn AssetLoader> = Box::new(mesh_loader::GltfMeshLoader::new(std::path::PathBuf::from("mesh/cornell_box/scene.gltf")));
-    let asset = loader.load()?;
-    glog::debug!("Load in {:?}", asset.asset_type());
-
-    let _mesh_asset = asset::try_downcast_asset::<Mesh::Raw>(&asset).unwrap();
 
     // TODO: put this inside a renderer
     let main_renderpass = backend::render_pass::create_render_pass(&rhi.device, 

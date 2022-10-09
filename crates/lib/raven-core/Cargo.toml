@@ -17,6 +17,9 @@ lazy_static = "1.4.0"
 memmap2 = "0.5.0"
 byteorder = "1.4.0"
 
+# Unchecked downcast
+unsafe-any = "0.4.0"
+
 # Math
 glam = "0.21.0"
 mikktspace = "0.3.0"
@@ -29,10 +32,10 @@ arrayvec = "0.7.0"
 hotwatch = "0.4.6"
 bytes = "1.2.0"
 # May write our own on-demand computing library
-turbosloth = "0.2.0"
+turbosloth = { git = "https://github.com/h3r2tic/turbosloth.git", rev = "540964c" }
 
 # asset relative
-gltf = "1.0.0"
+gltf = { version = "1.0.0", features = ["KHR_texture_transform", "KHR_materials_pbrSpecularGlossiness"] }
 
 # async
 async-io = "1.9.0"

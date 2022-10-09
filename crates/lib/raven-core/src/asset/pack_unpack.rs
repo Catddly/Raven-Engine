@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 
 use byteorder::{WriteBytesExt};
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub struct FlatVec<T> {
     len: u64,
     // offset from current address (not from the start of the byte buffer)
@@ -12,7 +12,7 @@ pub struct FlatVec<T> {
 }
 
 /// Pack a plain field of struct to raw bytes.
-pub(super) fn packed_plain_field<T: Sized + Copy>(writer: &mut impl std::io::Write, field: &T) {
+pub(super) fn pack_plain_field<T: Sized + Copy>(writer: &mut impl std::io::Write, field: &T) {
     let byte_ptr = unsafe { std::slice::from_raw_parts(
         field as *const T as *const u8, 
         std::mem::size_of::<T>()
@@ -21,8 +21,13 @@ pub(super) fn packed_plain_field<T: Sized + Copy>(writer: &mut impl std::io::Wri
     writer.write_all(byte_ptr).unwrap();
 }
 
+#[allow(dead_code)]
+pub(super) fn pack_bytes(writer: &mut impl std::io::Write, bytes: &[u8]) {
+    writer.write_all(bytes).unwrap();
+}
+
 /// Pack a field of Vec type in the struct to raw bytes.
-pub(super) fn packed_vec_header(writer: &mut Vec<u8>, len: u64) -> usize {
+pub(super) fn pack_vec_header(writer: &mut Vec<u8>, len: u64) -> usize {
     // len in FlatVec
     writer.write_u64::<byteorder::NativeEndian>(len).unwrap();
     // offset in FlatVec

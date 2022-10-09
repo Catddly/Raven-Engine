@@ -27,7 +27,7 @@ pub fn spawn<T: Send + 'static>(future: impl Future<Output = T> + 'static + Send
     static GLOBAL_EXECUTORS: Lazy<Executor<'_>> = Lazy::new(|| {
         let num_cpus = num_cpus::get();
         let num_threads = if num_cpus >= 4 {
-            4
+            num_cpus / 2
         } else {
             1
         };

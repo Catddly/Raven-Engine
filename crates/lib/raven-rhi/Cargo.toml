@@ -27,7 +27,7 @@ byte-slice-cast = "1.2.0"
 derive_builder = "0.11.0"
 
 # May write our own on-demand computing library
-turbosloth = "0.2.0"
+turbosloth = { git = "https://github.com/h3r2tic/turbosloth.git", rev = "540964c" }
 
 # vulkan
 ash = "0.33"
