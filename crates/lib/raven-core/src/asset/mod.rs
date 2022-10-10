@@ -1,18 +1,19 @@
 pub mod loader;
 mod asset_process;
-pub mod asset_manager;
+pub mod asset_registry;
 mod pack_unpack;
 mod util;
 mod error;
+
+pub use asset_process::AssetProcessor;
 
 use std::{marker::PhantomData, fmt::Debug, path::PathBuf};
 
 use bytes::Bytes;
 use unsafe_any::UnsafeAny;
-use turbosloth::Lazy;
 
 use crate::container::{TreeByteBuffer, TreeByteBufferNode};
-use crate::asset::asset_manager::AssetHandle;
+use crate::asset::asset_registry::{DiskAssetRef, AssetRef};
 use pack_unpack::*;
 
 pub enum AssetType {
@@ -77,23 +78,23 @@ pub trait Asset {
     // Try to downcast the asset without the overhead, because we ensure the type in compile-time.
     // We do not want to pay for the things we don't use.
     // We can use downcast_ref_unchecked() instead, but this is a unstable features, so we use UnsafeAny to bypass the runtime check.
-    fn as_mesh(&self) -> Option<&Mesh::Raw> {
+    fn as_mesh(&self) -> Option<&Mesh::Storage> {
         match self.asset_type() {
-            AssetType::Mesh => Some(unsafe { self.as_any().downcast_ref_unchecked::<Mesh::Raw>() }),
+            AssetType::Mesh => Some(unsafe { self.as_any().downcast_ref_unchecked::<Mesh::Storage>() }),
             _ => None,
         }
     }
 
-    fn as_material(&self) -> Option<&Material::Raw> {
+    fn as_material(&self) -> Option<&Material::Storage> {
         match self.asset_type() {
-            AssetType::Material => Some(unsafe { self.as_any().downcast_ref_unchecked::<Material::Raw>() }),
+            AssetType::Material => Some(unsafe { self.as_any().downcast_ref_unchecked::<Material::Storage>() }),
             _ => None,
         }
     }
 
-    fn as_texture(&self) -> Option<&Texture::Raw> {
+    fn as_texture(&self) -> Option<&Texture::Storage> {
         match self.asset_type() {
-            AssetType::Texture => Some(unsafe { self.as_any().downcast_ref_unchecked::<Texture::Raw>() }),
+            AssetType::Texture => Some(unsafe { self.as_any().downcast_ref_unchecked::<Texture::Storage>() }),
             _ => None,
         }
     }
@@ -120,12 +121,55 @@ pub enum VecArrayQueryParam {
     Length,
 }
 
+// Just some helper functions
+impl VecArrayQueryParam {
+    #[inline(always)]
+    pub fn index(idx: usize) -> VecArrayQueryParam {
+        VecArrayQueryParam::Index(idx)
+    }
+
+    #[inline(always)]
+    pub fn length() -> VecArrayQueryParam {
+        VecArrayQueryParam::Length
+    }
+}
+
 /// We can't make a length query function in the macro.
 /// I know this design is weird, but it is the most efficient and easy way to get the length of a Vector Array's information.
 pub enum VecArrayQueryResult<'a, T: Sized + Copy> {
     Length(usize),
     Value(T),
     Array(&'a [T])
+}
+
+// Just some helper functions
+impl<'a, T: Sized + Copy> VecArrayQueryResult<'a, T> {
+    #[inline(always)]
+    pub fn length(&self) -> usize {
+        if let VecArrayQueryResult::Length(len) = self {
+            *len
+        } else {
+            panic!("Try to get different query result!");
+        }
+    }
+
+    #[inline(always)]
+    pub fn value(&self) -> T {
+        if let VecArrayQueryResult::Value(v) = self {
+            *v
+        } else {
+            panic!("Try to get different query result!");
+        }
+    }
+
+    #[inline(always)]
+    pub fn array(&self) -> &'a [T] {
+        if let VecArrayQueryResult::Array(arr) = self {
+            *arr
+        } else {
+            panic!("Try to get different query result!");
+        }
+    }
 }
 
 macro_rules! define_asset {
@@ -170,7 +214,7 @@ macro_rules! define_asset {
         }
     };
     (@read_func $field_name:ident; Vec(Asset($($type:tt)+))) => {
-        pub fn $field_name<'a>(&self, param: VecArrayQueryParam) -> VecArrayQueryResult<'a, AssetRef<$($type)+ ::Packed>> {
+        pub fn $field_name<'a>(&self, param: VecArrayQueryParam) -> VecArrayQueryResult<'a, DiskAssetRef<$($type)+ ::Packed>> {
             unsafe {
                 let field_addr = std::ptr::addr_of!((*self.base_addr).$field_name);
                 let flat_vec = read_flat_vec(field_addr);
@@ -199,28 +243,17 @@ macro_rules! define_asset {
     };
 
     // specified Asset type
-    // (@raw_ty Asset($($type:tt)+)) => {
-    //     Lazy<define_asset!(@raw_ty $($type)+ ::Storage)>
-    // };
     (@raw_ty Asset($($type:tt)+)) => {
-        Lazy<AssetHandle>
+        AssetRef<$($type)+ ::Storage>
     };
     // specified packed Asset type
     (@packed_ty Asset($($type:tt)+)) => {
-        AssetRef<define_asset!(@packed_ty $($type)+ ::Packed)>
+        DiskAssetRef<$($type)+  ::Packed>
     };
     // pack Asset
     (@packed_func $out:expr; $field:expr; Asset($($type:tt)+)) => {
-        // get identity value from Lazy
-        // Lazy will hash the values of the type to get a UUID like hash.
-        let asset_ref : AssetRef<$($type)+ ::Packed> = AssetRef {
-            // TODO: notice that AssetHandle is order-dependent id allocation system,
-            // so then identity of the Lazy handle will differ when we register the asset in different order.
-            // this will cause issues when we try to load the packed assets back from disk, we may refer to different resources.
-            identity: $field.identity(),
-            _marker: PhantomData, 
-        };
-        pack_plain_field(&mut $out.bytes, &asset_ref)
+        let disk_ref = $field.disk_ref::<$($type ::Packed)+>();
+        pack_plain_field(&mut $out.bytes, &disk_ref)
     };
 
     // expand asset origin plain field types
@@ -263,7 +296,7 @@ macro_rules! define_asset {
         )?
         {
             $(
-                $field_name_asset:ident { $($type_asset:tt)+ }
+                $field_name_storage:ident { $($type_storage:tt)+ }
             )+
         }
         $asset_type:ident
@@ -292,7 +325,7 @@ macro_rules! define_asset {
             $(#[derive($($derive_asset)+)])?
             pub struct Storage {
                 $(
-                    pub $field_name_asset: define_asset!(@raw_ty $($type_asset)+),
+                    pub $field_name_storage: define_asset!(@raw_ty $($type_storage)+),
                 )+
             }
 
@@ -302,7 +335,7 @@ macro_rules! define_asset {
 
                     // expand fields to pack functions
                     $(
-                        define_asset!(@packed_func byte_buffer; &self.$field_name_asset; $($type_asset)+);
+                        define_asset!(@packed_func byte_buffer; &self.$field_name_storage; $($type_storage)+);
                     )+
 
                     byte_buffer.write_packed(writer);
@@ -322,7 +355,7 @@ macro_rules! define_asset {
             #[repr(packed)]
             pub struct Packed {
                 $(
-                    $field_name_asset: define_asset!(@packed_ty $($type_asset)+),
+                    $field_name_storage: define_asset!(@packed_ty $($type_storage)+),
                 )+
             }
 
@@ -345,59 +378,11 @@ macro_rules! define_asset {
                 }
 
                 $(
-                    define_asset!(@read_func $field_name_asset; $($type_asset)+);
+                    define_asset!(@read_func $field_name_storage; $($type_storage)+);
                 )+
             }
         }
     };
-}
-
-pub struct AssetRef<T> {
-    // hash value on the asset
-    identity: u64,
-    // mark as invariant
-    _marker: PhantomData<fn(&T)>,
-}
-
-impl<T> Clone for AssetRef<T> {
-    fn clone(&self) -> Self {
-        Self {
-            identity: self.identity,
-            _marker: PhantomData,
-        }
-    }
-}
-impl<T> Copy for AssetRef<T> {}
-
-impl<T> PartialEq for AssetRef<T> {
-    fn eq(&self, other: &Self) -> bool {
-        self.identity == other.identity
-    }
-}
-impl<T> Eq for AssetRef<T> {}
-
-impl<T> std::hash::Hash for AssetRef<T> {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        state.write_u64(self.identity)
-    }
-}
-
-impl<T> PartialOrd for AssetRef<T> {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.identity.partial_cmp(&other.identity)
-    }
-}
-
-impl<T> Ord for AssetRef<T> {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.identity.cmp(&other.identity)
-    }
-}
-
-impl<T> AssetRef<T> {
-    pub fn identity(&self) -> u64 {
-        self.identity
-    }
 }
 
 #[derive(Copy, Clone)]

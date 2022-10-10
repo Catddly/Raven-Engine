@@ -16,6 +16,7 @@ lazy_static = "1.4.0"
 # thread_local = "1.1.4"
 memmap2 = "0.5.0"
 byteorder = "1.4.0"
+wyhash = "0.5.0"
 
 # Unchecked downcast
 unsafe-any = "0.4.0"
@@ -33,6 +34,7 @@ hotwatch = "0.4.6"
 bytes = "1.2.0"
 # May write our own on-demand computing library
 turbosloth = { git = "https://github.com/h3r2tic/turbosloth.git", rev = "540964c" }
+futures = "0.3.0"
 
 # asset relative
 gltf = { version = "1.0.0", features = ["KHR_texture_transform", "KHR_materials_pbrSpecularGlossiness"] }

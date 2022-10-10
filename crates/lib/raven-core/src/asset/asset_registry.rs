@@ -1,14 +1,28 @@
-//use std::collections::HashMap;
+use std::{sync::Arc};
+use std::marker::PhantomData;
 
 use once_cell::sync::Lazy;
 use parking_lot::RwLock;
 
 use super::{Asset, VacantAsset};
 
+type RegisterBoxAssetType = Box<dyn Asset + Send + Sync>;
+
+const INVALID_ASSET_ID: u64 = u64::MAX;
+
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub struct AssetHandle {
+    /// Unstable id depend on the register order of the asset.
+    /// Only used for a handle to the asset registry, but should never be used as a global (in the disk) uuid.
+    /// If you want to ident a resource using a global identifier, use AssetRef.
     id: u64,
     version: u64,
+}
+
+impl AssetHandle {
+    pub fn id(&self) -> u64 {
+        self.id
+    }
 }
 
 impl std::hash::Hash for AssetHandle {
@@ -25,9 +39,57 @@ impl std::ops::Deref for AssetHandle {
     }
 }
 
-type RegisterBoxAssetType = Box<dyn Asset + Send + Sync>;
+pub struct AssetRef<T> {
+    pub(crate) handle: Arc<AssetHandle>,
+    pub(crate) uuid: u64,
+    pub(crate) _marker: PhantomData<fn(&T)>,
+}
 
-const INVALID_ASSET_ID: u64 = u64::MAX;
+impl<T> AssetRef<T> {
+    pub fn handle(&self) -> &Arc<AssetHandle> {
+        &self.handle
+    }
+
+    pub fn uuid(&self) -> u64 {
+        self.uuid
+    }
+
+    pub fn disk_ref<W>(&self) -> DiskAssetRef<W> {
+        DiskAssetRef {
+            uuid: self.uuid,
+            _marker: PhantomData,
+        }
+    }
+}
+
+pub struct DiskAssetRef<T> {
+    /// Use a stable hash value combining the uri (resource relative path) and the sub-resource sequence index as a uuid of the resource.
+    uuid: u64,
+    _marker: PhantomData<fn(&T)>,
+}
+
+impl<T> DiskAssetRef<T> {
+    pub fn uuid(&self) -> u64 {
+        self.uuid
+    }
+} 
+
+impl<T> Clone for DiskAssetRef<T> {
+    fn clone(&self) -> Self {
+        Self {
+            uuid: self.uuid,
+            _marker: PhantomData,
+        }
+    }
+}
+impl<T> Copy for DiskAssetRef<T> {}
+
+impl<T> PartialEq for DiskAssetRef<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.uuid.eq(&other.uuid)
+    }
+}
+impl<T> Eq for DiskAssetRef<T> {}
 
 pub struct RuntimeAssetRegistry {
     current_id: u64,
@@ -67,7 +129,6 @@ impl RuntimeAssetRegistry {
         }
     }
 
-    #[inline]
     pub fn update_asset(&mut self, handle: &mut AssetHandle, asset: RegisterBoxAssetType) {
         self.assets[handle.id as usize] = asset;
 
@@ -75,7 +136,7 @@ impl RuntimeAssetRegistry {
     }
 
     #[inline]
-    pub fn get_asset(&self, handle: AssetHandle) -> Option<&RegisterBoxAssetType> {
+    pub fn get_asset(&self, handle: &AssetHandle) -> Option<&RegisterBoxAssetType> {
         self.assets.get(handle.id as usize)
     }
 
@@ -87,7 +148,7 @@ impl RuntimeAssetRegistry {
     fn alloc_asset_id(&mut self) -> u64 {
         if self.id_free_list.is_empty() {
             let id = self.current_id;
-            self.current_id.checked_add(1).unwrap();
+            self.current_id = self.current_id.checked_add(1).unwrap();
             // add a default empty asset
             self.assets.push(Box::new(VacantAsset {}));
 

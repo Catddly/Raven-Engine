@@ -1,6 +1,7 @@
 use std::{collections::VecDeque, sync::Arc};
 
 use ash::vk;
+use turbosloth::*;
 
 use raven_core::{
     winit::{
@@ -9,7 +10,7 @@ use raven_core::{
         window::{Window, WindowBuilder},
         event::{WindowEvent, Event, VirtualKeyCode, ElementState}, 
         platform::run_return::EventLoopExtRunReturn
-    }
+    }, asset::{loader::{mesh_loader::GltfMeshLoader, AssetLoader}, AssetType, AssetProcessor, asset_registry, Mesh, VecArrayQueryParam}, concurrent::executor, container::TempList
 };
 
 extern crate log as glog;
@@ -112,6 +113,72 @@ pub fn init() -> anyhow::Result<EngineContext> {
             depth_attachment: None,
         }
     );
+
+    let loader = Box::new(GltfMeshLoader::new(std::path::PathBuf::from("mesh/cube.glb"))) as Box<dyn AssetLoader>;
+    let raw_asset = loader.load()?;
+
+    assert!(matches!(raw_asset.asset_type(), AssetType::Mesh));
+
+    let processor = AssetProcessor::new("mesh/cube.glb", raw_asset);
+    let handle = processor.process()?;
+    let lazy_cache = LazyCache::create();
+
+    let task = executor::spawn(async move { handle.eval(&lazy_cache).await });
+    let handle = smol::block_on(task)?;
+
+    glog::debug!("Asset handle: {}", handle.id());
+    let registry = asset_registry::get_runtime_asset_registry();
+
+    {
+        let read_guard = registry.read();
+        let asset_ref = read_guard.get_asset(&handle).unwrap();
+        let mesh = asset_ref.as_mesh().unwrap();
+
+        glog::debug!("{:?}", mesh.tangents);
+
+        for mat in mesh.material_textures.iter() {
+            let mat_v = read_guard.get_asset(mat.handle()).unwrap();
+            let mat_v = mat_v.as_texture().unwrap();
+    
+            glog::debug!("Texture {:#?} with uuid {:8.8x}", mat_v, mat.uuid());
+        }
+
+        let mut file = std::fs::File::create("cube.packed")?;
+        mesh.write_packed(&mut file);
+    }
+
+    let temp_list = TempList::new();
+    let field_reader;
+    {
+        let data: &[u8] = {
+            let file = std::fs::File::open("cube.packed").unwrap();
+
+            unsafe { temp_list.add(memmap2::MmapOptions::new().map(&file).unwrap()) }
+        };
+    
+        field_reader = Mesh::get_field_reader(data);
+    }
+    let readback_colors = field_reader.colors().to_vec();
+    let readback_tangents = field_reader.tangents().to_vec();
+    let readback_uvs = field_reader.uvs().to_vec();
+    let readback_material_ids = field_reader.material_ids().to_vec();
+    
+    glog::debug!("{:?}", readback_colors);
+    glog::debug!("{:?}", readback_tangents);
+    glog::debug!("{:?}", readback_uvs);
+    glog::debug!("{:?}", readback_material_ids);
+
+    let len = field_reader.materials(VecArrayQueryParam::length()).length();
+    for i in 0..len {
+        let disk = field_reader.materials(VecArrayQueryParam::index(i)).value();
+        glog::debug!("{:8.8x}", disk.uuid());
+    }
+
+    let len = field_reader.material_textures(VecArrayQueryParam::length()).length();
+    for i in 0..len {
+        let disk = field_reader.material_textures(VecArrayQueryParam::index(i)).value();
+        glog::debug!("{:8.8x}", disk.uuid());
+    }
 
     glog::trace!("Raven Engine initialized!");
     Ok(EngineContext { 
