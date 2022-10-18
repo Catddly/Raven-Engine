@@ -286,7 +286,7 @@ pub struct ImageViewDesc {
     /// If this is None, infer from image type
     #[builder(setter(strip_option), default)]
     pub view_type: Option<vk::ImageViewType>,
-    /// If this is None, use same image format for image view
+    /// If this is None, use image format for image view
     #[builder(setter(strip_option), default)]
     pub format: Option<vk::Format>,
     #[builder(default = "vk::ImageAspectFlags::COLOR")]

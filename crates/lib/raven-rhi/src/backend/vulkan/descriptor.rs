@@ -3,13 +3,24 @@ use std::collections::{btree_map, BTreeMap};
 use rspirv_reflect::{DescriptorInfo, DescriptorType, BindingCount};
 use ash::vk;
 
-use super::{Device};
+use crate::backend::ImageViewDesc;
+
+use super::{Device, Buffer, Image};
 
 /// Descriptor set binding information to bind the actual resource to descriptor.
 pub enum DescriptorSetBinding {
     Image(vk::DescriptorImageInfo),
     ImageArray(Vec<vk::DescriptorImageInfo>),
     Buffer(vk::DescriptorBufferInfo),
+
+    DynamicBuffer {
+        buffer_info: vk::DescriptorBufferInfo,
+        offset: u32,
+    },
+    DynamicStorageBuffer {
+        buffer_info: vk::DescriptorBufferInfo,
+        offset: u32,
+    },
 }
 
 /// One Descriptor Set and its bindings information.
@@ -76,7 +87,7 @@ pub fn create_descriptor_set_layout(
     let mut set_layout_create_flags = vk::DescriptorSetLayoutCreateFlags::empty();
 
     for (&binding_idx, binding_info) in set_layout_refl {
-        let vk_descriptor_type = refl_descriptor_type_to_vk(binding_info.ty.clone());
+        let vk_descriptor_type = refl_descriptor_type_to_vk(binding_info.ty.clone(), &binding_info.name);
 
         match binding_info.ty {
             DescriptorType::UNIFORM_BUFFER
@@ -209,8 +220,65 @@ pub(crate) fn add_descriptor_set_layouts(
     }
 }
 
+pub fn update_descriptor_set_buffer(
+    device: &Device,
+    dst_binding: u32,
+    set: vk::DescriptorSet,
+    ty: vk::DescriptorType,
+    buffer: &Buffer, 
+) {
+    assert!(is_buffer_descriptor_type(&ty));
+
+    let buffer_info = vk::DescriptorBufferInfo::builder()
+        .buffer(buffer.raw)
+        .range(vk::WHOLE_SIZE)
+        .build();
+
+        let write_descriptor_set = vk::WriteDescriptorSet::builder()
+            .dst_set(set)
+            .descriptor_type(ty)
+            .dst_binding(dst_binding)
+            .buffer_info(std::slice::from_ref(&buffer_info))
+            .build();
+
+        unsafe {
+            device.raw
+                .update_descriptor_sets(std::slice::from_ref(&write_descriptor_set), &[]);
+        }
+}
+
+pub fn update_descriptor_set_image(
+    device: &Device,
+    dst_binding: u32,
+    set: vk::DescriptorSet,
+    ty: vk::DescriptorType,
+    layout: vk::ImageLayout,
+    image: &Image, 
+) {
+    assert!(is_image_descriptor_type(&ty));
+
+    let image_info = vk::DescriptorImageInfo::builder()
+        .image_layout(layout)
+        .image_view(image.view(device, &ImageViewDesc::default()).unwrap())
+        .build();
+
+        let write_descriptor_set = vk::WriteDescriptorSet::builder()
+            .dst_set(set)
+            .descriptor_type(ty)
+            .dst_binding(dst_binding)
+            .image_info(std::slice::from_ref(&image_info))
+            .build();
+
+        unsafe {
+            device.raw
+                .update_descriptor_sets(std::slice::from_ref(&write_descriptor_set), &[]);
+        }
+}
+
 #[inline]
-fn refl_descriptor_type_to_vk(ty: DescriptorType) -> vk::DescriptorType {
+pub fn refl_descriptor_type_to_vk(ty: DescriptorType, name: &String) -> vk::DescriptorType {
+    let is_dynamic = name.ends_with("_dyn");
+
     match ty {
         DescriptorType::SAMPLER => vk::DescriptorType::SAMPLER,
         DescriptorType::COMBINED_IMAGE_SAMPLER => vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
@@ -218,8 +286,20 @@ fn refl_descriptor_type_to_vk(ty: DescriptorType) -> vk::DescriptorType {
         DescriptorType::STORAGE_IMAGE => vk::DescriptorType::STORAGE_IMAGE,
         DescriptorType::UNIFORM_TEXEL_BUFFER => vk::DescriptorType::UNIFORM_TEXEL_BUFFER,
         DescriptorType::STORAGE_TEXEL_BUFFER => vk::DescriptorType::STORAGE_TEXEL_BUFFER,
-        DescriptorType::UNIFORM_BUFFER => vk::DescriptorType::UNIFORM_BUFFER,
-        DescriptorType::STORAGE_BUFFER => vk::DescriptorType::STORAGE_BUFFER,
+        DescriptorType::UNIFORM_BUFFER => {
+            if is_dynamic {
+                vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC
+            } else {
+                vk::DescriptorType::UNIFORM_BUFFER
+            }
+        },
+        DescriptorType::STORAGE_BUFFER => {
+            if is_dynamic {
+                vk::DescriptorType::STORAGE_BUFFER_DYNAMIC
+            } else {
+                vk::DescriptorType::STORAGE_BUFFER
+            }
+        },
         DescriptorType::UNIFORM_BUFFER_DYNAMIC => vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,
         DescriptorType::STORAGE_BUFFER_DYNAMIC => vk::DescriptorType::STORAGE_BUFFER_DYNAMIC,
         DescriptorType::INPUT_ATTACHMENT => vk::DescriptorType::INPUT_ATTACHMENT,
@@ -229,5 +309,46 @@ fn refl_descriptor_type_to_vk(ty: DescriptorType) -> vk::DescriptorType {
         DescriptorType::ACCELERATION_STRUCTURE_NV => vk::DescriptorType::ACCELERATION_STRUCTURE_NV,
 
         _ => unimplemented!(),
+    }
+}
+
+
+#[inline]
+fn is_buffer_descriptor_type(ty: &vk::DescriptorType) -> bool {
+    match *ty {
+        vk::DescriptorType::SAMPLER |
+        vk::DescriptorType::COMBINED_IMAGE_SAMPLER |
+        vk::DescriptorType::SAMPLED_IMAGE |
+        vk::DescriptorType::STORAGE_IMAGE |
+        vk::DescriptorType::INPUT_ATTACHMENT => false,
+
+        vk::DescriptorType::UNIFORM_TEXEL_BUFFER |
+        vk::DescriptorType::STORAGE_TEXEL_BUFFER |
+        vk::DescriptorType::UNIFORM_BUFFER |
+        vk::DescriptorType::STORAGE_BUFFER |
+        vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC |
+        vk::DescriptorType::STORAGE_BUFFER_DYNAMIC => true,
+
+        _ => false,
+    }
+}
+
+#[inline]
+fn is_image_descriptor_type(ty: &vk::DescriptorType) -> bool {
+    match *ty {
+        vk::DescriptorType::SAMPLER |
+        vk::DescriptorType::COMBINED_IMAGE_SAMPLER |
+        vk::DescriptorType::SAMPLED_IMAGE |
+        vk::DescriptorType::STORAGE_IMAGE => true,
+        
+        vk::DescriptorType::INPUT_ATTACHMENT |
+        vk::DescriptorType::UNIFORM_TEXEL_BUFFER |
+        vk::DescriptorType::STORAGE_TEXEL_BUFFER |
+        vk::DescriptorType::UNIFORM_BUFFER |
+        vk::DescriptorType::STORAGE_BUFFER |
+        vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC |
+        vk::DescriptorType::STORAGE_BUFFER_DYNAMIC => false,
+        
+        _ => false,
     }
 }

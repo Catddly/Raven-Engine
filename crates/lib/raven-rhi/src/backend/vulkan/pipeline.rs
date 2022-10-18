@@ -97,18 +97,15 @@ pub fn create_raster_pipeline(
     let (set_layout, set_layout_infos) = descriptor::create_descriptor_set_layouts_with_unified_stage(
         &device,
         &pipeline_set_layouts,
-        vk::ShaderStageFlags::ALL
+        vk::ShaderStageFlags::ALL_GRAPHICS
     ).expect("Failed to create vulkan descriptor set layout!");
 
     let push_constant_ranges = push_constants.into_iter()
-        .filter_map(|(pc, stage)| pc.and_then(|pc| {
+        .filter_map(|(pc, _)| pc.and_then(|pc| {
             Some(vk::PushConstantRange::builder()
                 .size(pc.size)
                 .offset(pc.offset)
-                .stage_flags(match stage {
-                    PipelineShaderStage::Vertex => vk::ShaderStageFlags::VERTEX,
-                    PipelineShaderStage::Pixel => vk::ShaderStageFlags::FRAGMENT,
-                })
+                .stage_flags(vk::ShaderStageFlags::ALL_GRAPHICS)
                 .build())
         }))
         .collect::<Vec<_>>();
@@ -189,7 +186,7 @@ pub fn create_raster_pipeline(
     let depth_stencil_state = vk::PipelineDepthStencilStateCreateInfo::builder()
         .depth_test_enable(true)
         .depth_write_enable(desc.depth_write)
-        .depth_compare_op(vk::CompareOp::GREATER_OR_EQUAL) // TODO: greater or equal instead of less and equal
+        .depth_compare_op(vk::CompareOp::LESS_OR_EQUAL) // TODO: greater or equal instead of less and equal
         .front(noop_stencil_op)
         .back(noop_stencil_op)
         .max_depth_bounds(1.0)

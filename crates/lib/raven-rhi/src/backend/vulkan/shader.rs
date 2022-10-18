@@ -30,15 +30,15 @@ pub struct ShaderBinary {
     pub spirv: Bytes,
 }
 
-impl Drop for ShaderBinary {
-    fn drop(&mut self) {
-        if let Some(path) = &mut self.path {
-            glog::debug!("Shader binary {:?} dropped!", path);
-        } else {
-            glog::debug!("Shader binary dropped!");
-        }
-    }
-}
+// impl Drop for ShaderBinary {
+//     fn drop(&mut self) {
+//         if let Some(path) = &mut self.path {
+//             glog::debug!("Shader binary {:?} dropped!", path);
+//         } else {
+//             glog::debug!("Shader binary dropped!");
+//         }
+//     }
+// }
 
 pub struct ShaderBinaryStage {
     pub stage: PipelineShaderStage,
@@ -58,7 +58,7 @@ pub struct PipelineShaderDesc {
     pub stage: PipelineShaderStage,
     #[builder(default)]
     pub push_constants_bytes: usize, // push constants for the according shader stage.
-    #[builder(default = "\"main\".to_owned()")]
+    #[builder(setter(into), default = "\"main\".to_owned()")]
     pub entry: String,
     #[builder(setter(custom))]
     pub source: ShaderSource,

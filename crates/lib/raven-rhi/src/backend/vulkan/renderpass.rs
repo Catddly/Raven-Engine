@@ -211,7 +211,7 @@ pub fn create_render_pass(device: &Device, desc: RenderPassDesc<'_>) -> Arc<Rend
         )
         .collect::<Vec<_>>();
 
-    let depth_attachment_refs = vk::AttachmentReference::builder()
+    let depth_attachment_ref = vk::AttachmentReference::builder()
         .attachment(desc.color_attachments.len() as u32)
         .layout(vk::ImageLayout::DEPTH_ATTACHMENT_STENCIL_READ_ONLY_OPTIMAL)
         .build();
@@ -223,7 +223,7 @@ pub fn create_render_pass(device: &Device, desc: RenderPassDesc<'_>) -> Arc<Rend
         .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS);
 
     let subpass_desc = if desc.depth_attachment.is_some() {
-        [subpass_builder.depth_stencil_attachment(&depth_attachment_refs).build()]
+        [subpass_builder.depth_stencil_attachment(&depth_attachment_ref).build()]
     } else {
         [subpass_builder.build()]
     };

@@ -13,8 +13,13 @@ mod pass_context;
 mod executor;
 mod transient_resource_cache;
 
-pub use graph_builder::GetOrCreateTemporal;
+mod helper;
+
+pub use graph_resource::Handle as RgHandle;
+pub use graph_builder::{RenderGraphBuilder, GetOrCreateTemporal};
 pub use executor::Executor;
 pub use pass_context::{IntoPipelineDescriptorBindings, RenderGraphPassBinding, RenderGraphPassBindable};
+
+pub use helper::image_clear;
 
 extern crate log as glog;

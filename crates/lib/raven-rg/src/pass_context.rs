@@ -1,17 +1,18 @@
-use std::sync::Arc;
+use std::{sync::Arc, collections::HashMap};
 
 // TODO: remove this (render graph should not directly contain eny graphic API)
 use ash::vk;
 use arrayvec::ArrayVec;
 
+use raven_core::container::TempList;
 use raven_rhi::{
     backend::{Device, ImageViewDesc, Image, Buffer, RasterPipeline, ComputePipeline, CommandBuffer, RenderPass},
     backend::constants,
     backend::RHIError,
-    backend::render_pass::FrameBufferCacheKey,
+    backend::renderpass::FrameBufferCacheKey,
     backend::pipeline::CommonPipeline,
     backend::descriptor::DescriptorSetBinding,
-    pipeline_cache::PipelineCache,
+    pipeline_cache::PipelineCache, dynamic_buffer::DynamicBuffer,
 };
 
 use super::{
@@ -34,6 +35,9 @@ pub enum RenderGraphPassBinding {
     Image(PassImageBinding),
     ImageArray(Vec<PassImageBinding>),
     Buffer(PassBufferBinding),
+
+    DynamicBuffer(u32),
+    DynamicStorageBuffer(u32),
 }
 
 pub trait RenderGraphPassBindable {
@@ -99,6 +103,7 @@ pub struct PipelineSetLayoutBindings<'a> {
 pub struct PipelineBindings<'a, HandleType> {
     pipeline_handle: HandleType,
     pub(crate) set_layouts: PipelineSetLayoutBindings<'a>,
+    pub(crate) raw_sets: HashMap<u32, vk::DescriptorSet>,
 }
 
 impl<'a, HandleType> PipelineBindings<'a, HandleType> {
@@ -106,11 +111,18 @@ impl<'a, HandleType> PipelineBindings<'a, HandleType> {
         Self {
             pipeline_handle,
             set_layouts: Default::default(),
+            raw_sets: Default::default(),
         }
     }
 
     pub fn descriptor_set(mut self, set_idx: u32, bindings: &'a [RenderGraphPassBinding]) -> Self {
         self.set_layouts.bindings.push((set_idx, bindings));
+        self
+    }
+
+    // TODO: may be we want engine to manager the raw global descriptor set
+    pub fn raw_descriptor_set(mut self, set_idx: u32, set: vk::DescriptorSet) -> Self {
+        self.raw_sets.insert(set_idx, set);
         self
     }
 }
@@ -203,6 +215,7 @@ pub struct ExecuteContext<'a> {
     pub(crate) pipeline_cache: &'a mut PipelineCache,
 
     pub(crate) registered_resources: &'a Vec<RegisteredResource>,
+    pub(crate) global_dynamic_buffer: &'a mut DynamicBuffer,
 }
 
 impl<'a> ExecuteContext<'a> {
@@ -256,6 +269,10 @@ impl<'a> PassContext<'a> {
     pub fn device(&self) -> &Device {
         &self.context.device
     }
+
+    pub fn global_dynamic_buffer(&mut self) -> &mut DynamicBuffer {
+        self.context.global_dynamic_buffer
+    } 
 
     pub fn begin_render_pass(
         &mut self,
@@ -374,7 +391,7 @@ impl<'a> PassContext<'a> {
 
     pub fn bind_raster_pipeline(&self, bindings: PipelineBindings<'_, GraphRasterPipelineHandle>) -> anyhow::Result<BoundRasterPipeline, RHIError> {
         let pipeline = self.context.get_raster_pipeline(bindings.pipeline_handle);
-        self.bind_pipeline(&self.context.device, pipeline.as_ref(), &bindings.set_layouts)?;
+        self.bind_pipeline(&self.context.device, pipeline.as_ref(), &bindings.set_layouts, &bindings.raw_sets)?;
 
         Ok(BoundRasterPipeline {
             context: self,
@@ -384,7 +401,7 @@ impl<'a> PassContext<'a> {
 
     pub fn bind_compute_pipeline(&self, bindings: PipelineBindings<'_, GraphComputePipelineHandle>) -> anyhow::Result<BoundComputePipeline, RHIError> {
         let pipeline = self.context.get_compute_pipeline(bindings.pipeline_handle);
-        self.bind_pipeline(&self.context.device, pipeline.as_ref(), &bindings.set_layouts)?;
+        self.bind_pipeline(&self.context.device, pipeline.as_ref(), &bindings.set_layouts, &bindings.raw_sets)?;
 
         Ok(BoundComputePipeline {
             context: self,
@@ -398,6 +415,7 @@ impl<'a> PassContext<'a> {
         device: &Device,
         pipeline: &CommonPipeline,
         set_layout: &PipelineSetLayoutBindings,
+        raw_sets: &HashMap<u32, vk::DescriptorSet>,
     ) -> anyhow::Result<(), RHIError> {
         // bind pipeline
         unsafe {
@@ -432,16 +450,44 @@ impl<'a> PassContext<'a> {
                         ),
                         RenderGraphPassBinding::Buffer(buffer) => DescriptorSetBinding::Buffer(vk::DescriptorBufferInfo::builder()
                             .buffer(self.context.get_buffer(buffer.handle).raw)
-                            .offset(0)
                             .range(vk::WHOLE_SIZE)
                             .build()
                         ),
+                        RenderGraphPassBinding::DynamicBuffer(offset) => DescriptorSetBinding::DynamicBuffer {
+                            buffer_info: vk::DescriptorBufferInfo::builder()
+                                .buffer(self.context.global_dynamic_buffer.buffer.raw)
+                                .range(self.context.global_dynamic_buffer.max_uniform_buffer_range() as _)
+                                .build(),
+                            offset: *offset,
+                        },
+                        RenderGraphPassBinding::DynamicStorageBuffer(offset) => DescriptorSetBinding::DynamicStorageBuffer {
+                            buffer_info: vk::DescriptorBufferInfo::builder()
+                                .buffer(self.context.global_dynamic_buffer.buffer.raw)
+                                //.range(self.context.global_dynamic_buffer.max_storage_buffer_range() as _)
+                                .range(vk::WHOLE_SIZE)
+                                .build(),
+                            offset: *offset,
+                        }
                     })
                 })
                 .collect();
             let bindings = bindings?;
 
             self.bind_descriptor_set(&pipeline, *set_idx, &bindings);
+        }
+
+        // TODO: unsafe. user specific descriptor set index may collide with raw descriptor set
+        for (set_idx, set) in raw_sets {
+            unsafe {
+                self.context.device.raw.cmd_bind_descriptor_sets(
+                    self.cb.raw, 
+                    pipeline.pipeline_bind_point, 
+                    pipeline.pipeline_layout,
+                    *set_idx, 
+                    &[*set], 
+                    &[]
+                );
+            }
         }
 
         Ok(())
@@ -483,6 +529,11 @@ impl<'a> PassContext<'a> {
             panic!("Expect set {} but not found in pipeline shader!", set_index)
         };
 
+        let image_infos = TempList::new();
+        let buffer_infos = TempList::new();
+        // TODO: use some memory arena to avoid frequently allocations and deallocations
+        let mut dynamic_offsets: Vec<u32> = Vec::new();
+
         // update descriptor set and bind it
         let descriptor_writes = bindings.iter()
             .enumerate()
@@ -503,7 +554,7 @@ impl<'a> PassContext<'a> {
                             vk::ImageLayout::GENERAL => vk::DescriptorType::STORAGE_IMAGE,
                             _ => unimplemented!(),
                         })
-                        .image_info(std::slice::from_ref(image))
+                        .image_info(std::slice::from_ref(image_infos.add(*image)))
                         .build(),
                     DescriptorSetBinding::ImageArray(images) => {
                         assert!(!images.is_empty());
@@ -519,10 +570,24 @@ impl<'a> PassContext<'a> {
                         .build()
                     },
                     DescriptorSetBinding::Buffer(buffer) => write
-                        // all is storage buffer??
+                        // TODO: all is storage buffer??
                         .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                        .buffer_info(std::slice::from_ref(buffer))
+                        .buffer_info(std::slice::from_ref(buffer_infos.add(*buffer)))
                         .build(),
+                    DescriptorSetBinding::DynamicBuffer { buffer_info, offset } => {
+                        dynamic_offsets.push(*offset);
+                        write
+                            .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC)
+                            .buffer_info(std::slice::from_ref(buffer_infos.add(*buffer_info)))
+                            .build()
+                    },
+                    DescriptorSetBinding::DynamicStorageBuffer { buffer_info, offset } => {
+                        dynamic_offsets.push(*offset);
+                        write
+                            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER_DYNAMIC)
+                            .buffer_info(std::slice::from_ref(buffer_infos.add(*buffer_info)))
+                            .build()
+                    }
                 }
             })
             .collect::<Vec<_>>();
@@ -536,7 +601,7 @@ impl<'a> PassContext<'a> {
                 pipeline.pipeline_layout, 
                 set_index, 
                 &[descriptor_set], 
-                &[]
+                dynamic_offsets.as_slice()
             );
         }
     }

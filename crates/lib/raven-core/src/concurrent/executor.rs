@@ -32,6 +32,9 @@ pub fn spawn<T: Send + 'static>(future: impl Future<Output = T> + 'static + Send
             1
         };
 
+        // Debug purposed
+        //let num_threads = 1;
+
         for i in 0..num_threads {
             std::thread::Builder::new()
                 .name(format!("Executor {}", i))

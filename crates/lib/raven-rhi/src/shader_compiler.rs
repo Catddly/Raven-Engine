@@ -3,7 +3,6 @@ use std::sync::Arc;
 
 use turbosloth::*;
 use shader_prepper::{IncludeProvider};
-use relative_path::RelativePathBuf;
 use bytes::Bytes;
 use failure::Error as FailureError;
 use anyhow::Context;
@@ -28,9 +27,9 @@ impl IncludeProvider for ShaderIncludeProvider {
         let file_path = if let Some('/') = path.chars().next() {
             path.to_owned()
         } else {
-            let mut folder: RelativePathBuf = parent_file.into();
+            let mut folder: PathBuf = parent_file.into();
             folder.pop();
-            folder.join(path).as_str().to_string()
+            folder.join(path).to_str().unwrap().to_owned()
         };
 
         let bytes: Arc<Bytes> = smol::block_on(
@@ -125,7 +124,7 @@ impl LazyWorker for CompileShader {
                 for s in source {
                     source_text += &s.source;
                 }
-                let spirv = compile_shader_hlsl(&name, &source_text, &target_profile)?;
+                let spirv = compile_shader_hlsl(&name, &source_text, &self.entry, &target_profile)?;
 
                 let name = PathBuf::from(name + ".spv");
                 Ok(ShaderBinary { path: Some(name), spirv })
@@ -238,6 +237,7 @@ impl Default for CompileShaderStagesBuilder {
 fn compile_shader_hlsl(
     name: &str,
     source: &String,
+    entry: &String,
     target_profile: &str,
 ) -> anyhow::Result<Bytes> {
     let t = std::time::Instant::now();
@@ -245,7 +245,7 @@ fn compile_shader_hlsl(
     let spirv = hassle_rs::compile_hlsl(
         name,
         &source,
-        "main",
+        &entry,
         target_profile,
         &[
             "-spirv",
@@ -259,7 +259,7 @@ fn compile_shader_hlsl(
     )
     .map_err(|err| anyhow::anyhow!("{}", err))?;
 
-    glog::info!("DX Compiler compile {} with {:?}", name, t.elapsed());
+    glog::info!("DX Compiler compile {} {} with {:?}", name, entry, t.elapsed());
 
     Ok(spirv.into())
 }

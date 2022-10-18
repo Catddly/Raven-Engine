@@ -7,6 +7,7 @@ use std::collections::HashSet;
 use parking_lot::Mutex;
 use ash::{vk, extensions::khr};
 
+use crate::backend::CommandBuffer;
 use crate::backend::vulkan::allocator::{Allocator, AllocatorCreateDesc, AllocatorDebugSettings};
 use crate::backend::vulkan::buffer::BufferDesc;
 use crate::backend::vulkan::{Instance, PhysicalDevice};
@@ -14,6 +15,7 @@ use crate::backend::vulkan::util::utility;
 use crate::backend::vulkan::constants;
 use crate::draw_frame::DrawFrame;
 
+use super::RHIError;
 use super::physical_device::QueueFamily;
 use super::buffer::Buffer;
 
@@ -39,6 +41,7 @@ pub struct Device {
     pub global_queue: Queue,
 
     pub(crate) crash_tracing_buffer: Cell<Option<Buffer>>,
+    setup_cb: Mutex<CommandBuffer>,
 
     current_frame: Cell<u32>,
     // CPU frames.
@@ -283,6 +286,8 @@ impl Device {
             Mutex::new(Arc::new(DrawFrame::new(&device, &global_queue.family)))
         ];
 
+        let setup_cb = Mutex::new(CommandBuffer::new(&device, &global_queue.family));
+
         Ok(Self {
             raw: device,
             physical_device: physical_device.clone(),
@@ -291,6 +296,7 @@ impl Device {
             global_queue,
 
             crash_tracing_buffer: Cell::new(Some(crash_tracing_buffer)),
+            setup_cb,
 
             current_frame: Cell::new(0),
             draw_frames,
@@ -298,7 +304,7 @@ impl Device {
     }
 
     pub fn max_bindless_descriptor_count(&self) -> u32 {
-        (256 * 1024).min(
+        (512 * 1024).min(
             self.physical_device
                 .properties
                 .limits
@@ -311,6 +317,41 @@ impl Device {
         if let Some(crash_tracking_buffer) = self.crash_tracing_buffer.take() {
             self.destroy_buffer(crash_tracking_buffer);
         }
+    }
+
+    pub fn with_setup_commands(&self, callback: impl FnOnce(vk::CommandBuffer)) -> anyhow::Result<(), RHIError> {
+        let cb = &self.setup_cb.lock();
+
+        unsafe {
+            self.raw
+                .begin_command_buffer(
+                    cb.raw,
+                    &vk::CommandBufferBeginInfo::builder()
+                        .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
+                )
+                .unwrap();
+        }
+
+        callback(cb.raw);
+
+        unsafe {
+            self.raw.end_command_buffer(cb.raw).unwrap();
+
+            let submit_info = vk::SubmitInfo::builder().command_buffers(std::slice::from_ref(&cb.raw));
+
+            self.raw
+                .queue_submit(
+                    self.global_queue.raw,
+                    &[submit_info.build()],
+                    vk::Fence::null(),
+                )
+                .expect("Failed to submit setup commands to global queue!");
+
+            // TODO: use copy queue and render graph dependencies
+            self.raw.device_wait_idle()?;
+        }
+
+        Ok(())
     }
 }
 

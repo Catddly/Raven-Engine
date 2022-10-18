@@ -5,6 +5,8 @@ pub mod backend;
 pub mod pipeline_cache;
 pub mod shader_compiler;
 pub mod draw_frame;
+pub mod dynamic_buffer;
+pub mod copy_engine;
 
 use std::sync::Arc;
 use raven_core::winit::window::Window;
@@ -20,12 +22,12 @@ pub struct RHIConfig {
 
 // maybe raven will support RHI in the future.
 // this is only a facade to vulkan
-pub struct RHI {
+pub struct Rhi {
     pub device: Arc<Device>,
     pub swapchain: Swapchain,
 }
 
-impl RHI {
+impl Rhi {
     pub fn new(config: RHIConfig, window: &Window) -> anyhow::Result<Self> {
         let instance = Instance::builder().build()?;
         let surface = Arc::new(Surface::new(&instance, &window)?);
@@ -57,7 +59,7 @@ impl RHI {
     }
 }
 
-impl Drop for RHI {
+impl Drop for Rhi {
     fn drop(&mut self) {
         self.device.release_debug_resources();
     }

@@ -15,7 +15,7 @@ mod image;
 mod shader;
 pub mod descriptor;
 pub mod pipeline;
-pub mod render_pass;
+pub mod renderpass;
 
 pub mod barrier;
 mod command;
@@ -31,7 +31,7 @@ pub use image::{Image, ImageDesc, ImageType, ImageViewDesc};
 
 pub use shader::{ShaderSource, ShaderBinary, ShaderBinaryStage, PipelineShaderStage, PipelineShaderDesc};
 pub use pipeline::{RasterPipelineDesc, ComputePipelineDesc, RasterPipeline, ComputePipeline};
-pub use render_pass::RenderPass;
+pub use renderpass::{RenderPass, RenderPassDesc, RenderPassAttachmentDesc};
 
 pub use barrier::{AccessType, ImageBarrier, BufferBarrier};
 

@@ -12,6 +12,17 @@ pub struct Buffer {
     pub allocation: Allocation,
 }
 
+impl Buffer {
+    pub fn device_address(&self, device: &Device) -> vk::DeviceAddress {
+        unsafe {
+            device.raw.get_buffer_device_address(&vk::BufferDeviceAddressInfo::builder()
+                .buffer(self.raw)    
+                .build()
+            )
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct BufferDesc {
     pub size: usize,

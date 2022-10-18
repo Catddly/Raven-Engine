@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use ash::vk;
 
-use raven_rhi::{RHI, backend::{Device, barrier::{self, ImageBarrier}, Swapchain}, pipeline_cache::PipelineCache};
+use raven_rhi::{Rhi, backend::{Device, barrier::{self, ImageBarrier}, Swapchain}, pipeline_cache::PipelineCache, dynamic_buffer::DynamicBuffer};
 
 use crate::{compiled_graph::CompiledRenderGraph, transient_resource_cache::TransientResourceCache};
 use crate::graph_builder::{RenderGraphBuilder, TemporaryResourceRegistry, ExportedTemporalResources, TemporaryResourceState};
@@ -27,10 +27,11 @@ pub struct Executor {
 
     transient_resource_cache: TransientResourceCache,
     temporal_resources: RenderGraphTemporalResources,
+    global_dynamic_buffer: DynamicBuffer,
 }
 
 impl Executor {
-    pub fn new(rhi: &RHI) -> anyhow::Result<Self> {
+    pub fn new(rhi: &Rhi) -> anyhow::Result<Self> {
         Ok(Self {
             device: rhi.device.clone(),
 
@@ -39,6 +40,7 @@ impl Executor {
 
             transient_resource_cache: TransientResourceCache::new(),
             temporal_resources: Default::default(),
+            global_dynamic_buffer: DynamicBuffer::new(rhi),
         })
     }
 
@@ -62,9 +64,9 @@ impl Executor {
 
         // user-side callback to build the render graph with custom passes
         prepare_func(&mut rg_builder);
+
         // now the render graph is ready to compile and run
-        
-        let (rg, exported_temp_resources) = rg_builder.export_all_imported_resources();
+        let (rg, exported_temp_resources) = rg_builder.build();
 
         // analyzed all passes and register pipelines to pipeline cache
         self.compiled_rg = Some(rg.compile(&mut self.pipeline_cache));
@@ -117,7 +119,7 @@ impl Executor {
 
     pub fn draw(&mut self, swapchain: &mut Swapchain) {
         let compiled_rg = if let Some(rg) = self.compiled_rg.take() {
-            rg  
+            rg
         } else {
             glog::warn!("Render Graph is not compiled yet, draw request denied!");
             return;
@@ -153,7 +155,11 @@ impl Executor {
             let main_cb = &draw_frame.main_command_buffer;
 
             // create or import the actual resources into render graph.
-            executing_rg = compiled_rg.prepare_execute(&device, &mut self.pipeline_cache, &mut self.transient_resource_cache);
+            executing_rg = compiled_rg.prepare_execute(&device, 
+                &mut self.pipeline_cache,
+                &mut self.global_dynamic_buffer,
+                &mut self.transient_resource_cache
+            );
 
             executing_rg.record_commands(&main_cb);
 
@@ -175,6 +181,7 @@ impl Executor {
                     .expect("Failed to submit main commands to global queue!");
             }
         }
+
         // after this point, GPU is busying submitting basic commands and executing
         // we acquired the image as late as possible, because it can be blocked (i.e. the rendering is not complete)
         let swapchain_image = swapchain.acquire_next_image().expect("Failed to acquire next image!");
@@ -199,7 +206,7 @@ impl Executor {
                 ]
             );
 
-            let finished_rg = executing_rg.record_present_commands(&present_cb, swapchain_image.image.clone());
+            let retired_rg = executing_rg.record_present_commands(&present_cb, swapchain_image.image.clone());
 
             // back to present
             barrier::image_barrier(&device, &present_cb, &[
@@ -235,7 +242,7 @@ impl Executor {
                     .expect("Failed to submit present commands to global queue!");
             }
 
-            finished_rg
+            retired_rg
         };
 
         // present this frame
@@ -255,6 +262,7 @@ impl Executor {
         // store all transient resources back to the cache
         finished_rg.release_owned_resources(&mut self.transient_resource_cache);
 
+        self.global_dynamic_buffer.advance_frame();
         // take this frame back, we want to keep only one owner when we start a new frame (see begin_frame())
         self.device.end_frame(draw_frame);
     }
@@ -263,7 +271,8 @@ impl Executor {
     pub fn shutdown(self) {
         self.device.wait_idle();
 
-        self.pipeline_cache.clean(&self.device);
+        self.global_dynamic_buffer.clean(&self.device);
         self.transient_resource_cache.clean(&self.device);
+        self.pipeline_cache.clean(&self.device);
     }
 }

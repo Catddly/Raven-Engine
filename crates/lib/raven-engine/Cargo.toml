@@ -4,14 +4,16 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-raven-core = { path = "../../lib/raven-core/" }
-raven-rhi = { path = "../../lib/raven-rhi/" }
-raven-rg = { path = "../../lib/raven-rg/" }
+raven-core   = { path = "../../lib/raven-core/" }
+raven-rhi    = { path = "../../lib/raven-rhi/" }
+raven-rg     = { path = "../../lib/raven-rg/" }
+raven-render = { path = "../../lib/raven-render/" }
 
 anyhow = "1.0.0"  # error lib
 log = "0.4"       # logging lib
 
 # Temporary
+# Strictly speaking, this should not be here, this should only be in RHI layer!
 ash = "0.33.0"
 
 smol = "1.2.0"

@@ -7,7 +7,7 @@ use arrayvec::ArrayVec;
 use raven_rhi::{
     backend::{Device, AccessType, CommandBuffer, Image, ImageBarrier, BufferBarrier},
     backend::barrier,
-    pipeline_cache::PipelineCache,
+    pipeline_cache::PipelineCache, dynamic_buffer::DynamicBuffer,
 };
 
 use crate::{
@@ -20,9 +20,10 @@ use crate::{
 
 const MAX_TRANSITION_PER_BATCH: usize = 32;
 
-pub(crate) struct ExecutingRenderGraph<'device, 'cache> {
+pub(crate) struct ExecutingRenderGraph<'device, 'cache, 'dynamic> {
     pub(crate) device: &'device Device,
     pub(crate) pipeline_cache: &'cache mut PipelineCache,
+    pub(crate) global_dynamic_buffer: &'dynamic mut DynamicBuffer,
 
     pub(crate) passes: Vec<Pass>,
     pub(crate) native_resources: Vec<GraphResource>,
@@ -32,7 +33,7 @@ pub(crate) struct ExecutingRenderGraph<'device, 'cache> {
     pub(crate) pipelines: RenderGraphPipelineHandles,
 }
 
-impl<'device, 'cache> ExecutingRenderGraph<'device, 'cache> {
+impl<'device, 'cache, 'dynamic> ExecutingRenderGraph<'device, 'cache, 'dynamic> {
     pub fn record_commands(
         &mut self,
         cb: &CommandBuffer,
@@ -166,6 +167,7 @@ impl<'device, 'cache> ExecutingRenderGraph<'device, 'cache> {
                 pipelines: &self.pipelines,
                 pipeline_cache: &mut self.pipeline_cache,
                 registered_resources: &self.registered_resources,
+                global_dynamic_buffer: &mut self.global_dynamic_buffer,
             },
         };
 

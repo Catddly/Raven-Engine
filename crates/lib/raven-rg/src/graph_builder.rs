@@ -261,7 +261,7 @@ pub struct ExportedTemporalResources(pub(crate) TemporaryResourceRegistry);
 
 impl RenderGraphBuilder {
     /// This will be called when after user finishing the preparation of the render graph.
-    pub(crate) fn export_all_imported_resources(self) -> (RenderGraph, ExportedTemporalResources) {
+    pub(crate) fn build(self) -> (RenderGraph, ExportedTemporalResources) {
         let mut render_graph = self.render_graph;
         let mut registry = self.temporal_resources;
 

@@ -1,11 +1,13 @@
 pub mod loader;
 mod asset_process;
 pub mod asset_registry;
+mod asset_baker;
 mod pack_unpack;
 mod util;
 mod error;
 
 pub use asset_process::AssetProcessor;
+pub use asset_baker::AssetBaker;
 
 use std::{marker::PhantomData, fmt::Debug, path::PathBuf};
 
