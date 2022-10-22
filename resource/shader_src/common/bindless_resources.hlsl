@@ -1,5 +1,5 @@
-#ifndef _BINDLESS_HLSL_
-#define _BINDLESS_HLSL_
+#ifndef _BINDLESS_RESOURCES_HLSL_
+#define _BINDLESS_RESOURCES_HLSL_
 
 #include "mesh.hlsl"
 

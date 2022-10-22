@@ -8,3 +8,4 @@ edition = "2021"
 [dependencies]
 raven-engine = { path = "../../lib/raven-engine/" }
 log = "0.4"       # logging lib
+anyhow = "1.0.0"  # error lib

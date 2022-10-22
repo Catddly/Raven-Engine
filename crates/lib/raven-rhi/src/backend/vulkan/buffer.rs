@@ -6,6 +6,7 @@ use super::allocator::{Allocator, MemoryLocation, AllocationCreateDesc, Allocati
 use super::{Device, error};
 use super::RHIError;
 
+#[derive(Debug)]
 pub struct Buffer {
     pub raw: vk::Buffer,
     pub desc: BufferDesc,

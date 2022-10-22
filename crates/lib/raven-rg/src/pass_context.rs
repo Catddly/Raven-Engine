@@ -12,8 +12,10 @@ use raven_rhi::{
     backend::renderpass::FrameBufferCacheKey,
     backend::pipeline::CommonPipeline,
     backend::descriptor::DescriptorSetBinding,
-    pipeline_cache::PipelineCache, dynamic_buffer::DynamicBuffer,
+    dynamic_buffer::DynamicBuffer,
 };
+
+use crate::executor::{ExecutionParams};
 
 use super::{
     resource::{SRV, UAV, RT},
@@ -38,6 +40,22 @@ pub enum RenderGraphPassBinding {
 
     DynamicBuffer(u32),
     DynamicStorageBuffer(u32),
+}
+
+impl RenderGraphPassBinding {
+    pub fn with_aspect(&mut self, aspect: vk::ImageAspectFlags) {
+        match self {
+            RenderGraphPassBinding::Image(image) => {
+                image.view_desc.aspect_mask = aspect;
+            },
+            RenderGraphPassBinding::ImageArray(images) => {
+                for image in images {
+                    image.view_desc.aspect_mask = aspect;
+                }
+            },
+            _ => panic!("Try to add ImageAspectFlags to buffers!"),
+        }
+    }
 }
 
 pub trait RenderGraphPassBindable {
@@ -143,25 +161,26 @@ impl IntoPipelineDescriptorBindings for GraphComputePipelineHandle {
     }
 }
 
-pub struct BoundComputePipeline<'context, 'a> {
-    context: &'context PassContext<'a>,
+pub struct BoundComputePipeline<'context, 'exec, 'a> {
+    context: &'context PassContext<'exec, 'a>,
     pipeline: Arc<ComputePipeline>,
 }
 
-impl<'context, 'a> BoundComputePipeline<'context, 'a> {
+impl<'context, 'exec, 'a> BoundComputePipeline<'context, 'exec, 'a> {
     pub fn dispatch(
         &self,
         threads: [u32; 3],
     ) {
+        let device = self.context.context.execution_params.device;
         let dispatch_groups = self.pipeline.dispatch_groups;
 
         unsafe {
-            self.context.context.device.raw.cmd_dispatch(
+            device.raw.cmd_dispatch(
                 self.context.cb.raw,
-                // divide_ceil
-                (threads[0] / dispatch_groups[0]) + 1,
-                (threads[1] / dispatch_groups[1]) + 1,
-                (threads[2] / dispatch_groups[2]) + 1
+                // divide floor
+                threads[0] / dispatch_groups[0],
+                threads[1] / dispatch_groups[1],
+                threads[2] / dispatch_groups[2]
             );
         }
     }
@@ -172,8 +191,10 @@ impl<'context, 'a> BoundComputePipeline<'context, 'a> {
         offset: u32,
         bytes: &[u8],
     ) {
+        let device = self.context.context.execution_params.device;
+
         unsafe {
-            self.context.context.device.raw.cmd_push_constants(
+            device.raw.cmd_push_constants(
                 self.context.cb.raw, 
                 self.pipeline.pipeline.pipeline_layout,
                 stage_flags, 
@@ -184,20 +205,22 @@ impl<'context, 'a> BoundComputePipeline<'context, 'a> {
     }
 }
 
-pub struct BoundRasterPipeline<'context, 'a> {
-    context: &'context PassContext<'a>,
+pub struct BoundRasterPipeline<'context, 'exec, 'a> {
+    context: &'context PassContext<'exec, 'a>,
     pipeline: Arc<RasterPipeline>,
 }
 
-impl<'context, 'a> BoundRasterPipeline<'context, 'a> {
+impl<'context, 'exec, 'a> BoundRasterPipeline<'context, 'exec, 'a> {
     pub fn push_constants(
         &self,
         stage_flags: vk::ShaderStageFlags,
         offset: u32,
         bytes: &[u8],
     ) {
+        let device = self.context.context.execution_params.device;
+
         unsafe {
-            self.context.context.device.raw.cmd_push_constants(
+            device.raw.cmd_push_constants(
                 self.context.cb.raw, 
                 self.pipeline.pipeline_layout, 
                 stage_flags, 
@@ -208,24 +231,23 @@ impl<'context, 'a> BoundRasterPipeline<'context, 'a> {
     }
 }
 
-pub struct ExecuteContext<'a> {
-    pub device: &'a Device,
+pub struct ExecuteContext<'exec, 'a> {
+    pub execution_params: &'a ExecutionParams<'exec>,
 
     pub(crate) pipelines: &'a RenderGraphPipelineHandles,
-    pub(crate) pipeline_cache: &'a mut PipelineCache,
-
     pub(crate) registered_resources: &'a Vec<RegisteredResource>,
     pub(crate) global_dynamic_buffer: &'a mut DynamicBuffer,
 }
 
-impl<'a> ExecuteContext<'a> {
+impl<'exec, 'a> ExecuteContext<'exec, 'a> {
     pub(crate) fn get_image_view(&self, handle: GraphResourceHandle, view_desc: &ImageViewDesc) -> anyhow::Result<vk::ImageView, RHIError> {
         let image = match self.registered_resources[handle.id as usize].resource.borrow() {
             GraphPreparedResourceRef::Image(image) => image,
             _ => panic!("Expect image, but pass in a non-image graph resource handle!"),
         };
 
-        image.view(&self.device, &view_desc)
+        let device = self.execution_params.device;
+        image.view(device, &view_desc)
     }
 
     pub(crate) fn get_image(&self, handle: GraphResourceHandle) -> &Image {
@@ -248,26 +270,27 @@ impl<'a> ExecuteContext<'a> {
 
     pub(crate) fn get_raster_pipeline(&self, handle: GraphRasterPipelineHandle) -> Arc<RasterPipeline> {
         let pipeline = self.pipelines.raster_pipeline_handles[handle.idx];
-        self.pipeline_cache.get_raster_pipeline(pipeline)
+        self.execution_params.pipeline_cache.get_raster_pipeline(pipeline)
     }
 
     pub(crate) fn get_compute_pipeline(&self, handle: GraphComputePipelineHandle) -> Arc<ComputePipeline> {
         let pipeline = self.pipelines.compute_pipeline_handles[handle.idx];
-        self.pipeline_cache.get_compute_pipeline(pipeline)
+        self.execution_params.pipeline_cache.get_compute_pipeline(pipeline)
     }
 }
 
 /// Render pass context to give user to do custom command buffer recording ability and etc.
-pub struct PassContext<'a> {
+pub struct PassContext<'exec, 'a> {
     /// Command Buffer to record rendering commands to.
     pub cb: &'a CommandBuffer,
     /// Context Relative Resources to be used inside this render pass. 
-    pub context: ExecuteContext<'a>,
+    pub context: ExecuteContext<'exec, 'a>,
 }
 
-impl<'a> PassContext<'a> {
+impl<'exec, 'a> PassContext<'exec, 'a> {
+    #[inline]
     pub fn device(&self) -> &Device {
-        &self.context.device
+        &self.context.execution_params.device
     }
 
     pub fn global_dynamic_buffer(&mut self) -> &mut DynamicBuffer {
@@ -281,7 +304,7 @@ impl<'a> PassContext<'a> {
         color_attachments: &[(GraphResourceRef<Image, RT>, &ImageViewDesc)],
         depth_attachment: Option<(GraphResourceRef<Image, RT>, &ImageViewDesc)>,
     ) -> anyhow::Result<(), RHIError> {
-        let device = self.context.device;
+        let device = self.context.execution_params.device;
 
         // get or create the framebuffer from the cache
         let framebuffer = render_pass.frame_buffer_cache.get_or_create(device, FrameBufferCacheKey::new(
@@ -340,7 +363,7 @@ impl<'a> PassContext<'a> {
         &mut self,
     ) {
         unsafe {
-            self.context.device.raw.cmd_end_render_pass(self.cb.raw);
+            self.device().raw.cmd_end_render_pass(self.cb.raw);
         }
     }
 
@@ -353,10 +376,10 @@ impl<'a> PassContext<'a> {
     #[inline]
     pub fn set_viewport(&self, [width, height]: [u32; 2]) {
         unsafe {
-            self.context.device.raw.cmd_set_viewport(
+            self.device().raw.cmd_set_viewport(
                 self.cb.raw, 
                 0,
-                // negative height of viewport to flip vulkan y screen coordinates
+                // negative height of viewport to flip vulkan y NDC coordinates
                 &[vk::Viewport {
                     x: 0.0, y: (height as f32),
                     width: width as f32, 
@@ -371,7 +394,7 @@ impl<'a> PassContext<'a> {
     #[inline]
     pub fn set_scissor(&self, [width, height]: [u32; 2]) {
         unsafe {
-            self.context.device.raw.cmd_set_scissor(
+            self.device().raw.cmd_set_scissor(
                 self.cb.raw,
                 0,
                 &[
@@ -391,7 +414,7 @@ impl<'a> PassContext<'a> {
 
     pub fn bind_raster_pipeline(&self, bindings: PipelineBindings<'_, GraphRasterPipelineHandle>) -> anyhow::Result<BoundRasterPipeline, RHIError> {
         let pipeline = self.context.get_raster_pipeline(bindings.pipeline_handle);
-        self.bind_pipeline(&self.context.device, pipeline.as_ref(), &bindings.set_layouts, &bindings.raw_sets)?;
+        self.bind_pipeline(self.context.execution_params.device, pipeline.as_ref(), &bindings.set_layouts, &bindings.raw_sets)?;
 
         Ok(BoundRasterPipeline {
             context: self,
@@ -401,7 +424,7 @@ impl<'a> PassContext<'a> {
 
     pub fn bind_compute_pipeline(&self, bindings: PipelineBindings<'_, GraphComputePipelineHandle>) -> anyhow::Result<BoundComputePipeline, RHIError> {
         let pipeline = self.context.get_compute_pipeline(bindings.pipeline_handle);
-        self.bind_pipeline(&self.context.device, pipeline.as_ref(), &bindings.set_layouts, &bindings.raw_sets)?;
+        self.bind_pipeline(self.context.execution_params.device, pipeline.as_ref(), &bindings.set_layouts, &bindings.raw_sets)?;
 
         Ok(BoundComputePipeline {
             context: self,
@@ -421,6 +444,24 @@ impl<'a> PassContext<'a> {
         unsafe {
             device.raw
                 .cmd_bind_pipeline(self.cb.raw, pipeline.pipeline_bind_point, pipeline.pipeline);
+        }
+        
+        // bind engine global frame constants
+        // TODO: do we really need to bind it every time bound pipeline?
+        if pipeline.set_layout_infos.get(2).is_some() {
+            unsafe {
+                device.raw.cmd_bind_descriptor_sets(
+                    self.cb.raw, 
+                    pipeline.pipeline_bind_point, 
+                    pipeline.pipeline_layout,
+                    2,
+                    &[self.context.execution_params.global_constants_set], 
+                    &[
+                        // binding 0
+                        self.context.execution_params.draw_frame_context_layout.frame_constants_offset
+                    ]
+                );
+            }
         }
 
         // create and bind pipeline's descriptor sets
@@ -476,10 +517,11 @@ impl<'a> PassContext<'a> {
             self.bind_descriptor_set(&pipeline, *set_idx, &bindings);
         }
 
+        let device = self.context.execution_params.device;
         // TODO: unsafe. user specific descriptor set index may collide with raw descriptor set
         for (set_idx, set) in raw_sets {
             unsafe {
-                self.context.device.raw.cmd_bind_descriptor_sets(
+                device.raw.cmd_bind_descriptor_sets(
                     self.cb.raw, 
                     pipeline.pipeline_bind_point, 
                     pipeline.pipeline_layout,
@@ -499,7 +541,7 @@ impl<'a> PassContext<'a> {
         set_index: u32,
         bindings: &[DescriptorSetBinding],
     ) {
-        let raw_device = &self.context.device.raw;
+        let raw_device = &self.context.execution_params.device.raw;
 
         let pool = {
             let descriptor_pool_ci = vk::DescriptorPoolCreateInfo::builder()
@@ -510,7 +552,7 @@ impl<'a> PassContext<'a> {
         };
 
         // release in next frame
-        self.context.device.defer_release(pool);
+        self.context.execution_params.device.defer_release(pool);
 
         // create descriptor set
         let descriptor_set = {

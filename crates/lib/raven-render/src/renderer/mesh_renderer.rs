@@ -7,7 +7,7 @@ use raven_core::{asset::{asset_registry::{AssetHandle, get_runtime_asset_registr
 use raven_rg::{RenderGraphBuilder, RgHandle, IntoPipelineDescriptorBindings, RenderGraphPassBinding, image_clear};
 use raven_rhi::{backend::{Device, ImageDesc, Image, BufferDesc, Buffer, renderpass, RenderPass, descriptor::update_descriptor_set_buffer, RasterPipelineDesc, PipelineShaderDesc, PipelineShaderStage, AccessType, ImageViewDesc}, Rhi, copy_engine::CopyEngine};
 
-use crate::global_bindless_descriptors::{create_engine_global_bindless_descriptor_set};
+use crate::global_bindless_descriptor::{create_engine_global_bindless_descriptor_set};
 
 const GBUFFER_PACK_FORMAT: vk::Format = vk::Format::R32G32B32A32_SFLOAT;
 const GBUFFER_DEPTH_FORMAT: vk::Format = vk::Format::D32_SFLOAT;
@@ -71,9 +71,9 @@ pub struct MeshRenderer {
 }
 
 pub struct GBuffer {
-    packed_gbuffer: RgHandle<Image>,
-    geometric_normal: RgHandle<Image>,
-    depth: RgHandle<Image>,
+    pub packed_gbuffer: RgHandle<Image>,
+    pub geometric_normal: RgHandle<Image>,
+    pub depth: RgHandle<Image>,
 }
 
 pub enum MeshShadingContext {
@@ -140,9 +140,9 @@ impl MeshRenderer {
         let mut mesh_instances = Vec::new();
         mesh_instances.push(MeshInstance {
             transform: Affine3A::from_scale_rotation_translation(
-                Vec3::from([0.2, 0.2, 0.2]),
-                Quat::IDENTITY, 
-                Vec3::from([0.0, 0.0, -0.5])
+                Vec3::splat(1.0),
+                Quat::IDENTITY,
+                Vec3::splat(0.0)
             ),
             handle: MeshHandle { id: 0 },
         });
@@ -183,7 +183,7 @@ impl MeshRenderer {
                     let tangents = mesh_asset.tangents.as_slice();
                     let indices = mesh_asset.indices.as_slice();
                     let mat_ids = mesh_asset.material_ids.as_slice();
-            
+
                     // copy upload
                     let mut copy_engine = CopyEngine::new();
                     
@@ -193,6 +193,36 @@ impl MeshRenderer {
                     let tangent_offset = copy_engine.copy(&tangents) + curr_global_offset;
                     let index_offset   = copy_engine.copy(&indices)  + curr_global_offset;
                     let mat_id_offset  = copy_engine.copy(&mat_ids)  + curr_global_offset;
+
+                    // Same in the asset::mod.rs
+                    #[repr(C)]
+                    #[derive(Copy, Clone)]
+                    struct UploadMaterial {
+                        metallic          : f32,
+                        roughness         : f32,
+                        base_color        : [f32; 4],
+                        emissive          : [f32; 3],
+                        texture_mapping   : [u32; 4],
+                        texture_transform : [[f32; 6]; 4],
+                    }
+
+                    let mut upload_materials = Vec::new();
+                    for mat_ref in mesh_asset.materials.iter() {
+                        let material = read_guard.get_asset(mat_ref.handle()).unwrap().as_material().unwrap();
+                        glog::debug!("Material: {:#?}", material);
+
+                        let upload = UploadMaterial {
+                            metallic: material.metallic,
+                            roughness: material.roughness,
+                            base_color: material.base_color,
+                            emissive: material.emissive,
+                            texture_mapping: material.texture_mapping,
+                            texture_transform: material.texture_transform,
+                        };
+
+                        upload_materials.push(upload);
+                    }
+                    let mat_data_offset = copy_engine.copy(&upload_materials) + curr_global_offset;
 
                     let totol_size_bytes = copy_engine.current_offset();
                     copy_engine.upload(
@@ -217,9 +247,7 @@ impl MeshRenderer {
                         tangent_offset,
                         index_offset,
                         mat_id_offset,
-                    
-                        // TODO: load material
-                        mat_data_offset: 0,
+                        mat_data_offset,
                     };
 
                     self.meshes.push(UploadedMesh {
@@ -240,7 +268,7 @@ impl MeshRenderer {
         }
     }
 
-    pub fn prepare_rg(&mut self, rg: &mut RenderGraphBuilder) {
+    pub fn prepare_rg(&mut self, rg: &mut RenderGraphBuilder) -> MeshShadingContext {
         // create shading context (GBuffer etc.)
         let mut shading_context = match self.scheme {
             MeshRasterScheme::Deferred => {
@@ -311,7 +339,6 @@ impl MeshRenderer {
 
                                 transform
                             });
-                        
                         let instance_data_offset = ctx.global_dynamic_buffer().push_from_iter(xform_iter);
 
                         ctx.begin_render_pass(
@@ -338,7 +365,7 @@ impl MeshRenderer {
                             let mesh = &meshes[mesh_ins.handle.id as usize];
 
                             unsafe {
-                                let raw = &ctx.context.device.raw;
+                                let raw = &ctx.device().raw;
 
                                 raw.cmd_bind_index_buffer(
                                     ctx.cb.raw, 
@@ -350,7 +377,7 @@ impl MeshRenderer {
                                 let push_constants = [mesh_ins.handle.id, instance_idx as u32];
                                 bound_pipeline.push_constants(
                                     vk::ShaderStageFlags::ALL_GRAPHICS, 
-                                    0, 
+                                    0,
                                     utility::as_byte_slice_values(&push_constants)
                                 );
 
@@ -368,17 +395,15 @@ impl MeshRenderer {
                 _ => unimplemented!(),
             }
         }
+
+        shading_context
     }
 
     pub fn clean(self, rhi: &Rhi) {
-        assert_eq!(Arc::strong_count(&self.draw_data_buffer), 1);
-        assert_eq!(Arc::strong_count(&self.mesh_buffer), 1);
+        let draw_data_buffer = Arc::try_unwrap(self.draw_data_buffer).unwrap();
+        let mesh_buffer = Arc::try_unwrap(self.mesh_buffer).unwrap();
 
-        // Safety: we make sure buffers' reference count is 1
-        let draw_data_buffer = unsafe { Box::from_raw(Arc::into_raw(self.draw_data_buffer) as *mut Buffer) };
-        let mesh_buffer = unsafe { Box::from_raw(Arc::into_raw(self.mesh_buffer) as *mut Buffer) };
-
-        rhi.device.destroy_buffer(*draw_data_buffer);
-        rhi.device.destroy_buffer(*mesh_buffer);
+        rhi.device.destroy_buffer(draw_data_buffer);
+        rhi.device.destroy_buffer(mesh_buffer);
     }
 }

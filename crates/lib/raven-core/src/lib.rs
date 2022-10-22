@@ -5,6 +5,7 @@ pub mod asset;
 pub mod console;
 pub mod filesystem;
 pub mod concurrent;
+pub mod render;
 pub mod system;
 pub mod reflection;
 pub mod container;

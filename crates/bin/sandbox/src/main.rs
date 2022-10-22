@@ -1,12 +1,35 @@
 use std::process::exit;
 
+use raven_engine::prelude::*;
+
 extern crate log as glog;
 
-fn main() {
-    let mut engine_context = raven_engine::init().unwrap_or_else(|err| {
-        eprintln!("Raven Engine failed to init with: {}", err); // use eprintln here, because log module may not be initialized successfully.
-        exit(1);
-    });
-    raven_engine::main_loop(&mut engine_context);
-    raven_engine::shutdown(engine_context);
+pub struct Sandbox {
+    
 }
+
+impl Sandbox {
+    pub fn new() -> Self {
+        Self {
+
+        }
+    }
+}
+
+impl App for Sandbox {
+    fn init(&mut self) -> anyhow::Result<()> {
+        glog::info!("User app init!");
+
+        Ok(())
+    }
+
+    fn tick(&mut self, _dt: f32) {
+        
+    }
+
+    fn shutdown(self) where Self: Sized {
+        glog::info!("User app shutdown!");
+    }
+}
+
+raven_main!{ Sandbox::new() }

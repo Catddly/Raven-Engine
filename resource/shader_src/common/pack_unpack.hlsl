@@ -49,17 +49,14 @@ float3 unpack_color_888_uint(uint packed) {
 }
 
 uint pack_2x16f_uint(float2 value) {
-    uint res = 0;
-    res |= f32tof16(value.x);
-    res |= f32tof16(value.y) << 16;
-    return res;
+    return f32tof16(value.x) | (f32tof16(value.y) << 16u);
 }
 
 float2 unpack_2x16f_uint(uint value) {
-    float2 res;
-    res.x = asfloat(value & 0xffff);
-    res.y = asfloat((value >> 16) & 0xffff);
-    return res;
+    return float2(
+		f16tof32(value & 0xffff),
+    	f16tof32((value >> 16) & 0xffff)
+	);
 }
 
 #endif

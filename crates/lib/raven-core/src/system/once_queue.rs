@@ -45,8 +45,16 @@ impl OnceQueue {
 
     pub fn execute(&mut self) -> anyhow::Result<(), OnceQueueError> {
         let drained_queue = self.queue.drain(..);
+        Self::execute_impl(drained_queue)
+    }
 
-        for job in drained_queue {
+    pub fn execute_backwards(&mut self) -> anyhow::Result<(), OnceQueueError> {
+        let drained_queue = self.queue.drain(..).rev();
+        Self::execute_impl(drained_queue)
+    }
+
+    fn execute_impl(iter: impl Iterator<Item = (OnceJob, String)>) -> anyhow::Result<(), OnceQueueError> {
+        for job in iter {
             let (job, name) = job;
             let job_func = job.job;
 

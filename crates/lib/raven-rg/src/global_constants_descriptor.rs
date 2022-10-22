@@ -1,22 +1,18 @@
 use std::collections::HashMap;
 
-use ash::vk::{self, DescriptorSetLayoutBinding};
+use ash::vk;
+use rspirv_reflect::{DescriptorInfo, DescriptorType, BindingCount};
 use once_cell::sync::Lazy;
-use raven_rhi::{Rhi, backend::descriptor};
-use rspirv_reflect::{DescriptorType, DescriptorInfo, BindingCount};
 
-fn get_engine_global_bindless_descriptor_layout() -> &'static HashMap<u32, DescriptorInfo> {
-    static ENGINE_GLOBAL_BINDLESS_DESCRIPTOR_LAYOUT : Lazy<HashMap<u32, DescriptorInfo>> = Lazy::new(|| {
+use raven_rhi::{Rhi, backend::{descriptor}, dynamic_buffer::DynamicBuffer};
+
+// to be used in set 2
+fn get_engine_global_constant_descriptor_layout() -> &'static HashMap<u32, DescriptorInfo> {
+    static ENGINE_GLOBAL_CONSTANTS_DESCRIPTOR_LAYOUT : Lazy<HashMap<u32, DescriptorInfo>> = Lazy::new(|| {
         [
-            // mesh draw data (vertices and indices)
+            // frame constants
             (0, DescriptorInfo {
-                ty: DescriptorType::STORAGE_BUFFER,
-                binding_count: BindingCount::One,
-                name: Default::default(),
-            }),
-            // mesh data (mesh draw data offsets)
-            (1, rspirv_reflect::DescriptorInfo {
-                ty: DescriptorType::STORAGE_BUFFER,
+                ty: DescriptorType::UNIFORM_BUFFER_DYNAMIC,
                 binding_count: BindingCount::One,
                 name: Default::default(),
             }),
@@ -25,15 +21,14 @@ fn get_engine_global_bindless_descriptor_layout() -> &'static HashMap<u32, Descr
         .collect::<HashMap<u32, DescriptorInfo>>()
     });
 
-    &ENGINE_GLOBAL_BINDLESS_DESCRIPTOR_LAYOUT
+    &ENGINE_GLOBAL_CONSTANTS_DESCRIPTOR_LAYOUT
 }
 
-pub fn create_engine_global_bindless_descriptor_set(rhi: &Rhi) -> vk::DescriptorSet {
+pub fn create_engine_global_constants_descriptor_set(rhi: &Rhi, buffer: &DynamicBuffer) -> vk::DescriptorSet {
     let raw_device = &rhi.device.raw;
 
     // if a resource in a descriptor had no memory access by shader, it can be invalid descriptor.
     let set_binding_flags = [
-        vk::DescriptorBindingFlags::PARTIALLY_BOUND,
         vk::DescriptorBindingFlags::PARTIALLY_BOUND,
     ];
 
@@ -41,7 +36,7 @@ pub fn create_engine_global_bindless_descriptor_set(rhi: &Rhi) -> vk::Descriptor
         .binding_flags(&set_binding_flags)
         .build();
 
-    let layout = get_engine_global_bindless_descriptor_layout();
+    let layout = get_engine_global_constant_descriptor_layout();
 
     let mut bindings = Vec::new();
     for (binding_idx, info) in layout {
@@ -54,11 +49,11 @@ pub fn create_engine_global_bindless_descriptor_set(rhi: &Rhi) -> vk::Descriptor
         };
         let ty = descriptor::refl_descriptor_type_to_vk(info.ty.clone(), &info.name);
 
-        bindings.push(DescriptorSetLayoutBinding::builder()
+        bindings.push(vk::DescriptorSetLayoutBinding::builder()
             .binding(*binding_idx)
             .descriptor_count(descriptor_count)
             .descriptor_type(ty)
-            .stage_flags(vk::ShaderStageFlags::ALL_GRAPHICS)
+            .stage_flags(vk::ShaderStageFlags::ALL)
             .build()
         );
     }
@@ -78,15 +73,14 @@ pub fn create_engine_global_bindless_descriptor_set(rhi: &Rhi) -> vk::Descriptor
 
     let descriptor_sizes = [
         vk::DescriptorPoolSize {
-            ty: vk::DescriptorType::STORAGE_BUFFER,
-            descriptor_count: 2,
+            ty: vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,
+            descriptor_count: 1,
         },
     ];
 
     // TODO: manually manage this pool
     let descriptor_pool_info = vk::DescriptorPoolCreateInfo::builder()
         .pool_sizes(&descriptor_sizes)
-        //.flags(vk::DescriptorPoolCreateFlags::UPDATE_AFTER_BIND)
         .max_sets(1);
 
     let descriptor_pool = unsafe {
@@ -95,24 +89,34 @@ pub fn create_engine_global_bindless_descriptor_set(rhi: &Rhi) -> vk::Descriptor
             .unwrap()
     };
 
-    // let variable_descriptor_count = rhi.device.max_bindless_descriptor_count();
-    // let mut variable_descriptor_count_allocate_info =
-    //     vk::DescriptorSetVariableDescriptorCountAllocateInfo::builder()
-    //         .descriptor_counts(std::slice::from_ref(&variable_descriptor_count))
-    //         .build();
-
     let descriptor_set = unsafe {
         raw_device
             .allocate_descriptor_sets(
                 &vk::DescriptorSetAllocateInfo::builder()
                     .descriptor_pool(descriptor_pool)
                     .set_layouts(std::slice::from_ref(&descriptor_set_layout))
-                    // to have variable descriptor count in this set
-                    //.push_next(&mut variable_descriptor_count_allocate_info)
                     .build(),
             )
             .unwrap()[0]
     };
+
+    // update descriptor set
+    let uniform_buffer_info = vk::DescriptorBufferInfo::builder()
+        .buffer(buffer.buffer.raw)
+        .range(buffer.max_uniform_buffer_range() as u64)
+        .build();
+
+    let descriptor_set_writes = [
+        // frame constants
+        vk::WriteDescriptorSet::builder()
+            .dst_binding(0)
+            .dst_set(descriptor_set)
+            .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC)
+            .buffer_info(std::slice::from_ref(&uniform_buffer_info))
+            .build(),
+    ];
+
+    unsafe { raw_device.update_descriptor_sets(&descriptor_set_writes, &[]) };
 
     descriptor_set
 }

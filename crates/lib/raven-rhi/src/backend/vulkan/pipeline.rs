@@ -90,7 +90,7 @@ pub fn create_raster_pipeline(
             (reflection_data.get_descriptor_sets().unwrap(), (reflection_data.get_push_constant_range().unwrap(), binary.stage))
         })
         .unzip();
-
+    
     let pipeline_set_layouts = descriptor::flatten_all_stages_descriptor_set_layouts(set_layouts);
 
     // TODO: thing of the global descriptors layout of the engine
@@ -100,19 +100,44 @@ pub fn create_raster_pipeline(
         vk::ShaderStageFlags::ALL_GRAPHICS
     ).expect("Failed to create vulkan descriptor set layout!");
 
-    let push_constant_ranges = push_constants.into_iter()
-        .filter_map(|(pc, _)| pc.and_then(|pc| {
-            Some(vk::PushConstantRange::builder()
-                .size(pc.size)
-                .offset(pc.offset)
-                .stage_flags(vk::ShaderStageFlags::ALL_GRAPHICS)
-                .build())
-        }))
-        .collect::<Vec<_>>();
+    // let push_constant_ranges = push_constants.into_iter()
+    //     .filter_map(|(pc, _)| pc.and_then(|pc| {
+    //         Some(vk::PushConstantRange::builder()
+    //             .size(pc.size)
+    //             .offset(pc.offset)
+    //             .stage_flags(vk::ShaderStageFlags::ALL_GRAPHICS)
+    //             .build())
+    //     }))
+    //     .collect::<Vec<_>>();
+
+    let push_constant = push_constants.iter()
+        .reduce(|lhs, rhs| {
+            match (lhs.0.is_some(), rhs.0.is_some()) {
+                (true, true) => {
+                    assert_eq!(lhs.0.as_ref().unwrap().size, rhs.0.as_ref().unwrap().size);                
+                    assert_eq!(lhs.0.as_ref().unwrap().offset, rhs.0.as_ref().unwrap().offset);
+
+                    lhs
+                },
+                (true, false) => {
+                    lhs
+                },
+                (false, true) | (false, false) => {
+                    rhs
+                },
+            }
+        })
+        .unwrap();
+
+    let push_constant_ranges = vk::PushConstantRange::builder()
+        .size(push_constant.0.as_ref().unwrap().size)
+        .offset(push_constant.0.as_ref().unwrap().offset)
+        .stage_flags(vk::ShaderStageFlags::ALL_GRAPHICS)
+        .build();
 
     let pipeline_layout_ci = vk::PipelineLayoutCreateInfo::builder()
         .set_layouts(&set_layout)
-        .push_constant_ranges(&push_constant_ranges)
+        .push_constant_ranges(std::slice::from_ref(&push_constant_ranges))
         .build();
 
     let pipeline_layout = unsafe { device.raw
@@ -186,7 +211,7 @@ pub fn create_raster_pipeline(
     let depth_stencil_state = vk::PipelineDepthStencilStateCreateInfo::builder()
         .depth_test_enable(true)
         .depth_write_enable(desc.depth_write)
-        .depth_compare_op(vk::CompareOp::LESS_OR_EQUAL) // TODO: greater or equal instead of less and equal
+        .depth_compare_op(vk::CompareOp::GREATER_OR_EQUAL) // Use depth reverse to gain better z-depth precision
         .front(noop_stencil_op)
         .back(noop_stencil_op)
         .max_depth_bounds(1.0)
@@ -304,7 +329,8 @@ pub fn create_compute_pipeline(
                 .size(pc.size)
                 .offset(pc.offset)
                 .stage_flags(vk::ShaderStageFlags::COMPUTE)
-                .build()])
+                .build()
+            ])
             .build()
     } else {
         pipeline_layout_builder.build()

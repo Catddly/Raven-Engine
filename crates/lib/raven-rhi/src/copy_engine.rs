@@ -115,7 +115,7 @@ impl<'a> CopyEngine<'a> {
             .enumerate()
             .flat_map(|(source_idx, prim)| {
                 let bytes_len = prim.source.as_bytes().len();
-                glog::debug!("try to upload {:?}", prim.source.as_bytes());
+                //glog::debug!("try to upload {:?}", prim.source.as_bytes());
                 
                 // take ceil of bytes_len
                 let num_chunk = (bytes_len + STAGING_BUFFER_SIZE_BYTES - 1) / STAGING_BUFFER_SIZE_BYTES;

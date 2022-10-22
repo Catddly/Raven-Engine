@@ -11,7 +11,7 @@ pub fn clear_depth_stencil(rg: &mut RenderGraph, image: &mut Handle<Image>) {
     let cleared_img = pass.write(image, AccessType::TransferWrite);
 
     pass.render(move |ctx| {
-        let raw_device = &ctx.context.device.raw;
+        let raw_device = &ctx.context.execution_params.device.raw;
         let image = ctx.context.get_image(cleared_img.handle);
 
         unsafe {
@@ -21,7 +21,8 @@ pub fn clear_depth_stencil(rg: &mut RenderGraph, image: &mut Handle<Image>) {
                 vk::ImageLayout::TRANSFER_DST_OPTIMAL,
                 // TODO: expose to user
                 &vk::ClearDepthStencilValue {
-                    depth: 1.0,
+                    // we use inverse depth
+                    depth: 0.0,
                     stencil: 0,
                 },
                 std::slice::from_ref(&vk::ImageSubresourceRange {
@@ -42,7 +43,7 @@ pub fn clear_color(rg: &mut RenderGraph, image: &mut Handle<Image>, clear_color:
     let cleared_img = pass.write(image, AccessType::TransferWrite);
 
     pass.render(move |ctx| {
-        let raw_device = &ctx.context.device.raw;
+        let raw_device = &ctx.context.execution_params.device.raw;
         let image = ctx.context.get_image(cleared_img.handle);
 
         unsafe {

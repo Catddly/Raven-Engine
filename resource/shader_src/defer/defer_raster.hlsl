@@ -1,4 +1,7 @@
-#include "../common/bindless.hlsl"
+#include "../common/frame_constants.hlsl"
+#include "../common/bindless_resources.hlsl"
+#include "../common/material.hlsl"
+
 #include "gbuffer.hlsl"
 
 // TODO: maybe use some batch buffer
@@ -8,7 +11,7 @@ struct {
     uint instance_index;
 } push_constants;
 
-[[vk::binding(0, 0)]] StructuredBuffer<float3x4> instance_transforms_dyn; // dynamic read-only storage buffer
+[[vk::binding(0)]] StructuredBuffer<float3x4> instance_transforms_dyn; // dynamic read-only storage buffer
 
 struct VsOut {
 	float4 position: SV_Position;
@@ -23,28 +26,26 @@ struct VsOut {
 VsOut vs_main(uint vid: SV_VertexID, uint iid: SV_InstanceID) {
     VsOut vsout;
 
+    CameraMatrices cam = frame_constants_dyn.camera_matrices;
+
     // get mesh offset data
     const Mesh mesh = meshes[push_constants.mesh_index];
 
     PackedVertex packed_vertex = PackedVertex(asfloat(draw_datas.Load4(vid * sizeof(float4) + mesh.vertex_offset)));
     Vertex vertex = packed_vertex.unpack();
 
-    float4 color = mesh.color_offset != 0
-        ? asfloat(draw_datas.Load4(vid * sizeof(float4) + mesh.color_offset))
-        : 1.0.xxxx;
-
-    float4 tangent = mesh.tangent_offset != 0
-        ? asfloat(draw_datas.Load4(vid * sizeof(float4) + mesh.tangent_offset))
-        : float4(1, 0, 0, 1);
-
+    float4 color = asfloat(draw_datas.Load4(vid * sizeof(float4) + mesh.color_offset));
+    float4 tangent = asfloat(draw_datas.Load4(vid * sizeof(float4) + mesh.tangent_offset));
     float2 uv = asfloat(draw_datas.Load2(vid * sizeof(float2) + mesh.uv_offset));
-
     uint material_id = draw_datas.Load(vid * sizeof(uint) + mesh.mat_id_offset);
 
     float3x4 transform = instance_transforms_dyn[push_constants.instance_index];
     float3 ws_pos = mul(transform, float4(vertex.position, 1.0));
+    
+    float4 vs_pos = mul(cam.world_to_view, float4(ws_pos, 1.0));
+    float4 cs_pos = mul(cam.view_to_clip, vs_pos);
 
-    vsout.position = float4(ws_pos, 1.0);
+    vsout.position = cs_pos;
     vsout.color = color;
     vsout.uv = uv;
     vsout.normal = vertex.normal;
@@ -70,18 +71,19 @@ struct PsOut {
 };
 
 PsOut ps_main(PsIn ps) {
+    const Mesh mesh = meshes[push_constants.mesh_index];
+
+    Material mat = draw_datas.Load<Material>(ps.material_id * sizeof(Material) + mesh.mat_data_offset);
+    float3 base_color = float4(mat.base_color).rgb;
+
     GBuffer gbuffer = GBuffer::zero();
-
-    gbuffer.albedo = ps.color.rgb;
-    gbuffer.normal = ps.normal; // object space normal
-    // TODO: sample from material and texture
-    gbuffer.metallic = 0.8;
-    gbuffer.roughness = 0.2;
-
-    PackedGBuffer packed_gbuffer = gbuffer.pack();
+    gbuffer.albedo = base_color * ps.color.rgb;
+    gbuffer.normal = ps.normal;
+    gbuffer.metallic = mat.metallic;
+    gbuffer.roughness = mat.roughness;
 
     PsOut psout;
-    psout.gbuffer = packed_gbuffer.data;
+    psout.gbuffer = asfloat(gbuffer.pack().data);
     psout.geometric_normal = ps.normal * 0.5 + 0.5;
     return psout;
 }

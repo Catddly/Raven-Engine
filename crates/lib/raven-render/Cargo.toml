@@ -8,6 +8,8 @@ raven-core =  { path = "../../lib/raven-core/" }
 raven-rg   =  { path = "../../lib/raven-rg/" }
 raven-rhi  = { path = "../../lib/raven-rhi/" }
 
+log = "0.4"       # logging lib
+
 once_cell = "1.15.0"
 
 # Strictly speaking, this should not be here, this should only be in RHI layer!

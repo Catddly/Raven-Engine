@@ -2,15 +2,15 @@ use std::sync::Arc;
 use std::cell::Cell;
 
 use raven_rhi::{
-    backend::{Device, Image, Buffer, AccessType},
-    pipeline_cache::{PipelineCache, RasterPipelineHandle, ComputePipelineHandle}, dynamic_buffer::DynamicBuffer,
+    backend::{Image, Buffer, AccessType},
+    pipeline_cache::{RasterPipelineHandle, ComputePipelineHandle}, dynamic_buffer::DynamicBuffer,
 };
 
 use crate::{
     graph::{RenderGraph, AnalyzedResourceInfos, ResourceUsage},
     graph_resource::{GraphResource, GraphResourceDesc, GraphResourceImportedData},
     executing_graph::ExecutingRenderGraph,
-    transient_resource_cache::TransientResourceCache,
+    transient_resource_cache::TransientResourceCache, executor::{ExecutionParams},
 };
 
 /// Pipeline handles to the pipeline cache.
@@ -73,13 +73,14 @@ impl RegisteredResource {
 impl CompiledRenderGraph {
     /// Gather or create all the resources.
     #[must_use]
-    pub(crate) fn prepare_execute<'a, 'b, 'c>(
-        self, 
-        device: &'a Device,
-        pipeline_cache: &'b mut PipelineCache,
-        global_dynamic_buffer: &'c mut DynamicBuffer,
+    pub(crate) fn prepare_execute<'exec, 'dynamic> (
+        self,
+        execution_params: ExecutionParams<'exec>, 
         cache: &mut TransientResourceCache,
-    ) -> ExecutingRenderGraph<'a, 'b, 'c> {
+        global_dynamic_constants_buffer: &'dynamic mut DynamicBuffer,
+    ) -> ExecutingRenderGraph<'exec, 'dynamic> {
+        let device = execution_params.device;
+
         let registered_resources = self.render_graph.resources.iter()
             .enumerate()
             .map(|(idx, resource)| {
@@ -154,9 +155,9 @@ impl CompiledRenderGraph {
             .collect::<Vec<_>>();
 
         ExecutingRenderGraph {
-            device,
-            pipeline_cache,
-            global_dynamic_buffer,
+            execution_params,
+
+            global_dynamic_buffer: global_dynamic_constants_buffer,
 
             passes: self.render_graph.passes.into(),
             native_resources: self.render_graph.resources,

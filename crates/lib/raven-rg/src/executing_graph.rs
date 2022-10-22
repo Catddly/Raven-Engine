@@ -5,9 +5,9 @@ use ash::vk;
 use arrayvec::ArrayVec;
 
 use raven_rhi::{
-    backend::{Device, AccessType, CommandBuffer, Image, ImageBarrier, BufferBarrier},
+    backend::{AccessType, CommandBuffer, Image, ImageBarrier, BufferBarrier},
     backend::barrier,
-    pipeline_cache::PipelineCache, dynamic_buffer::DynamicBuffer,
+    dynamic_buffer::DynamicBuffer,
 };
 
 use crate::{
@@ -15,14 +15,14 @@ use crate::{
     pass_context::{PassContext, ExecuteContext},
     graph_resource::{GraphResource, ExportableGraphResource, GraphResourceImportedData},
     retired_graph::RetiredRenderGraph,
-    compiled_graph::{RegisteredResource, RenderGraphPipelineHandles, GraphPreparedResource, GraphPreparedResourceRef},
+    compiled_graph::{RegisteredResource, RenderGraphPipelineHandles, GraphPreparedResource, GraphPreparedResourceRef}, executor::{ExecutionParams},
 };
 
 const MAX_TRANSITION_PER_BATCH: usize = 32;
 
-pub(crate) struct ExecutingRenderGraph<'device, 'cache, 'dynamic> {
-    pub(crate) device: &'device Device,
-    pub(crate) pipeline_cache: &'cache mut PipelineCache,
+pub(crate) struct ExecutingRenderGraph<'exec, 'dynamic> {
+    pub(crate) execution_params: ExecutionParams<'exec>,
+
     pub(crate) global_dynamic_buffer: &'dynamic mut DynamicBuffer,
 
     pub(crate) passes: Vec<Pass>,
@@ -33,7 +33,7 @@ pub(crate) struct ExecutingRenderGraph<'device, 'cache, 'dynamic> {
     pub(crate) pipelines: RenderGraphPipelineHandles,
 }
 
-impl<'device, 'cache, 'dynamic> ExecutingRenderGraph<'device, 'cache, 'dynamic> {
+impl<'exec, 'dynamic> ExecutingRenderGraph<'exec, 'dynamic> {
     pub fn record_commands(
         &mut self,
         cb: &CommandBuffer,
@@ -162,10 +162,9 @@ impl<'device, 'cache, 'dynamic> ExecutingRenderGraph<'device, 'cache, 'dynamic> 
         let mut context = PassContext {
             cb: cb,
             context: ExecuteContext {
-                device: &self.device,
+                execution_params: &self.execution_params,
 
                 pipelines: &self.pipelines,
-                pipeline_cache: &mut self.pipeline_cache,
                 registered_resources: &self.registered_resources,
                 global_dynamic_buffer: &mut self.global_dynamic_buffer,
             },
@@ -190,9 +189,11 @@ impl<'device, 'cache, 'dynamic> ExecutingRenderGraph<'device, 'cache, 'dynamic> 
             return;
         }
 
+        let device = self.execution_params.device;
+
         match resource.resource.borrow() {
             GraphPreparedResourceRef::Image(image) => {
-                barrier::image_barrier(self.device, cb, &[barrier::ImageBarrier {
+                barrier::image_barrier(device, cb, &[barrier::ImageBarrier {
                     image,
 	                prev_access: &[resource.get_current_access()],
 	                next_access: &[target_access.access_type],
@@ -205,7 +206,7 @@ impl<'device, 'cache, 'dynamic> ExecutingRenderGraph<'device, 'cache, 'dynamic> 
                 resource.transition_to(target_access.access_type);
             },
             GraphPreparedResourceRef::Buffer(buffer) => {
-                barrier::buffer_barrier(self.device, cb, &[barrier::BufferBarrier {
+                barrier::buffer_barrier(device, cb, &[barrier::BufferBarrier {
                     buffer,
 	                prev_access: &[resource.get_current_access()],
 	                next_access: &[target_access.access_type],
@@ -310,12 +311,13 @@ impl<'device, 'cache, 'dynamic> ExecutingRenderGraph<'device, 'cache, 'dynamic> 
             }
         }
 
+        let device = self.execution_params.device;
         // transition them all together
         if !img_barriers.is_empty() {
-            barrier::image_barrier(&self.device, cb, &img_barriers);
+            barrier::image_barrier(device, cb, &img_barriers);
         }
         if !buf_barriers.is_empty() {
-            barrier::buffer_barrier(&self.device, cb, &buf_barriers);
+            barrier::buffer_barrier(device, cb, &buf_barriers);
         }
     }
 }

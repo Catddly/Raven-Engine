@@ -1,6 +1,10 @@
-use std::{collections::VecDeque, sync::Arc};
+mod user;
+pub mod prelude;
+
+use std::{collections::VecDeque};
 
 use ash::vk;
+use glam::{Vec3};
 use turbosloth::*;
 
 use raven_core::{
@@ -10,7 +14,7 @@ use raven_core::{
         window::{Window, WindowBuilder},
         event::{WindowEvent, Event, VirtualKeyCode, ElementState}, 
         platform::run_return::EventLoopExtRunReturn
-    }, asset::{loader::{mesh_loader::GltfMeshLoader, AssetLoader}, AssetType, AssetProcessor}, concurrent::executor,
+    }, asset::{loader::{mesh_loader::GltfMeshLoader, AssetLoader}, AssetType, AssetProcessor}, concurrent::executor, render::camera::{self, control},
 };
 
 extern crate log as glog;
@@ -18,26 +22,23 @@ extern crate log as glog;
 // Raven Engine APIs
 use raven_core::log;
 use raven_core::console;
-use raven_core::filesystem;
-use raven_render::{MeshRenderer, MeshRasterScheme};
-use raven_rhi::{RHIConfig, Rhi, backend::{self, PipelineShaderDesc, PipelineShaderStage, RasterPipelineDesc}};
-use raven_rg::{Executor, IntoPipelineDescriptorBindings, RenderGraphPassBindable};
-
-// Raven Engine exposed APIs
-pub use raven_core::filesystem::{ProjectFolder};
+use raven_core::filesystem::{self, ProjectFolder};
+use raven_render::{MeshRenderer, MeshRasterScheme, MeshShadingContext};
+use raven_rhi::{RHIConfig, Rhi, backend};
+use raven_rg::{Executor, IntoPipelineDescriptorBindings, RenderGraphPassBindable, DrawFrameContext};
 
 use raven_core::system::OnceQueue;
 
 /// Global engine context to control engine on the user side.
 /// Facade Design Pattern to control different parts of engine without knowing the underlying implementation.
-pub struct EngineContext {
+pub struct EngineContext<App> {
     pub main_window: Window,
     event_loop: EventLoop<()>,
 
     rhi: Rhi,
     rg_executor: Executor,
 
-    main_renderpass: Arc<backend::RenderPass>,
+    app: App,
 }
 
 fn init_filesystem_module() -> anyhow::Result<()> {
@@ -61,7 +62,7 @@ fn init_log_module() -> anyhow::Result<()> {
 }
 
 /// Initialize raven engine.
-pub fn init() -> anyhow::Result<EngineContext> {
+pub fn init(app: impl user::App) -> anyhow::Result<EngineContext<impl user::App>> {
     let mut init_queue = OnceQueue::new();
 
     init_queue.push_job(init_filesystem_module);
@@ -108,97 +109,8 @@ pub fn init() -> anyhow::Result<EngineContext> {
 
     let rg_executor = Executor::new(&rhi)?;
 
-    // TODO: put this inside a renderer
-    let main_renderpass = backend::renderpass::create_render_pass(&rhi.device, 
-        backend::renderpass::RenderPassDesc {
-            color_attachments: &[backend::renderpass::RenderPassAttachmentDesc::new(vk::Format::R8G8B8A8_UNORM).useless_input()],
-            depth_attachment: None,
-        }
-    );
-
-    // let registry = asset_registry::get_runtime_asset_registry();
-
-    // {
-    //     let read_guard = registry.read();
-    //     let asset_ref = read_guard.get_asset(&handle).unwrap();
-    //     let mesh = asset_ref.as_mesh().unwrap();
-
-    //     glog::debug!("{:?}", mesh.tangents);
-
-    //     for mat in mesh.material_textures.iter() {
-    //         let mat_v = read_guard.get_asset(mat.handle()).unwrap();
-    //         let mat_v = mat_v.as_texture().unwrap();
-    
-    //         glog::debug!("Texture {:#?} with uuid {:8.8x}", mat_v, mat.uuid());
-    //     }
-
-    //     let mut file = std::fs::File::create("cube.packed")?;
-    //     mesh.write_packed(&mut file);
-    // }
-
-    // let temp_list = TempList::new();
-    // let dir = filesystem::get_project_folder_path_absolute(filesystem::ProjectFolder::Baked)?;
-
-    // let data: &[u8] = {
-    //     let path = dir.join("cube.mesh");
-    //     let file = std::fs::File::open(path).unwrap();
-
-    //     unsafe { temp_list.add(memmap2::MmapOptions::new().map(&file).unwrap()) }
-    // };
-
-    // let field_reader = Mesh::get_field_reader(data);
-    
-    // let readback_colors = field_reader.colors().to_vec();
-    // let readback_tangents = field_reader.tangents().to_vec();
-    // let readback_uvs = field_reader.uvs().to_vec();
-    // let readback_material_ids = field_reader.material_ids().to_vec();
-    
-    // glog::debug!("{:?}", readback_colors);
-    // glog::debug!("{:?}", readback_tangents);
-    // glog::debug!("{:?}", readback_uvs);
-    // glog::debug!("{:?}", readback_material_ids);
-
-    // let len = field_reader.materials(VecArrayQueryParam::length()).length();
-    // for i in 0..len {
-    //     let disk = field_reader.materials(VecArrayQueryParam::index(i)).value();
-    //     glog::debug!("{:8.8x}", disk.uuid());
-
-    //     let data = {
-    //         let path = dir.join(format!("{:8.8x}.mat", disk.uuid()));
-    //         let file = std::fs::File::open(path).unwrap();
-    
-    //         unsafe { temp_list.add(memmap2::MmapOptions::new().map(&file).unwrap()) }
-    //     };
-
-    //     let field_reader = Material::get_field_reader(data);
-    //     glog::debug!("mat metallic: {}", field_reader.metallic());
-    //     glog::debug!("mat roughness: {}", field_reader.roughness());
-    //     glog::debug!("mat texture mapping: {:?}", field_reader.texture_mapping());
-    //     glog::debug!("mat texture transform: {:?}", field_reader.texture_transform());
-    // }
-
-    // let len = field_reader.material_textures(VecArrayQueryParam::length()).length();
-    // for i in 0..len {
-    //     let disk = field_reader.material_textures(VecArrayQueryParam::index(i)).value();
-    //     glog::debug!("{:8.8x}", disk.uuid());
-
-    //     let data = {
-    //         let path = dir.join(format!("{:8.8x}.tex", disk.uuid()));
-    //         let file = std::fs::File::open(path).unwrap();
-    
-    //         unsafe { temp_list.add(memmap2::MmapOptions::new().map(&file).unwrap()) }
-    //     };
-
-    //     let field_reader = Texture::get_field_reader(data);
-    //     glog::debug!("tex extent: {:?}", field_reader.extent());
-
-    //     let len = field_reader.lod_groups(VecArrayQueryParam::length()).length();
-    //     for i in 0..len {
-    //         let bytes = field_reader.lod_groups(VecArrayQueryParam::index(i)).array();
-
-    //         glog::debug!("tex bytes: {:?}", bytes);
-    //     }
-    // }
+    let mut app = app;
+    app.init()?;
 
     glog::trace!("Raven Engine initialized!");
     Ok(EngineContext { 
@@ -207,19 +119,21 @@ pub fn init() -> anyhow::Result<EngineContext> {
 
         rhi,
         rg_executor,
-        main_renderpass,
+
+        app,
     })
 }
 
 /// Start engine main loop.
-pub fn main_loop(engine_context: &mut EngineContext) {
+pub fn main_loop(engine_context: &mut EngineContext<impl user::App>) {
     let EngineContext { 
         event_loop,
         main_window,
         
         rhi,
         rg_executor,
-        main_renderpass,
+
+        app,
     } = engine_context;
 
     let mut last_frame_time = std::time::Instant::now();
@@ -233,12 +147,12 @@ pub fn main_loop(engine_context: &mut EngineContext) {
     // temporary
     let main_img_desc: backend::ImageDesc = backend::ImageDesc::new_2d(render_resolution, vk::Format::R8G8B8A8_UNORM);
 
-    let loader = Box::new(GltfMeshLoader::new(std::path::PathBuf::from("mesh/cube.glb"))) as Box<dyn AssetLoader>;
+    let loader = Box::new(GltfMeshLoader::new(std::path::PathBuf::from("mesh/cornell_box/scene.gltf"))) as Box<dyn AssetLoader>;
     let raw_asset = loader.load().unwrap();
 
     assert!(matches!(raw_asset.asset_type(), AssetType::Mesh));
 
-    let processor = AssetProcessor::new("mesh/cube.glb", raw_asset);
+    let processor = AssetProcessor::new("mesh/cornell_box/scene.gltf", raw_asset);
     let handle = processor.process().unwrap();
     let lazy_cache = LazyCache::create();
 
@@ -248,10 +162,20 @@ pub fn main_loop(engine_context: &mut EngineContext) {
     let mut mesh_renderer = MeshRenderer::new(rhi, MeshRasterScheme::Deferred, render_resolution);
     mesh_renderer.add_asset_mesh(&handle);
 
+    let mut camera = camera::Camera::builder()
+        .aspect_ratio(render_resolution[0] as f32 / render_resolution[1] as f32)
+        .build();
+    let mut camera_controller = camera::CameraController::builder()
+        .with(control::CamCtrlPosition::new())
+        .with(control::CamCtrlRotation::new())
+        .build();
+
+    let mut total_time_elapsed = 0.0;
+
     let mut running = true;
     while running { // main loop start
         // filter delta time to get a smooth result for simulation and rendering
-        let _dt = {
+        let dt = {
             let now = std::time::Instant::now();
             let delta = now - last_frame_time;
             last_frame_time = now;
@@ -265,6 +189,7 @@ pub fn main_loop(engine_context: &mut EngineContext) {
 
             dt_filter_queue.iter().copied().sum::<f32>() / (dt_filter_queue.len() as f32)
         };
+        total_time_elapsed += dt;
 
         // system messages
         event_loop.run_return(|event, _, control_flow| {
@@ -300,58 +225,54 @@ pub fn main_loop(engine_context: &mut EngineContext) {
             }
         });
 
+        let pos = Vec3::new(0.0, 1.0, 5.0 + -2.0 * (total_time_elapsed * 2.0).sin());
+        camera_controller.get_control_mut::<control::CamCtrlPosition>().move_to(pos);
+        camera_controller.update(&mut camera);
+
+        let cam_matrices = camera.camera_matrices();
+
+        // user-side app tick
+        app.tick(dt);
+
         // prepare and compile render graph
         let prepare_result = rg_executor.prepare(|rg| {
             // No renderer yet!
             let mut main_img = rg.new_resource(main_img_desc);
-
-            // main rt
             {
-                let main_renderpass = main_renderpass.clone();
-                let mut pass = rg.add_pass("main");
+                // mesh rasterize
+                let shading_context = mesh_renderer.prepare_rg(rg);
 
-                let pipeline = pass.register_raster_pipeline(&[
-                    PipelineShaderDesc::builder()
-                        .source("triangle.hlsl")
-                        .stage(PipelineShaderStage::Vertex)
-                        .entry("vs_main")
-                        .build().unwrap(),
-                    PipelineShaderDesc::builder()
-                        .source("triangle.hlsl")
-                        .stage(PipelineShaderStage::Pixel)
-                        .entry("ps_main")
-                        .build().unwrap(),
-                ], 
-                RasterPipelineDesc::builder()
-                    .render_pass(main_renderpass.clone())
-                    .culling(false)
-                    .depth_write(false)
-                    .build().unwrap()
-                );
+                // lighting
+                match shading_context {
+                    MeshShadingContext::GBuffer(gbuffer) => {        
+                        let mut pass = rg.add_pass("gbuffer lighting");
+                        let pipeline = pass.register_compute_pipeline("defer/defer_lighting.hlsl");
+                                        
+                        let gbuffer_img_ref = pass.read(&gbuffer.packed_gbuffer, backend::AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer);
+                        let depth_img_ref = pass.read(&gbuffer.depth, backend::AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer);
+                        let main_img_ref = pass.write(&mut main_img, backend::AccessType::ComputeShaderWrite);
+        
+                        pass.render(move |context| {
+                            let mut depth_img_binding = depth_img_ref.bind();
+                            depth_img_binding.with_aspect(vk::ImageAspectFlags::DEPTH);
 
-                let main_img_ref = pass.raster_write(&mut main_img, backend::AccessType::ColorAttachmentWrite);
-
-                pass.render(move |context| {
-                    context.begin_render_pass(&main_renderpass, render_resolution,
-                        &[(main_img_ref, &backend::ImageViewDesc::default())],
-                         None)?;
-
-                    context.set_default_viewport_and_scissor(render_resolution);
-                    // bind pipeline and descriptor set
-                    context.bind_raster_pipeline(pipeline.into_bindings())?;
-
-                    unsafe {
-                        context.context.device.raw.cmd_draw(context.cb.raw, 
-                            3, 1, 
-                            0, 0);
-                    }
-
-                    context.end_render_pass();
-                    Ok(())
-                });
+                            // bind pipeline and descriptor set
+                            let bound_pipeline = context.bind_compute_pipeline(pipeline.into_bindings()
+                                .descriptor_set(0, &[
+                                    gbuffer_img_ref.bind(),
+                                    depth_img_binding,
+                                    main_img_ref.bind()
+                                ])
+                            )?;
+        
+                            bound_pipeline.dispatch(gbuffer.packed_gbuffer.desc().extent);
+        
+                            Ok(())
+                        });
+                    },
+                    _ => unimplemented!(),
+                }
             }
-
-            mesh_renderer.prepare_rg(rg);
 
             // copy to swapchain
             let mut swapchain_img = rg.get_swapchain(render_resolution);
@@ -371,7 +292,7 @@ pub fn main_loop(engine_context: &mut EngineContext) {
                         ])
                     )?;
 
-                    bound_pipeline.dispatch([render_resolution[0], render_resolution[1], 0]);
+                    bound_pipeline.dispatch([render_resolution[0], render_resolution[1], 1]);
 
                     Ok(())
                 });
@@ -381,7 +302,10 @@ pub fn main_loop(engine_context: &mut EngineContext) {
         // draw
         match prepare_result {
             Ok(()) => {
-                rg_executor.draw(&mut rhi.swapchain);
+                rg_executor.draw(
+                    &DrawFrameContext { cam_matrices, },
+                    &mut rhi.swapchain
+                );
             },
             Err(err) => {
                 panic!("Failed to prepare render graph with {:?}", err);
@@ -389,13 +313,14 @@ pub fn main_loop(engine_context: &mut EngineContext) {
         }
     } // main loop end
     
-    //rhi.device.wait_idle();
-    //mesh_renderer.clean(rhi);
+    rhi.device.wait_idle();
+    mesh_renderer.clean(rhi);
     glog::trace!("Exit main loop successfully!");
 }
 
 /// Shutdown raven engine.
-pub fn shutdown(engine_context: EngineContext) {
+pub fn shutdown(engine_context: EngineContext<impl user::App>) {
+    engine_context.app.shutdown();
     engine_context.rg_executor.shutdown();
     glog::trace!("Raven Engine shutdown.");
 }

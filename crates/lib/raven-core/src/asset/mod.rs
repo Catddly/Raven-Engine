@@ -174,6 +174,7 @@ impl<'a, T: Sized + Copy> VecArrayQueryResult<'a, T> {
     }
 }
 
+// TODO: this is very hard to read and debug, turn this into procedural macros 
 macro_rules! define_asset {
     // specified Vec type (compound type)
     (@raw_ty Vec($($type:tt)+)) => {

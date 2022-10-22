@@ -2,9 +2,10 @@ use std::sync::Arc;
 
 use ash::vk;
 
+use raven_core::render::camera::CameraMatrices;
 use raven_rhi::{Rhi, backend::{Device, barrier::{self, ImageBarrier}, Swapchain}, pipeline_cache::PipelineCache, dynamic_buffer::DynamicBuffer};
 
-use crate::{compiled_graph::CompiledRenderGraph, transient_resource_cache::TransientResourceCache};
+use crate::{compiled_graph::CompiledRenderGraph, transient_resource_cache::TransientResourceCache, global_constants_descriptor::create_engine_global_constants_descriptor_set};
 use crate::graph_builder::{RenderGraphBuilder, TemporaryResourceRegistry, ExportedTemporalResources, TemporaryResourceState};
 
 enum RenderGraphTemporalResources {
@@ -27,11 +28,34 @@ pub struct Executor {
 
     transient_resource_cache: TransientResourceCache,
     temporal_resources: RenderGraphTemporalResources,
+
     global_dynamic_buffer: DynamicBuffer,
+    global_dynamic_constants_set: vk::DescriptorSet,
+}
+
+pub struct ExecutionParams<'a> {
+    pub device: &'a Device,
+    pub pipeline_cache: &'a mut PipelineCache,
+    pub global_constants_set: vk::DescriptorSet,
+    pub draw_frame_context_layout: DrawFrameContextLayout,
+}
+
+#[repr(C, align(16))] // align to float4
+#[derive(Copy, Clone)]
+pub struct DrawFrameContext {
+    pub cam_matrices: CameraMatrices,
+}
+
+#[derive(Copy, Clone)]
+pub struct DrawFrameContextLayout {
+    pub frame_constants_offset: u32,
 }
 
 impl Executor {
     pub fn new(rhi: &Rhi) -> anyhow::Result<Self> {
+        let global_dynamic_buffer = DynamicBuffer::new(rhi);
+        let global_dynamic_constants_set = create_engine_global_constants_descriptor_set(rhi, &global_dynamic_buffer);
+
         Ok(Self {
             device: rhi.device.clone(),
 
@@ -40,7 +64,9 @@ impl Executor {
 
             transient_resource_cache: TransientResourceCache::new(),
             temporal_resources: Default::default(),
-            global_dynamic_buffer: DynamicBuffer::new(rhi),
+
+            global_dynamic_buffer,
+            global_dynamic_constants_set,
         })
     }
 
@@ -117,7 +143,8 @@ impl Executor {
         }
     }
 
-    pub fn draw(&mut self, swapchain: &mut Swapchain) {
+    pub fn draw(&mut self, draw_frame_context: &DrawFrameContext, swapchain: &mut Swapchain) {
+        // begin drawing (record commands and submit)
         let compiled_rg = if let Some(rg) = self.compiled_rg.take() {
             rg
         } else {
@@ -148,6 +175,13 @@ impl Executor {
             }
         }
 
+        // update frame constant to global dynamic buffer
+        let frame_constants_offset = self.global_dynamic_buffer.push(draw_frame_context);
+
+        let frame_constants_layout = DrawFrameContextLayout {
+            frame_constants_offset,
+        };
+
         let mut executing_rg;
         // record and submit main command buffers
         // TODO: dispatch some compute commands to async compute queue
@@ -155,10 +189,14 @@ impl Executor {
             let main_cb = &draw_frame.main_command_buffer;
 
             // create or import the actual resources into render graph.
-            executing_rg = compiled_rg.prepare_execute(&device, 
-                &mut self.pipeline_cache,
+            executing_rg = compiled_rg.prepare_execute(ExecutionParams {
+                    device: &self.device,
+                    pipeline_cache: &mut self.pipeline_cache,
+                    global_constants_set: self.global_dynamic_constants_set,
+                    draw_frame_context_layout: frame_constants_layout,
+                },
+                &mut self.transient_resource_cache,
                 &mut self.global_dynamic_buffer,
-                &mut self.transient_resource_cache
             );
 
             executing_rg.record_commands(&main_cb);

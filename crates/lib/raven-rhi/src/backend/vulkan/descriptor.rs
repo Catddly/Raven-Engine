@@ -46,6 +46,13 @@ pub fn create_descriptor_set_layouts_with_unified_stage(
 
     // for all the set, create its descriptor set layout
     for set_index in 0..set_count {
+        // override set 0's stage flag
+        let stage_flag = if set_index == 2 {
+            vk::ShaderStageFlags::ALL
+        } else {
+            stage_flag
+        };
+
         if let Some(set_bindings) = set_layout_refl.get(&set_index) {
             let (set_layout, set_layout_info) = 
                 create_descriptor_set_layout(&device, &set_bindings, stage_flag.clone())?;

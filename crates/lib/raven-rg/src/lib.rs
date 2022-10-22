@@ -15,9 +15,11 @@ mod transient_resource_cache;
 
 mod helper;
 
+mod global_constants_descriptor; // set 2
+
 pub use graph_resource::Handle as RgHandle;
 pub use graph_builder::{RenderGraphBuilder, GetOrCreateTemporal};
-pub use executor::Executor;
+pub use executor::{Executor, DrawFrameContext};
 pub use pass_context::{IntoPipelineDescriptorBindings, RenderGraphPassBinding, RenderGraphPassBindable};
 
 pub use helper::image_clear;
