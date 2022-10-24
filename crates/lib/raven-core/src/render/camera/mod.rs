@@ -1,4 +1,5 @@
 pub mod control;
+pub mod controller;
 
 use std::any::Any;
 

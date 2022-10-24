@@ -1,4 +1,4 @@
-use glam::{Quat};
+use glam::{Quat, Vec3};
 
 use crate::render::camera::{CameraTransform, CameraControl};
 
@@ -18,8 +18,23 @@ impl Rotation {
         self.rotation = dst_rotation.normalize();
     }
 
+    /// Break rotation into a (x, y, z) basis vector
+    pub fn to_coordinates(&self) -> (Vec3, Vec3, Vec3) {
+        let forward = self.rotation * Vec3::NEG_Z;
+        let right = forward.cross(Vec3::Y);
+        let up = right.cross(forward);
+
+        (right.normalize(), up.normalize(), forward.normalize())
+    }
+
     pub fn rotate_by(&mut self, delta_rotation: Quat) {
         self.rotation = (self.rotation + delta_rotation).normalize();
+    }
+
+    pub fn rotate(&mut self, func: impl FnMut(&mut Quat)) 
+    {
+        let mut func = func;
+        func(&mut self.rotation);
     }
 }
 

@@ -390,7 +390,7 @@ fn load_gltf_default_scene(doc: &Document, buffers: &[Bytes], images: &[Bytes]) 
                         // direction vector
                         .map(|n| {
                             let origin = Vec4::from(n);
-                            let n = (transform * origin.truncate().extend(0.0)).truncate().normalize();
+                            let n = (transform * origin.truncate().extend(0.0)).truncate().normalize_or_zero();
                             // flip tangent to opposite direction by flip w component (homogeneous coordinate)
                             n.extend(origin.w * if flip_winding_order { -1.0 } else { 1.0 }).into()
                         })

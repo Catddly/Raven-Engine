@@ -209,7 +209,7 @@ impl MeshRenderer {
                     let mut upload_materials = Vec::new();
                     for mat_ref in mesh_asset.materials.iter() {
                         let material = read_guard.get_asset(mat_ref.handle()).unwrap().as_material().unwrap();
-                        glog::debug!("Material: {:#?}", material);
+                        //glog::debug!("Material: {:#?}", material);
 
                         let upload = UploadMaterial {
                             metallic: material.metallic,

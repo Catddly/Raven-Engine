@@ -11,6 +11,7 @@ pub mod reflection;
 pub mod container;
 pub mod utility;
 pub mod math;
+pub mod input;
 
 pub extern crate winit;
 pub extern crate thiserror;
