@@ -36,4 +36,4 @@ Though I will work on cpp game development in the future, I choose to write this
 
 ## Acknowledgements
 
-This project now is mainly learning from [kajiya](https://github.com/EmbarkStudios/kajiya) and kajiya is a real great material to learn render features and programming techniques.
+This project is now mainly learning from [kajiya](https://github.com/EmbarkStudios/kajiya) and kajiya is a real great material to learn render features and programming techniques. Hope everyone should have a look!
