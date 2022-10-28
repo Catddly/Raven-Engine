@@ -1,4 +1,5 @@
 use std::hash::Hasher;
+use std::io::Read;
 use std::path::PathBuf;
 use std::marker::PhantomData;
 
@@ -194,10 +195,22 @@ impl LazyWorker for RawTextureProcess {
             TextureSource::Empty => unreachable!(),
             TextureSource::Placeholder(pc) => {
                 Bytes::copy_from_slice(&pc)
-            },
+            }
             // TODO: implementing byte interpret
-            TextureSource::Bytes(_) => unimplemented!(),
-            TextureSource::Source(_) => unimplemented!(),
+            TextureSource::Bytes(bytes) => {
+                bytes
+            },
+            TextureSource::Source(source) => {
+                // TODO: use LoadFile lazy worker here
+                let mut file = std::fs::File::open(source)?;
+                let mut bytes = Vec::new();
+                file.read_to_end(&mut bytes)?;
+
+                let load_img = image::load_from_memory(bytes.as_slice())?;
+                glog::debug!("Loaded image: ({}, {}), {:?}", load_img.width(), load_img.height(), load_img.color());
+
+                Bytes::from(bytes)
+            }
         };
 
         let storage = Box::new(Texture::Storage {

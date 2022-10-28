@@ -21,6 +21,8 @@ struct VsOut {
     [[vk::location(3)]] nointerpolation uint material_id: TEXCOORD3;
     [[vk::location(4)]] float3 tangent: TEXCOORD4;
     [[vk::location(5)]] float3 bitangent: TEXCOORD5;
+
+    [[vk::location(6)]] float3 pos_vs: TEXCOORD6;
 };
 
 VsOut vs_main(uint vid: SV_VertexID, uint iid: SV_InstanceID) {
@@ -53,6 +55,9 @@ VsOut vs_main(uint vid: SV_VertexID, uint iid: SV_InstanceID) {
     vsout.tangent = tangent.xyz;
     vsout.bitangent = normalize(cross(vertex.normal, vsout.tangent) * tangent.w);
 
+    // normalize in homogeneous coordinate
+    vsout.pos_vs = vs_pos.xyz / vs_pos.w;
+
     return vsout;
 }
 
@@ -63,6 +68,8 @@ struct PsIn {
     [[vk::location(3)]] nointerpolation uint material_id: TEXCOORD3;
     [[vk::location(4)]] float3 tangent: TEXCOORD4;
     [[vk::location(5)]] float3 bitangent: TEXCOORD5;
+
+    [[vk::location(6)]] float3 pos_vs: TEXCOORD6;
 };
 
 struct PsOut {
@@ -76,14 +83,24 @@ PsOut ps_main(PsIn ps) {
     Material mat = draw_datas.Load<Material>(ps.material_id * sizeof(Material) + mesh.mat_data_offset);
     float3 base_color = float4(mat.base_color).rgb;
 
+    float3 normal_ws = normalize(mul(instance_transforms_dyn[push_constants.instance_index], float4(ps.normal, 0.0)));
+
+    // derive geometric normal from view space pos
+    // TODO: why not derive it using world space pos?
+    float3 dx = ddx(ps.pos_vs);
+    float3 dy = ddy(ps.pos_vs);
+    // in right hand coordinate system, cross(ddy, ddx), not (ddx, ddy)
+    float3 geometric_normal_vs = normalize(cross(dy, dx));
+
     GBuffer gbuffer = GBuffer::zero();
     gbuffer.albedo = base_color * ps.color.rgb;
-    gbuffer.normal = ps.normal;
+    gbuffer.normal = normal_ws;
     gbuffer.metallic = mat.metallic;
     gbuffer.roughness = mat.roughness;
 
     PsOut psout;
     psout.gbuffer = asfloat(gbuffer.pack().data);
-    psout.geometric_normal = ps.normal * 0.5 + 0.5;
+    // store the geometric view space normal
+    psout.geometric_normal = geometric_normal_vs * 0.5 + 0.5;
     return psout;
 }

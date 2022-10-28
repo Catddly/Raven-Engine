@@ -100,16 +100,7 @@ pub fn create_raster_pipeline(
         vk::ShaderStageFlags::ALL_GRAPHICS
     ).expect("Failed to create vulkan descriptor set layout!");
 
-    // let push_constant_ranges = push_constants.into_iter()
-    //     .filter_map(|(pc, _)| pc.and_then(|pc| {
-    //         Some(vk::PushConstantRange::builder()
-    //             .size(pc.size)
-    //             .offset(pc.offset)
-    //             .stage_flags(vk::ShaderStageFlags::ALL_GRAPHICS)
-    //             .build())
-    //     }))
-    //     .collect::<Vec<_>>();
-
+    // merge push constants into a single one (the layout must be the same!)
     let push_constant = push_constants.iter()
         .reduce(|lhs, rhs| {
             match (lhs.0.is_some(), rhs.0.is_some()) {
@@ -323,22 +314,38 @@ pub fn create_compute_pipeline(
     let pipeline_layout_builder = vk::PipelineLayoutCreateInfo::builder()
         .set_layouts(&set_layout);
 
-    let pipeline_layout_ci = if let Some(pc) = push_constants {
-        pipeline_layout_builder
-            .push_constant_ranges(&[vk::PushConstantRange::builder()
-                .size(pc.size)
-                .offset(pc.offset)
-                .stage_flags(vk::ShaderStageFlags::COMPUTE)
-                .build()
-            ])
-            .build()
-    } else {
-        pipeline_layout_builder.build()
-    };
+    let pipeline_layout = if push_constants.is_some() {
+        // merge push constants into a single one (the layout must be the same!)
+        let push_constant = push_constants.iter()
+            .reduce(|lhs, rhs| {
+                assert_eq!(lhs.size, rhs.size);                
+                assert_eq!(lhs.offset, rhs.offset);
 
-    let pipeline_layout = unsafe { device.raw
-        .create_pipeline_layout(&pipeline_layout_ci, None)
-        .expect("Failed to create vulkan pipeline layout!")
+                lhs
+            })
+            .unwrap();
+
+        let push_constant_ranges = vk::PushConstantRange::builder()
+            .size(push_constant.size)
+            .offset(push_constant.offset)
+            .stage_flags(vk::ShaderStageFlags::COMPUTE)
+            .build();
+
+        let pipeline_layout_ci = pipeline_layout_builder
+            .push_constant_ranges(std::slice::from_ref(&push_constant_ranges))
+            .build();
+
+        unsafe { device.raw
+            .create_pipeline_layout(&pipeline_layout_ci, None)
+            .expect("Failed to create vulkan pipeline layout!")
+        }
+    } else {
+        let pipeline_layout_ci = pipeline_layout_builder.build();
+
+        unsafe { device.raw
+            .create_pipeline_layout(&pipeline_layout_ci, None)
+            .expect("Failed to create vulkan pipeline layout!")
+        }
     };
 
     let temp_names = TempList::new();

@@ -14,7 +14,7 @@ use raven_core::{
         window::{Window, WindowBuilder},
         event::{WindowEvent, Event, VirtualKeyCode, ElementState}, 
         platform::run_return::EventLoopExtRunReturn
-    }, asset::{loader::{mesh_loader::GltfMeshLoader, AssetLoader}, AssetType, AssetProcessor}, concurrent::executor, render::camera::{self}, input::InputBinding,
+    }, asset::{loader::{mesh_loader::GltfMeshLoader, AssetLoader}, AssetType, AssetProcessor}, concurrent::executor, render::camera::{self}, input::InputBinding, utility::as_byte_slice_values,
 };
 
 extern crate log as glog;
@@ -146,12 +146,12 @@ pub fn main_loop(engine_context: &mut EngineContext<impl user::App>) {
     // temporary
     let main_img_desc: backend::ImageDesc = backend::ImageDesc::new_2d(render_resolution, vk::Format::R8G8B8A8_UNORM);
 
-    let loader = Box::new(GltfMeshLoader::new(std::path::PathBuf::from("mesh/cornell_box/scene.gltf"))) as Box<dyn AssetLoader>;
+    let loader = Box::new(GltfMeshLoader::new(std::path::PathBuf::from("mesh/roughness_scale/scene.gltf"))) as Box<dyn AssetLoader>;
     let raw_asset = loader.load().unwrap();
 
     assert!(matches!(raw_asset.asset_type(), AssetType::Mesh));
 
-    let processor = AssetProcessor::new("mesh/cornell_box/scene.gltf", raw_asset);
+    let processor = AssetProcessor::new("mesh/roughness_scale/scene.gltf", raw_asset);
     let handle = processor.process().unwrap();
     let lazy_cache = LazyCache::create();
 
@@ -290,6 +290,7 @@ pub fn main_loop(engine_context: &mut EngineContext<impl user::App>) {
                                             
                             let gbuffer_img_ref = pass.read(&gbuffer.packed_gbuffer, backend::AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer);
                             let depth_img_ref = pass.read(&gbuffer.depth, backend::AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer);
+                            //let geo_normal_img_ref = pass.read(&gbuffer.geometric_normal, backend::AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer);
                             let main_img_ref = pass.write(&mut main_img, backend::AccessType::ComputeShaderWrite);
             
                             pass.render(move |context| {
@@ -301,11 +302,16 @@ pub fn main_loop(engine_context: &mut EngineContext<impl user::App>) {
                                     .descriptor_set(0, &[
                                         gbuffer_img_ref.bind(),
                                         depth_img_binding,
+                                        // geo_normal_img_ref.bind(),
                                         main_img_ref.bind()
                                     ])
                                 )?;
-            
-                                bound_pipeline.dispatch(gbuffer.packed_gbuffer.desc().extent);
+
+                                let extent = gbuffer.packed_gbuffer.desc().extent;
+                                let push_constants = [extent[0], extent[1]];
+                                
+                                bound_pipeline.push_constants(vk::ShaderStageFlags::COMPUTE, 0, as_byte_slice_values(&push_constants));
+                                bound_pipeline.dispatch(extent);
             
                                 Ok(())
                             });

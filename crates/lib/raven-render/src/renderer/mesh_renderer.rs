@@ -209,7 +209,6 @@ impl MeshRenderer {
                     let mut upload_materials = Vec::new();
                     for mat_ref in mesh_asset.materials.iter() {
                         let material = read_guard.get_asset(mat_ref.handle()).unwrap().as_material().unwrap();
-                        //glog::debug!("Material: {:#?}", material);
 
                         let upload = UploadMaterial {
                             metallic: material.metallic,
@@ -322,6 +321,7 @@ impl MeshRenderer {
                     pass.render(move |ctx| {
                         let xform_iter = mesh_instances.iter()
                             .map(|ins| {
+                                // transpose to column-major matrix to be used in shader
                                 let transform = [
                                     ins.transform.x_axis.x,
                                     ins.transform.y_axis.x,
