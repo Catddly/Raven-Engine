@@ -183,7 +183,7 @@ impl GetOrCreateTemporal<ImageDesc> for RenderGraphBuilder {
             hash_map::Entry::Vacant(entry) => {
                 let resource = Arc::new(
                     self.device
-                        .create_image(desc)
+                        .create_image(desc, None)
                         .with_context(|| format!("Failed to create image: {:?}", desc))?,
                 );
                 let handle = self.render_graph.import(resource.clone(), AccessType::Nothing);

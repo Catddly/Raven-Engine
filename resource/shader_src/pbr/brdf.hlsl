@@ -6,58 +6,6 @@
 
 #define USE_GGX_CORRELATED_G_TERM 1
 
-// D in DFG
-// Approximates the amount the surface's microfacets are aligned to the halfway vector, 
-// influenced by the roughness of the surface
-// This is the primary function approximating the microfacets.
-// float normal_distribution_GGX(float3 normal, float3 half_vec, float roughness) 
-// {
-//     float a        = roughness * roughness;
-//     float a2       = a * a;
-//     float n_dot_h  = max(dot(normal, half_vec), 0.0);
-//     float n_dot_h2 = n_dot_h * n_dot_h;
-	
-//     float denom = (n_dot_h2 * (a2 - 1.0) + 1.0);
-//     denom = PI * denom * denom;
-	
-//     return a2 / denom;
-// }
-
-// float geometry_schlick_GGX(float n_dot_v, float k) 
-// {
-//     float nom   = n_dot_v;
-//     float denom = n_dot_v * (1.0 - k) + k;
-	
-//     return nom / denom;
-// }
-
-// Map roughness when calculating geometry function in direct lighting.
-// float map_k_direct_lighting(float roughness) 
-// {
-//     return pow(roughness + 1, 2.0) / 8.0;
-// }
-
-// Map roughness when calculating geometry function in IBL(Image based lighting).
-// float map_k_IBL(float roughness) 
-// {
-//     return roughness * roughness / 2.0;
-// }
-
-// G in DFG
-// Describes the self-shadowing property of the microfacets. 
-// When a surface is relatively rough, the surface's microfacets can overshadow other microfacets reducing the light the surface reflects.
-// Use Smith's Method to split calculation into multiplication.
-// Here k is a remapping of roughness value. See map_k_direct_lighting() and map_k_IBL().
-// float3 geomotry_smith(float3 normal, float3 view, float3 light, float k) 
-// {
-//     float n_dot_v = max(dot(normal, view), 0.0);
-//     float n_dot_l = max(dot(normal, light), 0.0);
-//     float ggx_0 = geometry_schlick_GGX(n_dot_v, k);
-//     float ggx_1 = geometry_schlick_GGX(n_dot_l, k);
-	
-//     return ggx_0 * ggx_1;
-// }
-
 struct BrdfResult
 {
     float3 value;
@@ -86,20 +34,23 @@ struct DiffuseBrdf
     }
 };
 
-float3 fresnel_schlick(float3 F0, float3 F90, float cos_theta /* ldoth */)
-{
-    return lerp(F0, F90, pow(max(0.0, 1.0 - cos_theta), 5));
-}
+// float3 fresnel_schlick(float3 F0, float3 F90, float cos_theta /* ldoth */)
+// {
+//     return lerp(F0, F90, pow(max(0.0, 1.0 - cos_theta), 5));
+// }
 
 // F in DFG
 // The Fresnel equation describes the ratio of surface reflection at different surface angles.
 // This equation implicitly contain ks term.
 // cos_theta is the dot product of half vector and view vector, F0 is the lerped value by metallic (a constants, albedo)
-// float3 fresnel_schlick(float cos_theta, float3 F0)
-// {
-//     return F0 + (1.0 - F0) * pow(clamp(1.0 - cos_theta, 0.0, 1.0), 5.0); 
-// }
+float3 fresnel_schlick(float cos_theta, float3 F0)
+{
+    return F0 + (1.0 - F0) * pow(clamp(1.0 - cos_theta, 0.0, 1.0), 5.0); 
+}
 
+// G in DFG
+// Describes the self-shadowing property of the microfacets. 
+// When a surface is relatively rough, the surface's microfacets can overshadow other microfacets reducing the light the surface reflects.
 struct ShadowMaskTermSmith
 {
     float g;
@@ -138,7 +89,11 @@ struct SpecularBrdf
     float3 albedo;
     float  roughness;
 
+    // D in DFG
     // Normal distribution function Trowbridge-Reitz GGX
+    // Approximates the amount the surface's microfacets are aligned to the halfway vector, 
+    // influenced by the roughness of the surface
+    // This is the primary function approximating the microfacets.
     static float ndf_ggx(float roughness2, float cos_theta /* ndoth */) // h is half vector of (light, view)
     {
         const float denom = (cos_theta * cos_theta) * (roughness2 - 1.0) + 1.0;
@@ -163,7 +118,7 @@ struct SpecularBrdf
         // ks is in the f term
         ShadowMaskTermSmith smith = ShadowMaskTermSmith::eval(wo.z, wi.z, r2);
 
-        const float3 f = fresnel_schlick(albedo, 1.0.xxx, dot(m, wi));
+        const float3 f = fresnel_schlick(dot(m, wo), albedo);
         const float  n = ndf_ggx(r2, cos_theta);
         const float  g = smith.g;
 
@@ -197,7 +152,7 @@ struct Brdf
     DiffuseBrdf  diffuse_brdf;
     SpecularBrdf specular_brdf;
 
-    static void lerp_albedo_by_metallic(inout DiffuseBrdf diff, inout SpecularBrdf spec, float metallic)
+    static void fetch_albedo_by_metallic(inout DiffuseBrdf diff, inout SpecularBrdf spec, float metallic)
     {
         const float3 gbuffer_albedo = diff.albedo;
 
@@ -216,9 +171,6 @@ struct Brdf
 
         diff.albedo = min(1.0, diff_lerped_albedo * albedo_boost);
         spec.albedo = min(1.0, spec_lerped_albedo * albedo_boost);
-
-        //diff.albedo = min(1.0, diff_lerped_albedo);
-        //spec.albedo = min(1.0, spec_lerped_albedo);
     }
 
     static Brdf from_gbuffer_ndotv(GBuffer gbuffer)
@@ -232,7 +184,7 @@ struct Brdf
         specular.albedo = 0.04.xxx; // albedo is 0.04 when it is a dielectric
         specular.roughness = gbuffer.roughness;
 
-        lerp_albedo_by_metallic(diffuse, specular, gbuffer.metallic);
+        fetch_albedo_by_metallic(diffuse, specular, gbuffer.metallic);
 
         result.diffuse_brdf = diffuse;
         result.specular_brdf = specular;

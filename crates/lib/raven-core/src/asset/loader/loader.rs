@@ -4,27 +4,29 @@ use thiserror::Error;
 
 use crate::asset::RawAsset;
 
-#[derive(Debug)]
-pub enum LoadAssetImageType {
+#[derive(Debug, Clone, Hash)]
+pub enum LoadAssetTextureType {
+    Unknown,
     Png,
     Dds,
+    Jpg,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Hash)]
 pub enum LoadAssetMeshType {
     Gltf,
     Obj,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Hash)]
 pub enum LoadAssetSceneType {
     RavenScene,
     JsonScene,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Hash)]
 pub enum LoadAssetType {
-    Image(LoadAssetImageType),
+    Image(LoadAssetTextureType),
     Mesh(LoadAssetMeshType),
     Scene(LoadAssetSceneType)
 }
@@ -46,6 +48,19 @@ pub(crate) fn extract_mesh_type(name: &PathBuf) -> anyhow::Result<LoadAssetMeshT
     match ext {
         "gltf" | "glb" => Ok(LoadAssetMeshType::Gltf),
         "obj" => Ok(LoadAssetMeshType::Obj),
+        _ => Err(AssetLoaderError::UnsupportedMeshType { path: name.clone() })
+    }
+}
+
+pub(crate) fn extract_texture_type(name: &PathBuf) -> anyhow::Result<LoadAssetTextureType, AssetLoaderError> {
+    let ext = name.extension()
+        .ok_or(AssetLoaderError::InvalidExtension { path: name.clone() } )?;
+    let ext = ext.to_str().unwrap();
+
+    match ext {
+        "jpg" | "jpeg" => Ok(LoadAssetTextureType::Jpg),
+        "png" => Ok(LoadAssetTextureType::Png),
+        "dds" => Ok(LoadAssetTextureType::Dds),
         _ => Err(AssetLoaderError::UnsupportedMeshType { path: name.clone() })
     }
 }

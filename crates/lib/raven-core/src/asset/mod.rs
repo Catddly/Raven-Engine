@@ -9,7 +9,7 @@ mod error;
 pub use asset_process::AssetProcessor;
 pub use asset_baker::AssetBaker;
 
-use std::{marker::PhantomData, fmt::Debug, path::PathBuf};
+use std::{marker::PhantomData, fmt::Debug};
 
 use bytes::Bytes;
 use unsafe_any::UnsafeAny;
@@ -430,7 +430,7 @@ pub enum TextureSource {
     Empty,
     Placeholder([u8; 4]),
     Bytes(Bytes),
-    Source(PathBuf),
+    //Source(PathBuf),
 }
 
 impl Default for TextureSource {
@@ -448,6 +448,8 @@ pub enum TextureGammaSpace {
 
 #[derive(Clone, Hash, Debug)]
 pub struct TextureDesc {
+    extent: [u32; 3],
+    //ty: LoadAssetTextureType,
     gamma_space: TextureGammaSpace,
     use_mipmap: bool,
 }
@@ -455,6 +457,8 @@ pub struct TextureDesc {
 impl Default for TextureDesc {
     fn default() -> Self {
         Self {
+            extent: [1, 1, 1],
+            //ty: LoadAssetTextureType::Unknown,
             gamma_space: TextureGammaSpace::Linear,
             use_mipmap: false,
         }

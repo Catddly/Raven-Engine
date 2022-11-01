@@ -3,9 +3,10 @@ use std::collections::HashMap;
 use parking_lot::Mutex;
 use ash::vk::{self};
 use derive_builder::Builder;
+use vk_sync::AccessType;
 
 use super::allocator::{MemoryLocation, AllocationCreateDesc, self, Allocation};
-use super::{Device, RHIError};
+use super::{Device, RHIError, BufferDesc, ImageBarrier};
 
 // image type is associated with image view type.
 // use this for both types.
@@ -93,13 +94,20 @@ impl Image {
     }
 }
 
+pub struct ImageSubresource<'a> {
+    pub data: &'a [u8],
+    pub row_pitch_in_bytes: u32,
+    pub layer: u32,
+}
+
 // implement image associated function for device
 impl Device {
     pub fn create_image(
         &self,
-        desc: ImageDesc 
+        desc: ImageDesc,
+        init_datas: Option<Vec<ImageSubresource<'_>>>
     ) -> anyhow::Result<Image, RHIError> {
-        let image_ci = get_image_create_info(&desc, false);
+        let image_ci = get_image_create_info(&desc, init_datas.is_some());
 
         let image = unsafe {
             self.raw
@@ -129,12 +137,120 @@ impl Device {
                 .expect("bind_image_memory")
         };
 
-        Ok(Image {
+        let image = Image {
             raw: image,
             allocation: Some(allocation),
             desc,
             views: Mutex::new(HashMap::new()),
-        })
+        };
+
+        if let Some(init_datas) = init_datas {
+            self.upload_image_data(&image, &[init_datas], AccessType::AnyShaderReadSampledImageOrUniformTexelBuffer)?;
+        }
+
+        Ok(image)
+    }
+
+    pub fn upload_image_data(&self,
+        image: &Image,
+        init_datas: &[Vec<ImageSubresource<'_>>], // arrays of mipmaps of byte datas
+        dst_access: AccessType,
+    ) -> anyhow::Result<(), RHIError> {
+        for (array_idx, array_datas) in init_datas.into_iter().enumerate() {
+            if !array_datas.is_empty() {
+                let total_init_data_bytes = array_datas.iter().map(|sub| sub.data.len()).sum::<usize>();
+                let desc = &image.desc;
+    
+                let format_bytes: u32 = match desc.format {
+                    vk::Format::R8G8B8A8_UNORM => 4,
+                    vk::Format::R8G8B8A8_SRGB => 4,
+                    _ => todo!("Unknown format bytes {:?}", desc.format),
+                };
+    
+                let mut image_staging_buffer = self.create_buffer(
+                    BufferDesc::new_cpu_to_gpu(total_init_data_bytes, vk::BufferUsageFlags::TRANSFER_SRC),
+                    "image staging buffer"
+                )?;
+    
+                let mut curr_offset = 0;
+                let mapped_slice_mut = image_staging_buffer.allocation.mapped_slice_mut().unwrap();
+    
+                let buffer_copy_regions = array_datas.into_iter()
+                    .enumerate()
+                    .map(|(level, sub)| {
+                        let width = (desc.extent[0] >> level).max(1);
+                        let height = (desc.extent[1] >> level).max(1);
+                        let depth = (desc.extent[2] >> level).max(1);
+    
+                        let data_len = sub.data.len();
+    
+                        assert!(data_len == ((width * height * depth) * format_bytes) as usize);
+                        // copy image data
+                        mapped_slice_mut[curr_offset..curr_offset + sub.data.len()].copy_from_slice(sub.data);
+                        // build image copy subresource layers
+                        let region = vk::BufferImageCopy::builder()
+                            .buffer_offset(curr_offset as _)
+                            .image_subresource(
+                                vk::ImageSubresourceLayers::builder()
+                                    .aspect_mask(vk::ImageAspectFlags::COLOR)
+                                    .base_array_layer(sub.layer)
+                                    .layer_count(1)
+                                    .mip_level(level as _)
+                                    .build(),
+                            )
+                            .image_extent(vk::Extent3D {
+                                width,
+                                height,
+                                depth,
+                            });
+    
+                        curr_offset += sub.data.len();
+                        region.build()
+                    })
+                    .collect::<Vec<_>>();
+    
+                self.with_setup_commands(|cb| unsafe {
+                    super::barrier::image_barrier(
+                        self,
+                        cb,
+                        &[
+                            ImageBarrier::builder()
+                            .aspect_mask(vk::ImageAspectFlags::COLOR)
+                            .image(&image)
+                            .discard_contents(array_idx == 0) // discard at first
+                            .prev_access(&[dst_access])
+                            .next_access(&[AccessType::TransferWrite])
+                            .build().unwrap()
+                        ]
+                    );
+    
+                    self.raw.cmd_copy_buffer_to_image(
+                        cb,
+                        image_staging_buffer.raw,
+                        image.raw,
+                        vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                        &buffer_copy_regions,
+                    );
+    
+                    super::barrier::image_barrier(
+                        self,
+                        cb,
+                        &[
+                            ImageBarrier::builder()
+                            .aspect_mask(vk::ImageAspectFlags::COLOR)
+                            .image(&image)
+                            .prev_access(&[AccessType::TransferWrite])
+                            .next_access(&[dst_access])
+                            .build().unwrap()
+                        ]
+                    );
+                })?;
+    
+                self.destroy_buffer(image_staging_buffer);
+            }
+        }
+
+        Ok(())
     }
 
     pub fn create_image_view(
@@ -276,6 +392,12 @@ impl ImageDesc {
     #[inline]
     pub fn image_type(mut self, image_type: ImageType) -> Self {
         self.image_type = image_type;
+        self
+    }
+
+    #[inline]
+    pub fn mipmap_level(mut self, level: u16) -> Self {
+        self.mip_levels = level;
         self
     }
 }

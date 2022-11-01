@@ -231,7 +231,7 @@ impl Executor {
             // manually transition swapchain image to ComputeShaderWrite.
             // we didn't create image view for the swapchain image, we just copy the frame we want to present to swapchain image.
             // so we don't need image view for the framebuffer.
-            barrier::image_barrier(&device, &present_cb, &[
+            barrier::image_barrier(&device, present_cb.raw, &[
                 ImageBarrier::builder()
                     .image(&swapchain_image.image)
                     .prev_access(std::slice::from_ref(&vk_sync::AccessType::Present))
@@ -247,7 +247,7 @@ impl Executor {
             let retired_rg = executing_rg.record_present_commands(&present_cb, swapchain_image.image.clone());
 
             // back to present
-            barrier::image_barrier(&device, &present_cb, &[
+            barrier::image_barrier(&device, present_cb.raw, &[
                 ImageBarrier::builder()
                     .image(&swapchain_image.image)
                     .prev_access(std::slice::from_ref(&vk_sync::AccessType::ComputeShaderWrite))

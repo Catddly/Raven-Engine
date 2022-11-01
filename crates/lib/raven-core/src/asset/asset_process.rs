@@ -1,11 +1,14 @@
 use std::hash::Hasher;
-use std::io::Read;
 use std::path::PathBuf;
 use std::marker::PhantomData;
 
+use image::DynamicImage;
+use image::imageops::FilterType;
 use turbosloth::*;
 use bytes::Bytes;
 use wyhash::WyHash;
+
+use crate::math;
 
 use super::asset_registry::{AssetHandle, AssetRef};
 use super::error::AssetPipelineError;
@@ -31,6 +34,10 @@ impl AssetProcessor {
             AssetType::Mesh => {
                 let raw_mesh = self.raw_asset.as_mesh().ok_or(AssetPipelineError::ProcessFailure)?.clone();
                 RawMeshProcess::new(self.uri, raw_mesh).into_lazy()
+            }
+            AssetType::Texture => {
+                let raw_tex = self.raw_asset.as_texture().ok_or(AssetPipelineError::ProcessFailure)?.clone();
+                RawTextureProcess::new(raw_tex).into_lazy()
             }
             _ => unimplemented!(),
         };
@@ -196,26 +203,56 @@ impl LazyWorker for RawTextureProcess {
             TextureSource::Placeholder(pc) => {
                 Bytes::copy_from_slice(&pc)
             }
-            // TODO: implementing byte interpret
             TextureSource::Bytes(bytes) => {
                 bytes
             },
-            TextureSource::Source(source) => {
-                // TODO: use LoadFile lazy worker here
-                let mut file = std::fs::File::open(source)?;
-                let mut bytes = Vec::new();
-                file.read_to_end(&mut bytes)?;
+        };
 
-                let load_img = image::load_from_memory(bytes.as_slice())?;
-                glog::debug!("Loaded image: ({}, {}), {:?}", load_img.width(), load_img.height(), load_img.color());
+        let desc = &self.raw.desc;
 
-                Bytes::from(bytes)
+        // TODO: other color bits
+        let image = image::DynamicImage::ImageRgba8(
+            image::RgbaImage::from_raw(
+                desc.extent[0], 
+                desc.extent[1], 
+                bytes.to_vec()
+            )
+            .unwrap()
+        );
+
+        let down_sample = |image: &DynamicImage| {
+            let width = image.width() >> 1;
+            let height = image.height() >> 1;
+
+            image.resize_exact(width, height, FilterType::Lanczos3)
+        };
+
+        // generate mipmap bytes
+        let lod_groups = if desc.use_mipmap {
+            let mipmap_level = math::max_mipmap_level(desc.extent[0], desc.extent[1]);
+
+            let mut mips = Vec::new();
+            // level 0
+            let mut image = {
+                let mip = down_sample(&image);
+                mips.push(image.into_rgba8().into_raw());
+                mip
+            };
+
+            for _ in 1..mipmap_level {
+                let next = down_sample(&image);
+                let mip = std::mem::replace(&mut image, next);
+                mips.push(mip.into_rgba8().into_raw());
             }
+
+            mips
+        } else {
+            vec![image.into_rgba8().into_raw()]
         };
 
         let storage = Box::new(Texture::Storage {
-            extent: [1, 1, 1], 
-            lod_groups: vec![bytes.to_vec()],
+            extent: desc.extent, 
+            lod_groups,
         });
 
         let asset_registry = super::asset_registry::get_runtime_asset_registry();

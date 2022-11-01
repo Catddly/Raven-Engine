@@ -15,6 +15,7 @@ mod transient_resource_cache;
 
 mod helper;
 
+mod global_bindless_descriptor;  // set 1
 mod global_constants_descriptor; // set 2
 
 pub use graph_resource::Handle as RgHandle;
@@ -23,5 +24,7 @@ pub use executor::{Executor, DrawFrameContext};
 pub use pass_context::{IntoPipelineDescriptorBindings, RenderGraphPassBinding, RenderGraphPassBindable};
 
 pub use helper::image_clear;
+
+pub use global_bindless_descriptor::create_engine_global_bindless_descriptor_set;
 
 extern crate log as glog;

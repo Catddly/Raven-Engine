@@ -172,7 +172,7 @@ impl RenderGraph {
         handle
     }
 
-    pub(crate) fn import<ResourceType: RenderGraphImportExportResource>(
+    pub fn import<ResourceType: RenderGraphImportExportResource>(
         &mut self,
         resource: Arc<ResourceType>,
         access: AccessType,
@@ -181,7 +181,7 @@ impl RenderGraph {
         RenderGraphImportExportResource::import(resource, self, access)
     }
     
-    pub(crate) fn export<ResourceType: RenderGraphImportExportResource>(
+    pub fn export<ResourceType: RenderGraphImportExportResource>(
         &mut self,
         handle: Handle<ResourceType>,
         access: AccessType,
@@ -310,16 +310,19 @@ impl RenderGraph {
                     // image usage flags update
                     GraphResource::Created(GraphResourceCreatedData {
                         desc: GraphResourceDesc::Image(_),
-                    })
-                    | GraphResource::Imported(GraphResourceImportedData::Image { .. })
-                    | GraphResource::Imported(GraphResourceImportedData::SwapchainImage) => {
+                    }) | 
+                    GraphResource::Imported(GraphResourceImportedData::SwapchainImage) => {
                         let image_usage: vk::ImageUsageFlags = image_access_mask_to_usage_flags(access_mask);
 
                         if let ResourceUsage::Image(image) = &mut resource_usages[resource_index] {
                             *image |= image_usage;
-                        } else {
-                            panic!("Expect {} to be image resource!", resource_index);
                         }
+                    }
+                    GraphResource::Imported(GraphResourceImportedData::Image { raw, .. }) => {
+                        let mut image_usage: vk::ImageUsageFlags = image_access_mask_to_usage_flags(access_mask);
+                        image_usage |= raw.desc.usage;
+
+                        resource_usages[resource_index] = ResourceUsage::Image(image_usage);
                     }
 
                     // buffer usage flags update

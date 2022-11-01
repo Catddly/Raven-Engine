@@ -3,7 +3,7 @@ use ash::vk;
 
 pub use vk_sync::AccessType;
 
-use super::{CommandBuffer, Device, Image, Buffer};
+use super::{Device, Image, Buffer};
 
 #[inline]
 pub fn is_read_only_access(access: &AccessType) -> bool {
@@ -428,7 +428,7 @@ impl<'a> ImageBarrier<'a> {
 	}
 }
 
-pub fn image_barrier(device: &Device, cb: &CommandBuffer, barrier: &[ImageBarrier]) {
+pub fn image_barrier(device: &Device, cb: vk::CommandBuffer, barrier: &[ImageBarrier]) {
 	let img_barriers = barrier.iter()
 		.map(|barrier| {
 			let subresource_range = vk::ImageSubresourceRange::builder()
@@ -459,7 +459,7 @@ pub fn image_barrier(device: &Device, cb: &CommandBuffer, barrier: &[ImageBarrie
 
 	vk_sync::cmd::pipeline_barrier(
 		&device.raw, 
-		cb.raw,
+		cb,
 		None,
 		&[],
 		&img_barriers,
@@ -480,7 +480,7 @@ impl<'a> BufferBarrier<'a> {
 	}
 }
 
-pub fn buffer_barrier(device: &Device, cb: &CommandBuffer, barrier: &[BufferBarrier]) {
+pub fn buffer_barrier(device: &Device, cb: vk::CommandBuffer, barrier: &[BufferBarrier]) {
 	let buf_barriers = barrier.iter()
 		.map(|barrier| {
 			vk_sync::BufferBarrier {
@@ -499,7 +499,7 @@ pub fn buffer_barrier(device: &Device, cb: &CommandBuffer, barrier: &[BufferBarr
 
 	vk_sync::cmd::pipeline_barrier(
 		&device.raw, 
-		cb.raw,
+		cb,
 		None,
 		&buf_barriers,
 		&[],

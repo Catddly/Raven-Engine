@@ -4,10 +4,8 @@ use ash::vk;
 
 use glam::{Affine3A, Quat, Vec3};
 use raven_core::{asset::{asset_registry::{AssetHandle, get_runtime_asset_registry}}, utility};
-use raven_rg::{RenderGraphBuilder, RgHandle, IntoPipelineDescriptorBindings, RenderGraphPassBinding, image_clear};
-use raven_rhi::{backend::{Device, ImageDesc, Image, BufferDesc, Buffer, renderpass, RenderPass, descriptor::update_descriptor_set_buffer, RasterPipelineDesc, PipelineShaderDesc, PipelineShaderStage, AccessType, ImageViewDesc}, Rhi, copy_engine::CopyEngine};
-
-use crate::global_bindless_descriptor::{create_engine_global_bindless_descriptor_set};
+use raven_rg::{RenderGraphBuilder, RgHandle, IntoPipelineDescriptorBindings, RenderGraphPassBinding, image_clear, create_engine_global_bindless_descriptor_set};
+use raven_rhi::{backend::{Device, ImageDesc, Image, BufferDesc, Buffer, renderpass, RenderPass, descriptor::update_descriptor_set_buffer, RasterPipelineDesc, PipelineShaderDesc, PipelineShaderStage, AccessType, ImageViewDesc, ImageSubresource}, Rhi, copy_engine::CopyEngine};
 
 const GBUFFER_PACK_FORMAT: vk::Format = vk::Format::R32G32B32A32_SFLOAT;
 const GBUFFER_DEPTH_FORMAT: vk::Format = vk::Format::D32_SFLOAT;
@@ -25,6 +23,8 @@ pub enum MeshRasterScheme {
 pub struct MeshHandle {
     id: u32,
 }
+
+pub struct BindlessTexHandle(u32);
 
 #[repr(C)]
 #[derive(Copy, Clone)]
@@ -66,6 +66,10 @@ pub struct MeshRenderer {
     current_draw_data_offset: u64,
     draw_data_buffer: Arc<Buffer>,
     mesh_buffer: Arc<Buffer>,
+    bindless_tex_sizes_buffer: Buffer,
+
+    bindless_images: Vec<Arc<Image>>,
+    next_bindless_texture_idx: u32,
 
     device: Arc<Device>,
 }
@@ -111,6 +115,11 @@ impl MeshRenderer {
             MAX_GPU_MESH_COUNT * std::mem::size_of::<GpuMesh>(),
             vk::BufferUsageFlags::STORAGE_BUFFER
         );
+
+        let texture_sizes_buffer_desc: BufferDesc = BufferDesc::new_cpu_to_gpu(
+            rhi.device.max_bindless_descriptor_count() as usize * std::mem::size_of::<[f32; 4]>(),
+            vk::BufferUsageFlags::STORAGE_BUFFER
+        );
         
         // Why not create this buffer inside render graph?
         // because it is a global resource we want to manage manually and it is not depend on render graph's context
@@ -121,6 +130,10 @@ impl MeshRenderer {
         let mesh_buffer = Arc::new(rhi.device
             .create_buffer(universal_mesh_buffer_desc, "universal mesh buffer")
             .unwrap());
+
+        let bindless_tex_sizes_buffer = rhi.device
+            .create_buffer(texture_sizes_buffer_desc, "bindless textures sizes")
+            .unwrap();
 
         let bindless_descriptor = create_engine_global_bindless_descriptor_set(rhi);
 
@@ -135,6 +148,12 @@ impl MeshRenderer {
             bindless_descriptor, 
             vk::DescriptorType::STORAGE_BUFFER, 
             &mesh_buffer);
+
+        update_descriptor_set_buffer(&rhi.device, 
+            2, 
+            bindless_descriptor, 
+            vk::DescriptorType::STORAGE_BUFFER, 
+            &bindless_tex_sizes_buffer);
 
         // temporary hack
         let mut mesh_instances = Vec::new();
@@ -160,9 +179,90 @@ impl MeshRenderer {
             current_draw_data_offset: 0,
             draw_data_buffer,
             mesh_buffer,
+            bindless_tex_sizes_buffer,
+
+            bindless_images: Vec::new(),
+            next_bindless_texture_idx: 0,
 
             device: rhi.device.clone(),
         }
+    }
+
+    // TODO: this function should not be here!
+    pub fn add_bindless_texture(&mut self, handle: &Arc<AssetHandle>) -> BindlessTexHandle {
+        let registry = get_runtime_asset_registry();
+        {
+            let read_guard = registry.read();
+            
+            if let Some(asset) = read_guard.get_asset(&handle) {
+                if let Some(tex_asset) = asset.as_texture() {
+                    let extent_u32 = tex_asset.extent;
+                    let extent = [
+                        extent_u32[0] as f32, extent_u32[1] as f32,
+                        (extent_u32[0] as f32).recip(), (extent_u32[1] as f32).recip()
+                    ];
+
+                    // TODO: identify image type
+                    let uploads = tex_asset.lod_groups.iter()
+                        .map(|mip| ImageSubresource {
+                            data: mip.as_slice(),
+                            // TODO: no hardcode
+                            row_pitch_in_bytes: extent_u32[0] * 4,
+                            layer: 0,
+                        })
+                        .collect::<Vec<_>>();
+
+                    // create gpu image
+                    let image_desc = ImageDesc::new_2d([extent_u32[0], extent_u32[1]], vk::Format::R8G8B8A8_UNORM)
+                        .mipmap_level(uploads.len() as _)
+                        .usage_flags(vk::ImageUsageFlags::SAMPLED);
+                    let image = Arc::new(self.device.create_image(image_desc, Some(uploads)).unwrap());
+                    let image_view = image.view(&self.device, &ImageViewDesc::default()).unwrap();
+
+                    let handle = self.add_bindless_image_view(image_view);
+                    self.bindless_images.push(image);
+
+                    // update sizes infos
+                    bytemuck::checked::cast_slice_mut::<u8, [f32; 4]>(
+                        self.bindless_tex_sizes_buffer
+                            .allocation
+                            .mapped_slice_mut()
+                            .unwrap()
+                    )[handle.0 as usize] = extent;
+
+                    return handle;
+                }
+            }
+        }
+
+        BindlessTexHandle(u32::MAX)
+    }
+
+    fn add_bindless_image_view(&mut self, view: vk::ImageView) -> BindlessTexHandle {
+        let handle = BindlessTexHandle(self.next_bindless_texture_idx);
+        self.next_bindless_texture_idx += 1;
+
+        // upload this bindless image
+        let image_info = vk::DescriptorImageInfo::builder()
+            .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+            .image_view(view)
+            .build();
+
+        let write = vk::WriteDescriptorSet::builder()
+            .dst_set(self.bindless_descriptor)
+            .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
+            .dst_binding(3)
+            .dst_array_element(handle.0)
+            .image_info(std::slice::from_ref(&image_info))
+            .build();
+
+        unsafe {
+            self.device
+                .raw
+                .update_descriptor_sets(std::slice::from_ref(&write), &[]);
+        }
+
+        handle
     }
 
     pub fn add_asset_mesh(&mut self, handle: &Arc<AssetHandle>) -> MeshHandle {
@@ -405,5 +505,6 @@ impl MeshRenderer {
 
         rhi.device.destroy_buffer(draw_data_buffer);
         rhi.device.destroy_buffer(mesh_buffer);
+        rhi.device.destroy_buffer(self.bindless_tex_sizes_buffer);
     }
 }

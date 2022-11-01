@@ -220,6 +220,11 @@ impl<'rg> PassBuilder<'rg> {
     pub fn register_raster_pipeline(&mut self, shaders: &[PipelineShaderDesc], desc: RasterPipelineDesc) -> GraphRasterPipelineHandle {
         let idx = self.rg.raster_pipelines.len();
 
+        let mut desc = desc;
+        // force inserting the set #1 layout (global bindless descriptor set)
+        // TODO: it this a clone inefficient?
+        desc.custom_set_layout_overwrites[1] = Some(super::global_bindless_descriptor::get_engine_global_bindless_descriptor_layout().clone());
+
         self.rg.raster_pipelines.push(RenderGraphRasterPipeline {
             desc,
             stages: shaders.to_vec(),

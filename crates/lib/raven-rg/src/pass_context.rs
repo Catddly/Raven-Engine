@@ -56,6 +56,20 @@ impl RenderGraphPassBinding {
             _ => panic!("Try to add ImageAspectFlags to buffers!"),
         }
     }
+
+    pub fn with_image_view(&mut self, view: vk::ImageViewType) {
+        match self {
+            RenderGraphPassBinding::Image(image) => {
+                image.view_desc.view_type = Some(view);
+            },
+            RenderGraphPassBinding::ImageArray(images) => {
+                for image in images {
+                    image.view_desc.view_type = Some(view);
+                }
+            },
+            _ => panic!("Try to add ImageAspectFlags to buffers!"),
+        }
+    }
 }
 
 pub trait RenderGraphPassBindable {

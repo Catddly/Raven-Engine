@@ -1,9 +1,10 @@
 use std::collections::{btree_map, BTreeMap};
 
+use raven_core::container::TempList;
 use rspirv_reflect::{DescriptorInfo, DescriptorType, BindingCount};
 use ash::vk;
 
-use crate::backend::ImageViewDesc;
+use crate::backend::{ImageViewDesc, SamplerDesc};
 
 use super::{Device, Buffer, Image};
 
@@ -93,6 +94,7 @@ pub fn create_descriptor_set_layout(
 
     let mut set_layout_create_flags = vk::DescriptorSetLayoutCreateFlags::empty();
 
+    let temp_sampler_refs = TempList::new();
     for (&binding_idx, binding_info) in set_layout_refl {
         let vk_descriptor_type = refl_descriptor_type_to_vk(binding_info.ty.clone(), &binding_info.name);
 
@@ -114,7 +116,7 @@ pub fn create_descriptor_set_layout(
                         .stage_flags(stage_flag)
                         .build()
                 );
-            },
+            }
             DescriptorType::SAMPLED_IMAGE => {
                 // it is a bindless sample image arrays
                 if matches!(binding_info.binding_count, BindingCount::Unbounded) {
@@ -146,8 +148,45 @@ pub fn create_descriptor_set_layout(
                         .stage_flags(stage_flag)
                         .build()
                 );
-            },
-            // TODO: add immutable sampler
+            }
+            DescriptorType::SAMPLER => {
+                assert!(binding_info.name.starts_with("sampler_"));
+                let mut suffix = &binding_info.name["sampler_".len()..];
+
+                let filter = match &suffix[..1] {
+                    "l" => vk::Filter::LINEAR,
+                    "n" => vk::Filter::NEAREST,
+                    _ => panic!("Unsupported sampler filter mode: {}", &suffix[..1]),
+                };
+                suffix = &suffix[1..];
+                
+                let mipmap_mode = match &suffix[..1] {
+                    "l" => vk::SamplerMipmapMode::LINEAR,
+                    "n" => vk::SamplerMipmapMode::NEAREST,
+                    _ => panic!("Unsupported sampler mipmap mode: {}", &suffix[..1]),
+                };
+                suffix = &suffix[1..];
+
+                let address_mode = match &suffix[..] {
+                    "ce" => vk::SamplerAddressMode::CLAMP_TO_EDGE,
+                    "cb" => vk::SamplerAddressMode::CLAMP_TO_BORDER,
+                    "r" => vk::SamplerAddressMode::REPEAT,
+                    "mr" => vk::SamplerAddressMode::MIRRORED_REPEAT,
+                    "mce" => vk::SamplerAddressMode::MIRROR_CLAMP_TO_EDGE,
+                    _ => panic!("Unsupported sampler address mode: {}", &suffix[..]),
+                };
+
+                let sampler = device.get_immutable_sampler(SamplerDesc { filter, mipmap_mode, address_mode });
+                bindings.push(
+                    vk::DescriptorSetLayoutBinding::builder()
+                        .descriptor_count(1)
+                        .descriptor_type(vk::DescriptorType::SAMPLER)
+                        .stage_flags(stage_flag)
+                        .binding(binding_idx)
+                        .immutable_samplers(std::slice::from_ref(temp_sampler_refs.add(sampler)))
+                        .build()
+                );
+            }
             _ => unimplemented!("Unimplemented descriptor type in {}", binding_idx)
         }
 

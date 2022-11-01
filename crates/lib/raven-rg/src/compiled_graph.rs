@@ -98,7 +98,7 @@ impl CompiledRenderGraph {
                                 let image = if let Some(image) = cache.get_image(&desc) {
                                     image
                                 } else {
-                                    device.create_image(desc.clone()).unwrap()
+                                    device.create_image(desc.clone(), None).unwrap()
                                 };
 
                                 RegisteredResource {

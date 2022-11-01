@@ -2,6 +2,6 @@ extern crate log as glog; // to avoid name collision with my log module
 
 mod renderer;
 
-mod global_bindless_descriptor;  // set 1
-
 pub use renderer::mesh_renderer::{MeshRenderer, MeshRasterScheme, MeshShadingContext};
+pub use renderer::sky_renderer::{SkyRenderer};
+pub use renderer::ibl_renderer::{IblRenderer};

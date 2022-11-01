@@ -193,7 +193,7 @@ impl<'exec, 'dynamic> ExecutingRenderGraph<'exec, 'dynamic> {
 
         match resource.resource.borrow() {
             GraphPreparedResourceRef::Image(image) => {
-                barrier::image_barrier(device, cb, &[barrier::ImageBarrier {
+                barrier::image_barrier(device, cb.raw, &[barrier::ImageBarrier {
                     image,
 	                prev_access: &[resource.get_current_access()],
 	                next_access: &[target_access.access_type],
@@ -206,7 +206,7 @@ impl<'exec, 'dynamic> ExecutingRenderGraph<'exec, 'dynamic> {
                 resource.transition_to(target_access.access_type);
             },
             GraphPreparedResourceRef::Buffer(buffer) => {
-                barrier::buffer_barrier(device, cb, &[barrier::BufferBarrier {
+                barrier::buffer_barrier(device, cb.raw, &[barrier::BufferBarrier {
                     buffer,
 	                prev_access: &[resource.get_current_access()],
 	                next_access: &[target_access.access_type],
@@ -278,7 +278,8 @@ impl<'exec, 'dynamic> ExecutingRenderGraph<'exec, 'dynamic> {
             }
         }
 
-        for (idx, (resource, access)) in resources.iter().enumerate() {
+        let mut idx = 0;
+        for (resource, access) in resources.iter() {
             // allow pipeline to overlap
             if resource.get_current_access() == access.access_type && access.skip_sync_if_same {
                 continue;
@@ -309,15 +310,17 @@ impl<'exec, 'dynamic> ExecutingRenderGraph<'exec, 'dynamic> {
                     resource.transition_to(access.access_type);
                 }
             }
+
+            idx += 1;
         }
 
         let device = self.execution_params.device;
         // transition them all together
         if !img_barriers.is_empty() {
-            barrier::image_barrier(device, cb, &img_barriers);
+            barrier::image_barrier(device, cb.raw, &img_barriers);
         }
         if !buf_barriers.is_empty() {
-            barrier::buffer_barrier(device, cb, &buf_barriers);
+            barrier::buffer_barrier(device, cb.raw, &buf_barriers);
         }
     }
 }

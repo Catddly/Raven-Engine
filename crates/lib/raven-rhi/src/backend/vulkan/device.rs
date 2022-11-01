@@ -2,7 +2,7 @@ use std::cell::Cell;
 use std::ffi::{CStr, CString};
 use std::sync::Arc;
 use std::os::raw::c_char;
-use std::collections::HashSet;
+use std::collections::{HashSet, HashMap};
 
 use parking_lot::Mutex;
 use ash::{vk, extensions::khr};
@@ -18,6 +18,7 @@ use crate::draw_frame::DrawFrame;
 use super::RHIError;
 use super::physical_device::QueueFamily;
 use super::buffer::Buffer;
+use super::sampler::SamplerDesc;
 
 /// Descriptor count to subtract from the max bindless descriptor count,
 /// so that we don't overflow the max when using bindless _and_ non-bindless descriptors
@@ -39,6 +40,8 @@ pub struct Device {
     pub(crate) instance: Arc<Instance>,
     pub global_allocator: Mutex<Allocator>,
     pub global_queue: Queue,
+
+    pub(crate) immutable_samplers: HashMap<SamplerDesc, vk::Sampler>,
 
     pub(crate) crash_tracing_buffer: Cell<Option<Buffer>>,
     setup_cb: Mutex<CommandBuffer>,
@@ -288,12 +291,16 @@ impl Device {
 
         let setup_cb = Mutex::new(CommandBuffer::new(&device, &global_queue.family));
 
+        let immutable_samplers = Self::create_immutable_samplers(&device);
+
         Ok(Self {
             raw: device,
             physical_device: physical_device.clone(),
             instance: physical_device.instance.clone(),
             global_allocator: Mutex::new(global_allocator),
             global_queue,
+
+            immutable_samplers,
 
             crash_tracing_buffer: Cell::new(Some(crash_tracing_buffer)),
             setup_cb,

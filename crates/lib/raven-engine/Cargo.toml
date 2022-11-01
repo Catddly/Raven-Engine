@@ -13,6 +13,8 @@ anyhow = "1.0.0"  # error lib
 log = "0.4"       # logging lib
 glam = { version = "0.21.0", features = ["glam-assert"] }
 
+futures = "0.3.0"
+
 # Temporary
 # Strictly speaking, this should not be here, this should only be in RHI layer!
 ash = "0.33.0"

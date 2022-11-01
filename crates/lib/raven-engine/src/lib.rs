@@ -14,7 +14,7 @@ use raven_core::{
         window::{Window, WindowBuilder},
         event::{WindowEvent, Event, VirtualKeyCode, ElementState}, 
         platform::run_return::EventLoopExtRunReturn
-    }, asset::{loader::{mesh_loader::GltfMeshLoader, AssetLoader}, AssetType, AssetProcessor}, concurrent::executor, render::camera::{self}, input::InputBinding, utility::as_byte_slice_values,
+    }, asset::{loader::{mesh_loader::GltfMeshLoader, AssetLoader, texture_loader::JpgTextureLoader}, AssetType, AssetProcessor}, concurrent::executor, render::camera::{self}, input::InputBinding, utility::as_byte_slice_values,
 };
 
 extern crate log as glog;
@@ -24,7 +24,7 @@ use raven_core::log;
 use raven_core::console;
 use raven_core::input::{InputManager, KeyCode, MouseButton};
 use raven_core::filesystem::{self, ProjectFolder};
-use raven_render::{MeshRenderer, MeshRasterScheme, MeshShadingContext};
+use raven_render::{MeshRenderer, MeshRasterScheme, MeshShadingContext, SkyRenderer, IblRenderer};
 use raven_rhi::{RHIConfig, Rhi, backend};
 use raven_rg::{Executor, IntoPipelineDescriptorBindings, RenderGraphPassBindable, DrawFrameContext};
 
@@ -146,25 +146,68 @@ pub fn main_loop(engine_context: &mut EngineContext<impl user::App>) {
     // temporary
     let main_img_desc: backend::ImageDesc = backend::ImageDesc::new_2d(render_resolution, vk::Format::R8G8B8A8_UNORM);
 
+    let mut loaders = Vec::new();
     let loader = Box::new(GltfMeshLoader::new(std::path::PathBuf::from("mesh/roughness_scale/scene.gltf"))) as Box<dyn AssetLoader>;
-    let raw_asset = loader.load().unwrap();
+    loaders.push(loader);
 
-    assert!(matches!(raw_asset.asset_type(), AssetType::Mesh));
+    let mut tex_loaders = Vec::new();
+    let right_loader = Box::new(JpgTextureLoader::new(std::path::PathBuf::from("texture/skybox/right.jpg"))) as Box<dyn AssetLoader>;
+    let left_loader = Box::new(JpgTextureLoader::new(std::path::PathBuf::from("texture/skybox/left.jpg"))) as Box<dyn AssetLoader>;
+    let up_loader = Box::new(JpgTextureLoader::new(std::path::PathBuf::from("texture/skybox/top.jpg"))) as Box<dyn AssetLoader>;
+    let down_loader = Box::new(JpgTextureLoader::new(std::path::PathBuf::from("texture/skybox/bottom.jpg"))) as Box<dyn AssetLoader>;
+    let front_loader = Box::new(JpgTextureLoader::new(std::path::PathBuf::from("texture/skybox/front.jpg"))) as Box<dyn AssetLoader>;
+    let back_loader = Box::new(JpgTextureLoader::new(std::path::PathBuf::from("texture/skybox/back.jpg"))) as Box<dyn AssetLoader>;
 
-    let processor = AssetProcessor::new("mesh/roughness_scale/scene.gltf", raw_asset);
-    let handle = processor.process().unwrap();
+    tex_loaders.push(right_loader);
+    tex_loaders.push(left_loader);
+    tex_loaders.push(up_loader);
+    tex_loaders.push(down_loader);
+    tex_loaders.push(front_loader);
+    tex_loaders.push(back_loader);
+
+    let raw_meshs = loaders.into_iter()
+        .map(|l| l.load().unwrap())
+        .collect::<Vec<_>>();
+
+    let raw_texs = tex_loaders.into_iter()
+        .map(|l| l.load().unwrap())
+        .collect::<Vec<_>>();
+
+    let mut mesh_handles = Vec::new();
+    let mut tex_handles = Vec::new();
+
+    for mesh in raw_meshs {
+        let processor = AssetProcessor::new("mesh/roughness_scale/scene.gltf", mesh);
+
+        mesh_handles.push(processor.process().unwrap());
+    }
+
+    for tex in raw_texs {
+        let tex_processor = AssetProcessor::new("", tex);
+
+        tex_handles.push(tex_processor.process().unwrap());
+    }
+
     let lazy_cache = LazyCache::create();
 
-    let task = executor::spawn(handle.eval(&lazy_cache));
-    let handle = smol::block_on(task).unwrap();
+    let tasks_iter = mesh_handles.iter()
+        .map(|handle| executor::spawn(handle.eval(&lazy_cache)));
+    let handles = smol::block_on(futures::future::try_join_all(tasks_iter)).unwrap();
+
+    let tex_tasks_iter = tex_handles.iter()
+        .map(|handle| executor::spawn(handle.eval(&lazy_cache)));
+    let tex_handles = smol::block_on(futures::future::try_join_all(tex_tasks_iter)).unwrap();
+
+    let sky_renderer = SkyRenderer::new_cubemap_split(rhi, &tex_handles);
+    let mut ibl_renderer = IblRenderer::new(&rhi);
 
     let mut mesh_renderer = MeshRenderer::new(rhi, MeshRasterScheme::Deferred, render_resolution);
-    mesh_renderer.add_asset_mesh(&handle);
+    mesh_renderer.add_asset_mesh(&handles[0]);
 
     let mut camera = camera::Camera::builder()
         .aspect_ratio(render_resolution[0] as f32 / render_resolution[1] as f32)
         .build();
-    let mut camera_controller = camera::controller::FirstPersonController::new(Vec3::new(0.0, 1.0, 3.0), Quat::IDENTITY);
+    let mut camera_controller = camera::controller::FirstPersonController::new(Vec3::new(0.0, 0.35, 10.0), Quat::IDENTITY);
 
     let mut static_events = Vec::new();
     let mut last_frame_time = std::time::Instant::now();
@@ -279,38 +322,65 @@ pub fn main_loop(engine_context: &mut EngineContext<impl user::App>) {
                 // No renderer yet!
                 let mut main_img = rg.new_resource(main_img_desc);
                 {
+                    let cubemap = sky_renderer.get_cubemap();
+                    let is_cubemap_exist = cubemap.is_some();
+
+                    let cubemap_handle = if let Some(cubemap) = cubemap.as_ref() {
+                        Some(rg.import(cubemap.clone(), backend::AccessType::AnyShaderReadSampledImageOrUniformTexelBuffer))
+                    } else {
+                        None
+                    };
+
+                    if is_cubemap_exist {
+                        let convolved_cubemap = ibl_renderer.convolve_if_needed(rg, cubemap_handle.as_ref().unwrap());
+                    }
+                    
                     // mesh rasterize
                     let shading_context = mesh_renderer.prepare_rg(rg);
     
                     // lighting
-                    match shading_context {
+                    match &shading_context {
                         MeshShadingContext::GBuffer(gbuffer) => {        
                             let mut pass = rg.add_pass("gbuffer lighting");
                             let pipeline = pass.register_compute_pipeline("defer/defer_lighting.hlsl");
-                                            
+
                             let gbuffer_img_ref = pass.read(&gbuffer.packed_gbuffer, backend::AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer);
                             let depth_img_ref = pass.read(&gbuffer.depth, backend::AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer);
-                            //let geo_normal_img_ref = pass.read(&gbuffer.geometric_normal, backend::AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer);
+                            let cubemap_ref = if let Some(cubemap) = cubemap_handle {
+                                Some(pass.read(&cubemap, backend::AccessType::AnyShaderReadSampledImageOrUniformTexelBuffer))
+                            } else {
+                                None
+                            };
                             let main_img_ref = pass.write(&mut main_img, backend::AccessType::ComputeShaderWrite);
             
+                            let extent = gbuffer.packed_gbuffer.desc().extent;
                             pass.render(move |context| {
                                 let mut depth_img_binding = depth_img_ref.bind();
                                 depth_img_binding.with_aspect(vk::ImageAspectFlags::DEPTH);
     
                                 // bind pipeline and descriptor set
-                                let bound_pipeline = context.bind_compute_pipeline(pipeline.into_bindings()
-                                    .descriptor_set(0, &[
-                                        gbuffer_img_ref.bind(),
-                                        depth_img_binding,
-                                        // geo_normal_img_ref.bind(),
-                                        main_img_ref.bind()
-                                    ])
-                                )?;
+                                let bound_pipeline = if is_cubemap_exist {
+                                    context.bind_compute_pipeline(pipeline.into_bindings()
+                                        .descriptor_set(0, &[
+                                            gbuffer_img_ref.bind(),
+                                            depth_img_binding,
+                                            main_img_ref.bind(),
+                                            cubemap_ref.unwrap().bind(),
+                                        ])
+                                    )?
+                                } else {
+                                    context.bind_compute_pipeline(pipeline.into_bindings()
+                                        .descriptor_set(0, &[
+                                            gbuffer_img_ref.bind(),
+                                            depth_img_binding,
+                                            main_img_ref.bind()
+                                        ])
+                                    )?
+                                };
 
-                                let extent = gbuffer.packed_gbuffer.desc().extent;
                                 let push_constants = [extent[0], extent[1]];
-                                
                                 bound_pipeline.push_constants(vk::ShaderStageFlags::COMPUTE, 0, as_byte_slice_values(&push_constants));
+                                
                                 bound_pipeline.dispatch(extent);
             
                                 Ok(())
@@ -362,6 +432,8 @@ pub fn main_loop(engine_context: &mut EngineContext<impl user::App>) {
     
     rhi.device.wait_idle();
     mesh_renderer.clean(rhi);
+    ibl_renderer.clean(rhi);
+    sky_renderer.clean(rhi);
     glog::trace!("Exit main loop successfully!");
 }
 

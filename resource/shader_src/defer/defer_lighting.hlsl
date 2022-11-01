@@ -4,7 +4,10 @@
 #include "../common/frame_constants.hlsl"
 #include "../common/float_precision.hlsl"
 #include "../common/uv.hlsl"
+#include "../common/immutable_sampler.hlsl"
+
 #include "../ray_tracing/ray.hlsl"
+#include "../ray_tracing/camera_ray.hlsl"
 
 #include "../pbr/brdf.hlsl"
 
@@ -17,33 +20,28 @@ struct {
 [[vk::binding(0)]] Texture2D<float4> gbuffer_tex;
 [[vk::binding(1)]] Texture2D<float> depth_tex;
 [[vk::binding(2)]] RWTexture2D<float4> output_tex;
+[[vk::binding(3)]] TextureCube cube_map;
 
 [numthreads(8, 8, 1)]
 void main(in uint2 px: SV_DispatchThreadID) {
+    float2 resolution = float2(push_constants.render_res_width, push_constants.render_res_height);
+    float2 uv = pixel_to_uv(float2(px), resolution);
+
+    CameraRayContext cam_ctx = CameraRayContext::from_screen_uv(uv);
+
     const float depth = depth_tex[px];
     if (depth - 0.0 < FLOAT_EPSILON)
     {
-        output_tex[px] = float4(0.0, 0.0, 0.0, 0.0);
+        float3 direction = cam_ctx.get_direction_ws();
+        float4 pixel = cube_map.SampleLevel(sampler_llce, direction, 0);
+
+        output_tex[px] = float4(pixel.rgb, 1.0);
         return;
     }
 
-    float2 resolution = float2(push_constants.render_res_width, push_constants.render_res_height);
-    float2 uv = pixel_to_uv(float2(px), resolution);
-    float2 cs_coord = uv_to_clip(uv);
-
-    // remember that we reverse z to gain better z precision.
-    // so here z = 0.0 is the fartest and z = 1.0 is the nearest.
-    float4 origin_cs = float4(cs_coord, 1.0, 1.0);
-    float4 direction_target_cs = float4(cs_coord, 0.0, 1.0);
-
-    CameraMatrices cam = frame_constants_dyn.camera_matrices;
-    float4 origin_ws = mul(cam.view_to_world, mul(cam.clip_to_view, origin_cs));
-    float4 direction_target_ws = mul(cam.view_to_world, mul(cam.clip_to_view, direction_target_cs));
-    float3 direction_ws = normalize(direction_target_ws.xyz);
-
     RayDesc view_ray = new_ray(
-        origin_ws.xyz / origin_ws.w,
-        direction_ws,
+        cam_ctx.get_position_ws(),
+        cam_ctx.get_direction_ws(),
         0.0,
         FLOAT_MAX
     );
@@ -71,19 +69,21 @@ void main(in uint2 px: SV_DispatchThreadID) {
     // wo.z is the dot product of normal and view.
     float3 wo = mul(-view_ray.Direction, tangent_to_world);
 
-    if (wo.z < 0.0) {
-        wo.z *= -0.25;
-        wo = normalize(wo);
-    }
+    // if (wo.z < 0.0) {
+    //     wo.z *= -0.25;
+    //     wo = normalize(wo);
+    // }
 
     // calculate lighting
-    float3 total_radiance = 0.0.xxx;
+    {
+        float3 total_radiance = 0.0.xxx;
 
-    Brdf brdf = Brdf::from_gbuffer_ndotv(gbuffer);
-    const float3 brdf_value = brdf.eval(wi, wo);
-    const float  ndotl = max(0.0, wi.z);
-    const float3 light_radiance = float3(1.0, 0.4, 0.7) * 10.0;
-    total_radiance += brdf_value * ndotl * light_radiance;
+        Brdf brdf = Brdf::from_gbuffer_ndotv(gbuffer);
+        const float3 brdf_value = brdf.eval(wi, wo);
+        const float  ndotl = max(0.0, wi.z);
+        const float3 light_radiance = float3(1.0, 1.0, 1.0) * 7.0;
+        total_radiance += brdf_value * ndotl * light_radiance;
 
-    output_tex[px] = float4(total_radiance, 1.0);
+        output_tex[px] = float4(total_radiance, 1.0);
+    }
 }

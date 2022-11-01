@@ -5,7 +5,8 @@ use raven_core::container::TempList;
 use rspirv_reflect::PushConstantInfo;
 use byte_slice_cast::AsSliceOf;
 
-use super::{RenderPass, ShaderSource, Device, ShaderBinaryStage, RHIError, descriptor::{self, PipelineSetLayouts}, PipelineShaderStage, ShaderBinary};
+use super::{RenderPass, ShaderSource, Device, ShaderBinaryStage, RHIError, descriptor::{self, PipelineSetLayouts}, PipelineShaderStage, ShaderBinary, constants};
+use super::descriptor::PipelineSetBindings;
 
 #[derive(Debug)]
 pub struct CommonPipeline {
@@ -26,6 +27,8 @@ pub struct RasterPipelineDesc {
     pub culling: bool,
     #[builder(default = "true")]
     pub depth_write: bool,
+    #[builder(default)]
+    pub custom_set_layout_overwrites: [Option<PipelineSetBindings>; constants::MAX_DESCRIPTOR_SET_COUNT],
 }
 
 impl RasterPipelineDesc {
@@ -48,14 +51,31 @@ impl Deref for RasterPipeline {
 }
 
 // Compute Pipeline description
-#[derive(Builder, Clone, Hash, PartialEq, Eq, Debug)]
+#[derive(Builder, Clone, Debug)]
 #[builder(pattern = "owned", derive(Clone))]
 pub struct ComputePipelineDesc {
     #[builder(default)]
     pub push_constants_bytes: usize,
     #[builder(setter(into))]
     pub source: ShaderSource,
+    #[builder(default)]
+    pub custom_set_layout_overwrites: [Option<PipelineSetBindings>; constants::MAX_DESCRIPTOR_SET_COUNT],
 }
+
+impl std::hash::Hash for ComputePipelineDesc {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        state.write_usize(self.push_constants_bytes);
+        self.source.hash(state);
+    }
+}
+
+impl PartialEq for ComputePipelineDesc {
+    fn eq(&self, other: &Self) -> bool {
+        self.push_constants_bytes.eq(&other.push_constants_bytes) &&
+            self.source.eq(&other.source)
+    }
+}
+impl Eq for ComputePipelineDesc {}
 
 impl ComputePipelineDesc {
     pub fn builder() -> ComputePipelineDescBuilder {
@@ -91,7 +111,19 @@ pub fn create_raster_pipeline(
         })
         .unzip();
     
-    let pipeline_set_layouts = descriptor::flatten_all_stages_descriptor_set_layouts(set_layouts);
+    let mut pipeline_set_layouts = descriptor::flatten_all_stages_descriptor_set_layouts(set_layouts);
+
+    // force overwriting the exists set layout
+    for overwrite in desc.custom_set_layout_overwrites.iter() {
+        if let Some(overwrite) = overwrite {
+            // is it exist?
+            if let Some(layout) = pipeline_set_layouts.get_mut(&1) {
+                *layout = overwrite.clone();
+            }
+        }
+    }
+
+    //glog::debug!("Raster pipeline layout: {:#?}", pipeline_set_layouts);
 
     // TODO: thing of the global descriptors layout of the engine
     let (set_layout, set_layout_infos) = descriptor::create_descriptor_set_layouts_with_unified_stage(

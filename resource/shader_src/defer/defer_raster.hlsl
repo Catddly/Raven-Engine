@@ -1,6 +1,7 @@
 #include "../common/frame_constants.hlsl"
 #include "../common/bindless_resources.hlsl"
 #include "../common/material.hlsl"
+#include "../common/immutable_sampler.hlsl"
 
 #include "gbuffer.hlsl"
 
@@ -92,6 +93,9 @@ PsOut ps_main(PsIn ps) {
     // in right hand coordinate system, cross(ddy, ddx), not (ddx, ddy)
     float3 geometric_normal_vs = normalize(cross(dy, dx));
 
+    // Texture2D test = bindless_textures[NonUniformResourceIndex(0)];
+    // float4 pixel = test.Sample(sampler_llce, float2(0.0, 0.0));
+
     GBuffer gbuffer = GBuffer::zero();
     gbuffer.albedo = base_color * ps.color.rgb;
     gbuffer.normal = normal_ws;
@@ -102,5 +106,6 @@ PsOut ps_main(PsIn ps) {
     psout.gbuffer = asfloat(gbuffer.pack().data);
     // store the geometric view space normal
     psout.geometric_normal = geometric_normal_vs * 0.5 + 0.5;
+    //psout.geometric_normal = pixel.xyz;
     return psout;
 }
