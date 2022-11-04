@@ -12,6 +12,8 @@ pub mod lazy;
 pub use project::ProjectFolder as ProjectFolder;
 use project::CUSTUM_MOUNT_POINT;
 
+use self::project::get_project_folder_path_direct;
+
 lazy_static! {
     pub(crate) static ref FILE_HOT_WATCHER: Mutex<Hotwatch> = Mutex::new(Hotwatch::new_with_custom_delay(Duration::from_millis(200)).unwrap());
 }
@@ -59,6 +61,7 @@ fn to_relative(path: PathBuf) -> anyhow::Result<PathBuf> {
 }
 
 /// Get the absolute path of ProjectFolder pf.
+/// This function will always assume that the project folder is exists.
 #[inline]
 pub fn get_project_folder_path_absolute(pf: ProjectFolder) -> anyhow::Result<PathBuf> {
     Ok(project::get_project_folder_path(&root_path()?, pf))
@@ -88,9 +91,9 @@ pub fn set_default_root_path() -> anyhow::Result<()> {
 
 /// Check if ProjectFolder pf exists, if not, create a empty folder.
 pub fn exist_or_create(pf: ProjectFolder) -> anyhow::Result<()> {
-    let folder_path = get_project_folder_path_absolute(pf)?;
-    if !folder_path.as_path().exists() {
-        std::fs::create_dir(folder_path)?;
+    let path = get_project_folder_path_direct(&root_path()?, pf);
+    if !path.is_dir() {
+        std::fs::create_dir(path)?;
     }
 
     Ok(())
@@ -98,7 +101,7 @@ pub fn exist_or_create(pf: ProjectFolder) -> anyhow::Result<()> {
 
 /// Check if a file exists.
 pub fn exist(file: &PathBuf, folder: ProjectFolder) -> anyhow::Result<bool> {
-    assert!(file.is_file());
+    assert!(!file.is_dir());
 
     let mut folder_path = get_project_folder_path_absolute(folder)?;
     folder_path.extend(file.iter());

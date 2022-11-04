@@ -1,7 +1,7 @@
 use std::{
     fs,
     io::{self, Read},
-    path::PathBuf,
+    path::PathBuf, sync::Arc,
 };
 
 use gltf::{Gltf, Document, buffer::Source as BufferSource, Error, image::Source as ImageSource, mesh::Mode, Material as GltfMaterial, texture::TextureTransform};
@@ -28,7 +28,7 @@ impl GltfMeshLoader {
 }
 
 impl AssetLoader for GltfMeshLoader {
-    fn load(&self) -> anyhow::Result<Box<dyn RawAsset>> {
+    fn load(&self) -> anyhow::Result<Arc<dyn RawAsset + Send + Sync>> {
         let dir = filesystem::get_project_folder_path_absolute(ProjectFolder::Assets)?;
         let path = dir.join(self.path.clone());
         assert!(path.is_file(), "Path may not exists or this path is not a file! {:?}", path);
@@ -50,19 +50,37 @@ impl AssetLoader for GltfMeshLoader {
 
         let raw_asset = load_gltf_default_scene(&document, &buffers, &images)?;
 
-        Ok(Box::new(raw_asset))
+        Ok(Arc::new(raw_asset))
+    }
+
+    fn get_load_uri(&self) -> PathBuf {
+        self.path.clone()
     }
 }
 
-enum LoadUriScheme {
-    #[allow(dead_code)]
-    Base64Data,
+enum LoadUriScheme<'a> {
+    Base64Data(Option<&'a str>, &'a str),
     Relative,
+    Unsupported
 }
 
 fn parse_uri(uri: &str) -> LoadUriScheme {
     if uri.contains(':') {
-        unimplemented!()
+        #[allow(clippy::manual_strip)]
+        #[allow(clippy::iter_nth_zero)]
+        if uri.starts_with("data:") {
+            let first_match = &uri["data:".len()..].split(";base64,").nth(0);
+            let second_match = &uri["data:".len()..].split(";base64,").nth(1);
+            if second_match.is_some() {
+                LoadUriScheme::Base64Data(Some(first_match.unwrap()), second_match.unwrap())
+            } else if first_match.is_some() {
+                LoadUriScheme::Base64Data(None, first_match.unwrap())
+            } else {
+                LoadUriScheme::Unsupported
+            }
+        } else {
+            unimplemented!()
+        }
     } else {
         LoadUriScheme::Relative
     }
@@ -70,10 +88,15 @@ fn parse_uri(uri: &str) -> LoadUriScheme {
 
 fn extract_uri(base_path: &PathBuf, uri: &str) -> anyhow::Result<Vec<u8>> {
     match parse_uri(uri) {
-        LoadUriScheme::Base64Data => unimplemented!(),
+        LoadUriScheme::Base64Data(_, base64_str) => {
+            base64::decode(base64_str).map_err(|err| err.into())
+        }
         LoadUriScheme::Relative => {
             let path = base_path.join(PathBuf::from(uri));
             read_file_all(&path)
+        }
+        LoadUriScheme::Unsupported => {
+            panic!("Unsupported uri!")
         }
     }
 }

@@ -65,6 +65,7 @@ impl RegisteredResource {
         self.access.get()
     }
 
+    #[inline]
     pub fn transition_to(&self, dst_access: AccessType) {
         self.access.set(dst_access);
     }

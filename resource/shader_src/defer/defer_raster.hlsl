@@ -12,7 +12,7 @@ struct {
     uint instance_index;
 } push_constants;
 
-[[vk::binding(0)]] StructuredBuffer<float3x4> instance_transforms_dyn; // dynamic read-only storage buffer
+[[vk::binding(0)]] StructuredBuffer<row_major float3x4> instance_transforms_dyn; // dynamic read-only storage buffer
 
 struct VsOut {
 	float4 position: SV_Position;
@@ -97,15 +97,22 @@ PsOut ps_main(PsIn ps) {
     // float4 pixel = test.Sample(sampler_llce, float2(0.0, 0.0));
 
     GBuffer gbuffer = GBuffer::zero();
-    gbuffer.albedo = base_color * ps.color.rgb;
+    //gbuffer.albedo = base_color * ps.color.rgb;
+    gbuffer.albedo = float3(1.0, 1.0, 1.0);
     gbuffer.normal = normal_ws;
-    gbuffer.metallic = mat.metallic;
-    gbuffer.roughness = mat.roughness;
+
+    // hack calculate roughness and metalness from instance_index
+    uint x = push_constants.instance_index / 5;
+    uint y = push_constants.instance_index % 5;
+
+    // gbuffer.metallic = mat.metallic;
+    // gbuffer.roughness = mat.roughness;
+    gbuffer.metalness = lerp(0.1, 1.0, x / 4.0);
+    gbuffer.roughness = lerp(0.1, 1.0, y / 4.0);
 
     PsOut psout;
     psout.gbuffer = asfloat(gbuffer.pack().data);
     // store the geometric view space normal
     psout.geometric_normal = geometric_normal_vs * 0.5 + 0.5;
-    //psout.geometric_normal = pixel.xyz;
     return psout;
 }

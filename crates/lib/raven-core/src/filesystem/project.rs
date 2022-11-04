@@ -113,6 +113,41 @@ fn get_project_folder_path_impl(root: &PathBuf, folder: ProjectFolder) -> PathBu
     }
 }
 
+fn get_project_folder_path_direct_impl(root: &PathBuf, folder: ProjectFolder) -> PathBuf {
+    match folder {
+        ProjectFolder::Root => root.to_owned(),
+        ProjectFolder::Log |
+        ProjectFolder::Assets |
+        ProjectFolder::Scenes |
+        ProjectFolder::ShaderSource |
+        ProjectFolder::ShaderBinary |
+        ProjectFolder::Template |
+        ProjectFolder::Vendor |
+        ProjectFolder::Baked => {
+            if let Some(path) = CUSTUM_MOUNT_POINT.lock().get_custom_mount_point(folder) {
+                path.to_owned()
+            } else {
+                match folder {
+                    ProjectFolder::Log => root.join("log"),
+                    ProjectFolder::Assets => root.join("assets"),
+                    ProjectFolder::Scenes => root.join("scenes"),
+                    ProjectFolder::ShaderSource => root.join("shader_src"),
+                    ProjectFolder::ShaderBinary => root.join("shader_bin"),
+                    ProjectFolder::Template => root.join("template"),
+                    ProjectFolder::Vendor => root.join("vendor"),
+                    ProjectFolder::Baked => root.join("baked"),
+                    _ => unreachable!(),
+                }
+            }
+        }
+        _ => panic!("Invalid project folder!"),
+    }
+}
+
 pub(super) fn get_project_folder_path(root: &PathBuf, folder: ProjectFolder) -> PathBuf {
     get_project_folder_path_impl(root, folder)
+}
+
+pub(super) fn get_project_folder_path_direct(root: &PathBuf, folder: ProjectFolder) -> PathBuf {
+    get_project_folder_path_direct_impl(root, folder)
 }

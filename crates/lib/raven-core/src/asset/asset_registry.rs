@@ -4,13 +4,14 @@ use std::marker::PhantomData;
 use once_cell::sync::Lazy;
 use parking_lot::RwLock;
 
-use super::{Asset, VacantAsset};
+use super::asset_manager::ASSETS_MMAP;
+use super::{Asset, VacantAsset, BakedAsset, Mesh, Texture};
 
 type RegisterBoxAssetType = Box<dyn Asset + Send + Sync>;
 
 const INVALID_ASSET_ID: u64 = u64::MAX;
 
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct AssetHandle {
     /// Unstable id depend on the register order of the asset.
     /// Only used for a handle to the asset registry, but should never be used as a global (in the disk) uuid.
@@ -138,6 +139,20 @@ impl RuntimeAssetRegistry {
     #[inline]
     pub fn get_asset(&self, handle: &AssetHandle) -> Option<&RegisterBoxAssetType> {
         self.assets.get(handle.id as usize)
+    }
+
+    #[inline]
+    pub fn get_baked_mesh_asset(&self, baked_asset: &BakedAsset) -> Mesh::FieldReader {
+        let asset_mmap = ASSETS_MMAP.lock();
+        let bytes: &[u8] = asset_mmap.get(&baked_asset.uri).unwrap();
+        Mesh::get_field_reader(bytes)
+    }
+
+    #[inline]
+    pub fn get_baked_texture_asset(&self, baked_asset: &BakedAsset) -> Texture::FieldReader {
+        let asset_mmap = ASSETS_MMAP.lock();
+        let bytes: &[u8] = asset_mmap.get(&baked_asset.uri).unwrap();
+        Texture::get_field_reader(bytes)
     }
 
     #[inline]

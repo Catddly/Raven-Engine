@@ -1,3 +1,5 @@
+mod asset_manager;
+
 pub mod loader;
 mod asset_process;
 pub mod asset_registry;
@@ -6,9 +8,12 @@ mod pack_unpack;
 mod util;
 mod error;
 
-pub use asset_process::AssetProcessor;
-pub use asset_baker::AssetBaker;
+// pub use asset_process::AssetProcessor;
+// pub use asset_baker::AssetBaker;
+pub use asset_manager::{AssetManager, AssetLoadDesc};
 
+use std::path::PathBuf;
+use std::sync::Arc;
 use std::{marker::PhantomData, fmt::Debug};
 
 use bytes::Bytes;
@@ -18,8 +23,12 @@ use crate::container::{TreeByteBuffer, TreeByteBufferNode};
 use crate::asset::asset_registry::{DiskAssetRef, AssetRef};
 use pack_unpack::*;
 
+use self::asset_registry::AssetHandle;
+use self::loader::extract_asset_type;
+
 pub enum AssetType {
     Vacant,
+    Baked,
     Mesh,
     Material,
     Texture,
@@ -29,6 +38,7 @@ impl Debug for AssetType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             AssetType::Vacant => write!(f, "Vacant Asset"),
+            AssetType::Baked => write!(f, "Baked Asset"),
             AssetType::Mesh => write!(f, "Mesh Asset"),
             AssetType::Material => write!(f, "Material Asset"),
             AssetType::Texture => write!(f, "Image Asset"),
@@ -67,6 +77,13 @@ pub trait RawAsset {
             _ => None,
         }
     }
+
+    fn as_baked(&self) -> Option<&BakedRawAsset> {
+        match self.asset_type() {
+            AssetType::Baked => Some(unsafe { self.as_any().downcast_ref_unchecked::<BakedRawAsset>() }),
+            _ => None,
+        }
+    }
 }
 
 pub trait Asset {
@@ -100,6 +117,13 @@ pub trait Asset {
             _ => None,
         }
     }
+
+    fn as_baked(&self) -> Option<&BakedAsset> {
+        match self.asset_type() {
+            AssetType::Baked => Some(unsafe { self.as_any().downcast_ref_unchecked::<BakedAsset>() }),
+            _ => None,
+        }
+    }
 }
 
 /// Vacant asset.
@@ -109,6 +133,54 @@ pub struct VacantAsset {}
 impl Asset for VacantAsset {
     fn asset_type(&self) -> AssetType {
         AssetType::Vacant
+    }
+
+    fn as_any(&self) -> &dyn UnsafeAny {
+        self
+    }
+}
+
+/// Baked asset.
+/// To be used to index data from mmap.
+pub struct BakedAsset {
+    uri: PathBuf,
+}
+
+impl BakedAsset {
+    pub fn origin_asset_type(&self) -> AssetType {
+        let ty = extract_asset_type(&self.uri);
+        match ty {
+            loader::LoadAssetType::Mesh(_) => AssetType::Mesh,
+            loader::LoadAssetType::Texture(_) => AssetType::Texture,
+            _ => unimplemented!()
+        }
+    }
+}
+
+impl Asset for BakedAsset {
+    fn asset_type(&self) -> AssetType {
+        AssetType::Baked
+    }
+
+    fn as_any(&self) -> &dyn UnsafeAny {
+        self
+    }
+}
+
+#[derive(Clone)]
+pub struct BakedRawAsset {
+    handle: AssetHandle,
+}
+
+impl BakedRawAsset {
+    pub fn get_asset_handle(&self) -> AssetHandle {
+        self.handle.clone()
+    }
+}
+
+impl RawAsset for BakedRawAsset {
+    fn asset_type(&self) -> AssetType {
+        AssetType::Baked
     }
 
     fn as_any(&self) -> &dyn UnsafeAny {

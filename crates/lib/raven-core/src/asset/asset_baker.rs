@@ -36,9 +36,16 @@ impl LazyWorker for AssetBaker {
 
         {
             let read_guard = registry.read();
-
+            
             let storage = read_guard.get_asset(&self.handle).ok_or(AssetPipelineError::BakeFailure)?;
             let ty = storage.asset_type();
+
+            // already baked! Just return and do nothing.
+            if let AssetType::Baked = ty {
+                return Ok(());
+            }
+
+            filesystem::exist_or_create(filesystem::ProjectFolder::Baked)?;
 
             let path = filesystem::get_project_folder_path_absolute(filesystem::ProjectFolder::Baked)?;
             let filename = PathBuf::from(&self.origin_res_path.file_name().unwrap());
@@ -49,7 +56,12 @@ impl LazyWorker for AssetBaker {
                     path.set_extension("mesh");
 
                     Self::bake_mesh_asset(&path, storage.as_mesh().unwrap(), &read_guard)?
-                },
+                }
+                AssetType::Texture => {
+                    path.set_extension("tex");
+                    
+                    Self::bake_texture_asset(&path, storage.as_texture().unwrap())?
+                }
                 _ => {
                     unimplemented!()
                 }

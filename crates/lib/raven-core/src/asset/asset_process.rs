@@ -1,6 +1,7 @@
 use std::hash::Hasher;
 use std::path::PathBuf;
 use std::marker::PhantomData;
+use std::sync::Arc;
 
 use image::DynamicImage;
 use image::imageops::FilterType;
@@ -12,16 +13,23 @@ use crate::math;
 
 use super::asset_registry::{AssetHandle, AssetRef};
 use super::error::AssetPipelineError;
-use super::{RawAsset, Texture, AssetType, Mesh, PackedVertex, Material, TextureSource};
+use super::{RawAsset, Texture, AssetType, Mesh, PackedVertex, Material, TextureSource, BakedRawAsset};
 
 /// Consume a raw asset and turn it into a AssetHandle which reference a storage asset.
+#[derive(Clone)]
 pub struct AssetProcessor {
     uri: PathBuf,
-    raw_asset: Box<dyn RawAsset>,
+    raw_asset: Arc<dyn RawAsset>,
+}
+
+impl std::hash::Hash for AssetProcessor {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.uri.hash(state)
+    }
 }
 
 impl AssetProcessor {
-    pub fn new(uri: impl Into<PathBuf>, raw_asset: Box<dyn RawAsset>) -> Self {
+    pub fn new(uri: impl Into<PathBuf>, raw_asset: Arc<dyn RawAsset>) -> Self {
         Self {
             uri: uri.into(),
             raw_asset,
@@ -38,6 +46,10 @@ impl AssetProcessor {
             AssetType::Texture => {
                 let raw_tex = self.raw_asset.as_texture().ok_or(AssetPipelineError::ProcessFailure)?.clone();
                 RawTextureProcess::new(raw_tex).into_lazy()
+            }
+            AssetType::Baked => {
+                let raw_baked = self.raw_asset.as_baked().ok_or(AssetPipelineError::ProcessFailure)?.clone();
+                RawBakedProcess::new(raw_baked).into_lazy()
             }
             _ => unimplemented!(),
         };
@@ -304,5 +316,33 @@ impl LazyWorker for RawMaterialProcess {
         asset_registry.write().update_asset(&mut self.handle, storage);
 
         Ok(self.handle)
+    }
+}
+
+#[derive(Clone)]
+struct RawBakedProcess {
+    raw: BakedRawAsset,
+}
+
+impl std::hash::Hash for RawBakedProcess {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.raw.handle.hash(state)
+    }
+}
+
+impl RawBakedProcess {
+    pub fn new(raw: BakedRawAsset) -> Self {
+        Self {
+            raw,
+        }
+    }
+}
+
+#[async_trait]
+impl LazyWorker for RawBakedProcess {
+    type Output = anyhow::Result<AssetHandle>;
+
+    async fn run(mut self, _cx: RunContext) -> Self::Output {
+        Ok(self.raw.handle)
     }
 }

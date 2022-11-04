@@ -1,9 +1,9 @@
-use std::{sync::Arc};
+use std::{sync::Arc, path::PathBuf, io::Read};
 
 use ash::vk;
 
 use glam::{Affine3A, Quat, Vec3};
-use raven_core::{asset::{asset_registry::{AssetHandle, get_runtime_asset_registry}}, utility};
+use raven_core::{asset::{asset_registry::{AssetHandle, get_runtime_asset_registry}, BakedAsset, AssetType, Mesh, PackedVertex, VecArrayQueryParam, Material}, utility, filesystem::{self, ProjectFolder}};
 use raven_rg::{RenderGraphBuilder, RgHandle, IntoPipelineDescriptorBindings, RenderGraphPassBinding, image_clear, create_engine_global_bindless_descriptor_set};
 use raven_rhi::{backend::{Device, ImageDesc, Image, BufferDesc, Buffer, renderpass, RenderPass, descriptor::update_descriptor_set_buffer, RasterPipelineDesc, PipelineShaderDesc, PipelineShaderStage, AccessType, ImageViewDesc, ImageSubresource}, Rhi, copy_engine::CopyEngine};
 
@@ -88,6 +88,18 @@ pub enum MeshShadingContext {
     ForwardPlus,
 }
 
+// Same in the asset::mod.rs
+#[repr(C)]
+#[derive(Copy, Clone)]
+struct UploadMaterial {
+    metallic          : f32,
+    roughness         : f32,
+    base_color        : [f32; 4],
+    emissive          : [f32; 3],
+    texture_mapping   : [u32; 4],
+    texture_transform : [[f32; 6]; 4],
+}
+
 impl MeshRenderer {
     pub fn new(rhi: &Rhi, scheme: MeshRasterScheme, resolution: [u32; 2]) -> Self {
         let renderpass = renderpass::create_render_pass(&rhi.device, 
@@ -156,15 +168,21 @@ impl MeshRenderer {
             &bindless_tex_sizes_buffer);
 
         // temporary hack
+        const INTERVAL: f32 = 2.5;
+
         let mut mesh_instances = Vec::new();
-        mesh_instances.push(MeshInstance {
-            transform: Affine3A::from_scale_rotation_translation(
-                Vec3::splat(1.0),
-                Quat::IDENTITY,
-                Vec3::splat(0.0)
-            ),
-            handle: MeshHandle { id: 0 },
-        });
+        for x in 0..5 {
+            for y in 0..5 {
+                mesh_instances.push(MeshInstance {
+                    transform: Affine3A::from_scale_rotation_translation(
+                        Vec3::splat(1.0),
+                        Quat::IDENTITY,
+                        Vec3::new(x as f32 * INTERVAL + -5.0, y as f32 * INTERVAL + -5.0, 0.0)
+                    ),
+                    handle: MeshHandle { id: 0 },
+                });
+            }
+        }
 
         Self {
             renderpass,
@@ -266,45 +284,19 @@ impl MeshRenderer {
     }
 
     pub fn add_asset_mesh(&mut self, handle: &Arc<AssetHandle>) -> MeshHandle {
-        // TODO: load the texture and material asset from handle.
+        // TODO: load the texture asset from handle.
         let registry = get_runtime_asset_registry();
-        
-        let mut id = u32::MAX;
         {
             let read_guard = registry.read(); 
 
             if let Some(asset) = read_guard.get_asset(&handle) {
                 if let Some(mesh_asset) = asset.as_mesh() {
-                    let curr_global_offset = self.current_draw_data_offset as u32;
-
                     let packed = mesh_asset.packed.as_slice();
                     let colors = mesh_asset.colors.as_slice();
                     let uvs = mesh_asset.uvs.as_slice();
                     let tangents = mesh_asset.tangents.as_slice();
                     let indices = mesh_asset.indices.as_slice();
                     let mat_ids = mesh_asset.material_ids.as_slice();
-
-                    // copy upload
-                    let mut copy_engine = CopyEngine::new();
-                    
-                    let packed_offset  = copy_engine.copy(&packed)   + curr_global_offset;
-                    let color_offset   = copy_engine.copy(&colors)   + curr_global_offset;
-                    let uv_offset      = copy_engine.copy(&uvs)      + curr_global_offset;
-                    let tangent_offset = copy_engine.copy(&tangents) + curr_global_offset;
-                    let index_offset   = copy_engine.copy(&indices)  + curr_global_offset;
-                    let mat_id_offset  = copy_engine.copy(&mat_ids)  + curr_global_offset;
-
-                    // Same in the asset::mod.rs
-                    #[repr(C)]
-                    #[derive(Copy, Clone)]
-                    struct UploadMaterial {
-                        metallic          : f32,
-                        roughness         : f32,
-                        base_color        : [f32; 4],
-                        emissive          : [f32; 3],
-                        texture_mapping   : [u32; 4],
-                        texture_transform : [[f32; 6]; 4],
-                    }
 
                     let mut upload_materials = Vec::new();
                     for mat_ref in mesh_asset.materials.iter() {
@@ -321,49 +313,106 @@ impl MeshRenderer {
 
                         upload_materials.push(upload);
                     }
-                    let mat_data_offset = copy_engine.copy(&upload_materials) + curr_global_offset;
 
-                    let totol_size_bytes = copy_engine.current_offset();
-                    copy_engine.upload(
-                        &self.device,
-                        &self.draw_data_buffer, 
-                        curr_global_offset
-                    ).expect("Failed to upload mesh data with copy engine!");
+                    return self.upload_gpu_mesh_data(packed, colors, uvs, tangents, indices, mat_ids, &upload_materials);
+                } else if let Some(baked) = asset.as_baked() {
+                    let field_reader = read_guard.get_baked_mesh_asset(baked);
 
-                    self.current_draw_data_offset += totol_size_bytes as u64;
+                    let packed = field_reader.packed();
+                    let colors = field_reader.colors();
+                    let uvs = field_reader.uvs();
+                    let tangents = field_reader.tangents();
+                    let indices = field_reader.indices();
+                    let mat_ids = field_reader.material_ids();
 
-                    let mesh_id = self.meshes.len();
+                    let mat_len = field_reader.materials(VecArrayQueryParam::length()).length();
+                    let mut upload_materials = Vec::with_capacity(mat_len);
+                    for idx in 0..mat_len {
+                        let material_ref = field_reader.materials(VecArrayQueryParam::Index(idx)).value();
+                        
+                        let folder = filesystem::get_project_folder_path_absolute(ProjectFolder::Baked).unwrap();
+                        let mat_path = folder.join(PathBuf::from(format!("{:8.8x}.mat", material_ref.uuid())));
+                        let mut file = std::fs::File::open(mat_path).unwrap();
 
-                    // upload mesh data
-                    let gpu_meshes = unsafe {
-                        let ptr = self.mesh_buffer.allocation.mapped_ptr().unwrap().as_ptr() as *mut GpuMesh;
-                        std::slice::from_raw_parts_mut(ptr, MAX_GPU_MESH_COUNT)
-                    };
-                    gpu_meshes[mesh_id] = GpuMesh {
-                        vertex_offset: packed_offset,
-                        color_offset,
-                        uv_offset,
-                        tangent_offset,
-                        index_offset,
-                        mat_id_offset,
-                        mat_data_offset,
-                    };
+                        let mut bytes = Vec::new();
+                        file.read_to_end(&mut bytes).expect("Failed to read mat baked data!");
 
-                    self.meshes.push(UploadedMesh {
-                        index_count: indices.len() as u32,
-                        index_buffer_offset: index_offset,
-                    });
+                        let mat_field_reader = Material::get_field_reader(&bytes);
 
-                    id = mesh_id as u32;
+                        let upload = UploadMaterial {
+                            metallic: mat_field_reader.metallic(),
+                            roughness: mat_field_reader.roughness(),
+                            base_color: mat_field_reader.base_color(),
+                            emissive: mat_field_reader.emissive(),
+                            texture_mapping: mat_field_reader.texture_mapping(),
+                            texture_transform: mat_field_reader.texture_transform(),
+                        };
+
+                        upload_materials.push(upload);
+                    }
+
+                    return self.upload_gpu_mesh_data(packed, colors, uvs, tangents, indices, mat_ids, &upload_materials);
                 } else {
                     panic!("Trying to add a non-mesh asset in add_asset_mesh()!");
                 }
             }
         };
 
-        assert_ne!(id, u32::MAX);
+        MeshHandle { id: u32::MAX }
+    }
+
+    fn upload_gpu_mesh_data(&mut self,
+        packed: &[PackedVertex], colors: &[[f32; 4]],
+        uvs: &[[f32; 2]], tangents: &[[f32; 4]],
+        indices: &[u32], mat_ids: &[u32],
+        upload_materials: &[UploadMaterial]
+    ) -> MeshHandle {
+        let curr_global_offset = self.current_draw_data_offset as u32;
+
+        // copy upload
+        let mut copy_engine = CopyEngine::new();
+        
+        let packed_offset  = copy_engine.copy(&packed)   + curr_global_offset;
+        let color_offset   = copy_engine.copy(&colors)   + curr_global_offset;
+        let uv_offset      = copy_engine.copy(&uvs)      + curr_global_offset;
+        let tangent_offset = copy_engine.copy(&tangents) + curr_global_offset;
+        let index_offset   = copy_engine.copy(&indices)  + curr_global_offset;
+        let mat_id_offset  = copy_engine.copy(&mat_ids)  + curr_global_offset;
+        let mat_data_offset = copy_engine.copy(&upload_materials) + curr_global_offset;
+
+        let totol_size_bytes = copy_engine.current_offset();
+        copy_engine.upload(
+            &self.device,
+            &self.draw_data_buffer, 
+            curr_global_offset
+        ).expect("Failed to upload mesh data with copy engine!");
+
+        self.current_draw_data_offset += totol_size_bytes as u64;
+
+        let mesh_id = self.meshes.len();
+
+        // upload mesh data
+        let gpu_meshes = unsafe {
+            let ptr = self.mesh_buffer.allocation.mapped_ptr().unwrap().as_ptr() as *mut GpuMesh;
+            std::slice::from_raw_parts_mut(ptr, MAX_GPU_MESH_COUNT)
+        };
+        gpu_meshes[mesh_id] = GpuMesh {
+            vertex_offset: packed_offset,
+            color_offset,
+            uv_offset,
+            tangent_offset,
+            index_offset,
+            mat_id_offset,
+            mat_data_offset,
+        };
+
+        self.meshes.push(UploadedMesh {
+            index_count: indices.len() as u32,
+            index_buffer_offset: index_offset,
+        });
+
         MeshHandle {
-            id,
+            id: mesh_id as _,
         }
     }
 
@@ -421,7 +470,7 @@ impl MeshRenderer {
                     pass.render(move |ctx| {
                         let xform_iter = mesh_instances.iter()
                             .map(|ins| {
-                                // transpose to column-major matrix to be used in shader
+                                // transpose to row-major matrix to be used in shader
                                 let transform = [
                                     ins.transform.x_axis.x,
                                     ins.transform.y_axis.x,

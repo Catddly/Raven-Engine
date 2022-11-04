@@ -14,7 +14,11 @@ use raven_core::{
         window::{Window, WindowBuilder},
         event::{WindowEvent, Event, VirtualKeyCode, ElementState}, 
         platform::run_return::EventLoopExtRunReturn
-    }, asset::{loader::{mesh_loader::GltfMeshLoader, AssetLoader, texture_loader::JpgTextureLoader}, AssetType, AssetProcessor}, concurrent::executor, render::camera::{self}, input::InputBinding, utility::as_byte_slice_values,
+    }, asset::{loader::{mesh_loader::GltfMeshLoader, AssetLoader, texture_loader::JpgTextureLoader}, AssetType, AssetManager, AssetLoadDesc},
+    concurrent::executor, 
+    render::camera::{self}, 
+    input::InputBinding, 
+    utility::as_byte_slice_values,
 };
 
 extern crate log as glog;
@@ -39,6 +43,8 @@ pub struct EngineContext<App> {
 
     rhi: Rhi,
     rg_executor: Executor,
+
+    asset_manager: AssetManager,
 
     app: App,
 }
@@ -123,6 +129,8 @@ pub fn init(app: impl user::App) -> anyhow::Result<EngineContext<impl user::App>
         rhi,
         rg_executor,
 
+        asset_manager: AssetManager::new(),
+
         app,
     })
 }
@@ -137,6 +145,8 @@ pub fn main_loop(engine_context: &mut EngineContext<impl user::App>) {
         rhi,
         rg_executor,
 
+        asset_manager,
+
         app,
     } = engine_context;
 
@@ -146,59 +156,20 @@ pub fn main_loop(engine_context: &mut EngineContext<impl user::App>) {
     // temporary
     let main_img_desc: backend::ImageDesc = backend::ImageDesc::new_2d(render_resolution, vk::Format::R8G8B8A8_UNORM);
 
-    let mut loaders = Vec::new();
-    let loader = Box::new(GltfMeshLoader::new(std::path::PathBuf::from("mesh/roughness_scale/scene.gltf"))) as Box<dyn AssetLoader>;
-    loaders.push(loader);
+    filesystem::exist_or_create(filesystem::ProjectFolder::Baked).unwrap();
 
-    let mut tex_loaders = Vec::new();
-    let right_loader = Box::new(JpgTextureLoader::new(std::path::PathBuf::from("texture/skybox/right.jpg"))) as Box<dyn AssetLoader>;
-    let left_loader = Box::new(JpgTextureLoader::new(std::path::PathBuf::from("texture/skybox/left.jpg"))) as Box<dyn AssetLoader>;
-    let up_loader = Box::new(JpgTextureLoader::new(std::path::PathBuf::from("texture/skybox/top.jpg"))) as Box<dyn AssetLoader>;
-    let down_loader = Box::new(JpgTextureLoader::new(std::path::PathBuf::from("texture/skybox/bottom.jpg"))) as Box<dyn AssetLoader>;
-    let front_loader = Box::new(JpgTextureLoader::new(std::path::PathBuf::from("texture/skybox/front.jpg"))) as Box<dyn AssetLoader>;
-    let back_loader = Box::new(JpgTextureLoader::new(std::path::PathBuf::from("texture/skybox/back.jpg"))) as Box<dyn AssetLoader>;
+    asset_manager.load_asset(AssetLoadDesc::load_mesh("mesh/sphere.gltf"));
+    asset_manager.load_asset(AssetLoadDesc::load_texture("texture/skybox/right.jpg"));
+    asset_manager.load_asset(AssetLoadDesc::load_texture("texture/skybox/left.jpg"));
+    asset_manager.load_asset(AssetLoadDesc::load_texture("texture/skybox/top.jpg"));
+    asset_manager.load_asset(AssetLoadDesc::load_texture("texture/skybox/bottom.jpg"));
+    asset_manager.load_asset(AssetLoadDesc::load_texture("texture/skybox/front.jpg"));
+    asset_manager.load_asset(AssetLoadDesc::load_texture("texture/skybox/back.jpg"));
 
-    tex_loaders.push(right_loader);
-    tex_loaders.push(left_loader);
-    tex_loaders.push(up_loader);
-    tex_loaders.push(down_loader);
-    tex_loaders.push(front_loader);
-    tex_loaders.push(back_loader);
+    let handles = asset_manager.dispatch_load_tasks().unwrap();
+    let tex_handles = handles.split_at(1).1;
 
-    let raw_meshs = loaders.into_iter()
-        .map(|l| l.load().unwrap())
-        .collect::<Vec<_>>();
-
-    let raw_texs = tex_loaders.into_iter()
-        .map(|l| l.load().unwrap())
-        .collect::<Vec<_>>();
-
-    let mut mesh_handles = Vec::new();
-    let mut tex_handles = Vec::new();
-
-    for mesh in raw_meshs {
-        let processor = AssetProcessor::new("mesh/roughness_scale/scene.gltf", mesh);
-
-        mesh_handles.push(processor.process().unwrap());
-    }
-
-    for tex in raw_texs {
-        let tex_processor = AssetProcessor::new("", tex);
-
-        tex_handles.push(tex_processor.process().unwrap());
-    }
-
-    let lazy_cache = LazyCache::create();
-
-    let tasks_iter = mesh_handles.iter()
-        .map(|handle| executor::spawn(handle.eval(&lazy_cache)));
-    let handles = smol::block_on(futures::future::try_join_all(tasks_iter)).unwrap();
-
-    let tex_tasks_iter = tex_handles.iter()
-        .map(|handle| executor::spawn(handle.eval(&lazy_cache)));
-    let tex_handles = smol::block_on(futures::future::try_join_all(tex_tasks_iter)).unwrap();
-
-    let sky_renderer = SkyRenderer::new_cubemap_split(rhi, &tex_handles);
+    let sky_renderer = SkyRenderer::new_cubemap_split(rhi, tex_handles);
     let mut ibl_renderer = IblRenderer::new(&rhi);
 
     let mut mesh_renderer = MeshRenderer::new(rhi, MeshRasterScheme::Deferred, render_resolution);
@@ -331,9 +302,12 @@ pub fn main_loop(engine_context: &mut EngineContext<impl user::App>) {
                         None
                     };
 
-                    if is_cubemap_exist {
-                        let convolved_cubemap = ibl_renderer.convolve_if_needed(rg, cubemap_handle.as_ref().unwrap());
-                    }
+                    let (convolved_cubemap, prefilter_cubemap, brdf) = if is_cubemap_exist {
+                        let (convolved, prefilter, brdf) = ibl_renderer.convolve_if_needed(rg, cubemap_handle.as_ref().unwrap());
+                        (Some(convolved), Some(prefilter), Some(brdf))
+                    } else {
+                        (None, None, None)
+                    };
                     
                     // mesh rasterize
                     let shading_context = mesh_renderer.prepare_rg(rg);
@@ -348,6 +322,21 @@ pub fn main_loop(engine_context: &mut EngineContext<impl user::App>) {
                             let depth_img_ref = pass.read(&gbuffer.depth, backend::AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer);
                             let cubemap_ref = if let Some(cubemap) = cubemap_handle {
                                 Some(pass.read(&cubemap, backend::AccessType::AnyShaderReadSampledImageOrUniformTexelBuffer))
+                            } else {
+                                None
+                            };
+                            let convolved_cubemap_ref = if let Some(convolved_cubemap) = convolved_cubemap {
+                                Some(pass.read(&convolved_cubemap, backend::AccessType::AnyShaderReadSampledImageOrUniformTexelBuffer))
+                            } else {
+                                None
+                            };
+                            let prefilter_cubemap_ref = if let Some(prefilter_cubemap) = prefilter_cubemap {
+                                Some(pass.read(&prefilter_cubemap, backend::AccessType::AnyShaderReadSampledImageOrUniformTexelBuffer))
+                            } else {
+                                None
+                            };
+                            let brdf_ref = if let Some(brdf) = brdf {
+                                Some(pass.read(&brdf, backend::AccessType::AnyShaderReadSampledImageOrUniformTexelBuffer))
                             } else {
                                 None
                             };
@@ -366,6 +355,9 @@ pub fn main_loop(engine_context: &mut EngineContext<impl user::App>) {
                                             depth_img_binding,
                                             main_img_ref.bind(),
                                             cubemap_ref.unwrap().bind(),
+                                            convolved_cubemap_ref.unwrap().bind(),
+                                            prefilter_cubemap_ref.unwrap().bind(),
+                                            brdf_ref.unwrap().bind(),
                                         ])
                                     )?
                                 } else {

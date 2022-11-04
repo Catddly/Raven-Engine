@@ -1,6 +1,7 @@
 use std::io::Read;
 use std::path::PathBuf;
 use std::fs::File;
+use std::sync::Arc;
 
 use bytes::Bytes;
 
@@ -31,7 +32,7 @@ impl JpgTextureLoader {
 }
 
 impl AssetLoader for JpgTextureLoader {
-    fn load(&self) -> anyhow::Result<Box<dyn crate::asset::RawAsset>> {
+    fn load(&self) -> anyhow::Result<Arc<dyn crate::asset::RawAsset + Send + Sync>> {
         let folder = filesystem::get_project_folder_path_absolute(ProjectFolder::Assets)?;
         let path = folder.join(self.path.clone());
         assert!(path.is_file());
@@ -47,7 +48,7 @@ impl AssetLoader for JpgTextureLoader {
         assert!(width.is_power_of_two());
         assert!(height.is_power_of_two());
 
-        Ok(Box::new(Texture::Raw {
+        Ok(Arc::new(Texture::Raw {
             source: TextureSource::Bytes(Bytes::from(image.into_rgba8().into_raw())),
             desc: TextureDesc {
                 extent: [width, height, 1],
@@ -56,5 +57,9 @@ impl AssetLoader for JpgTextureLoader {
                 use_mipmap: self.need_gen_mipmap,
             },
         }))
+    }
+
+    fn get_load_uri(&self) -> PathBuf {
+        self.path.clone()
     }
 }

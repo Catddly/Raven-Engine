@@ -1,4 +1,4 @@
-use std::{path::PathBuf};
+use std::{path::PathBuf, sync::Arc};
 
 use thiserror::Error;
 
@@ -26,7 +26,7 @@ pub enum LoadAssetSceneType {
 
 #[derive(Debug, Clone, Hash)]
 pub enum LoadAssetType {
-    Image(LoadAssetTextureType),
+    Texture(LoadAssetTextureType),
     Mesh(LoadAssetMeshType),
     Scene(LoadAssetSceneType)
 }
@@ -38,6 +38,20 @@ pub enum AssetLoaderError {
 
     #[error("Unsupported mesh type : {path:?}")]
     UnsupportedMeshType { path: PathBuf }
+}
+
+pub(crate) fn extract_asset_type(name: &PathBuf) -> LoadAssetType {
+    let try_mesh = extract_mesh_type(name);
+    if try_mesh.is_err() {
+        let try_tex = extract_texture_type(name);
+        if try_tex.is_err() {
+            panic!("Unsupported asset type!");
+        } else {
+            LoadAssetType::Texture(try_tex.unwrap())
+        }
+    } else {
+        LoadAssetType::Mesh(try_mesh.unwrap())
+    }
 }
 
 pub(crate) fn extract_mesh_type(name: &PathBuf) -> anyhow::Result<LoadAssetMeshType, AssetLoaderError> {
@@ -66,5 +80,7 @@ pub(crate) fn extract_texture_type(name: &PathBuf) -> anyhow::Result<LoadAssetTe
 }
 
 pub trait AssetLoader {
-    fn load(&self) -> anyhow::Result<Box<dyn RawAsset>>;
+    fn load(&self) -> anyhow::Result<Arc<dyn RawAsset + Send + Sync>>;
+
+    fn get_load_uri(&self) -> PathBuf;
 }

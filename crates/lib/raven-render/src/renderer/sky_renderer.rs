@@ -2,7 +2,7 @@ use std::{sync::Arc};
 
 use ash::vk;
 
-use raven_core::{asset::asset_registry::{AssetHandle, get_runtime_asset_registry}, utility::as_byte_slice_values};
+use raven_core::{asset::{asset_registry::{AssetHandle, get_runtime_asset_registry}, AssetType, VecArrayQueryParam}, utility::as_byte_slice_values};
 use raven_rg::{RenderGraphBuilder, RgHandle, IntoPipelineDescriptorBindings, RenderGraphPassBindable, RenderGraphPassBinding};
 use raven_rhi::{backend::{Image, ImageDesc, ImageSubresource, AccessType}, Rhi};
 
@@ -27,7 +27,7 @@ impl SkyRenderer {
         }
     }
 
-    pub fn new_cubemap_split(rhi: &Rhi, assets: &Vec<Arc<AssetHandle>>) -> Self {
+    pub fn new_cubemap_split(rhi: &Rhi, assets: &[Arc<AssetHandle>]) -> Self {
         assert_eq!(assets.len(), 6);
         let cubemap = Self::create_cubemap_split(rhi, assets);
 
@@ -38,7 +38,7 @@ impl SkyRenderer {
 
     // cubemap split sequence:
     // +X, -X, +Y, -Y, +Z, -Z
-    fn create_cubemap_split(rhi: &Rhi, assets: &Vec<Arc<AssetHandle>>) -> Arc<Image> {
+    fn create_cubemap_split(rhi: &Rhi, assets: &[Arc<AssetHandle>]) -> Arc<Image> {
         let device = &rhi.device;
         let asset_registry = get_runtime_asset_registry(); 
 
@@ -70,6 +70,40 @@ impl SkyRenderer {
                             .collect::<Vec<_>>();
                         upload_faces[face as usize] = uploads;
                     }
+                    else if let Some(baked) = asset.as_baked() {
+                        match baked.origin_asset_type() {
+                            AssetType::Texture => {
+                                let field_reader = read_guard.get_baked_texture_asset(baked);
+                                let tex_extent = field_reader.extent();
+
+                                if face != 0 {
+                                    assert_eq!(extent[0], tex_extent[0]);
+                                    assert_eq!(extent[1], tex_extent[1]);
+                                    assert_eq!(extent[2], tex_extent[2]);
+                                }
+                                // each face's extent must be the same
+                                extent = tex_extent;
+                                assert_eq!(extent[0], extent[1]); // width height must be the same
+
+                                let mips_len = field_reader.lod_groups(VecArrayQueryParam::length()).length();
+
+                                let uploads = (0..mips_len).into_iter()
+                                    .map(|idx| {
+                                        let mip = field_reader.lod_groups(VecArrayQueryParam::index(idx)).array();
+                                    
+                                        ImageSubresource {
+                                            data: mip,
+                                            // TODO: no hardcode
+                                            row_pitch_in_bytes: extent[0] * 4,
+                                            layer: face,
+                                        }
+                                    })
+                                    .collect::<Vec<_>>();
+                                upload_faces[face as usize] = uploads;
+                            }
+                            _ => unreachable!()
+                        }
+                    }
                 }
 
                 face += 1;
@@ -85,7 +119,7 @@ impl SkyRenderer {
             device.upload_image_data(&cubemap, &upload_faces,
                 AccessType::AnyShaderReadSampledImageOrUniformTexelBuffer)
                 .expect("Failed to upload image data during cubemap building!");
-
+            
             cubemap
         };
         

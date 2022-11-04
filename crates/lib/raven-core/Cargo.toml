@@ -40,6 +40,7 @@ futures = "0.3.0"
 
 # asset relative
 gltf = { version = "1.0.0", features = ["KHR_texture_transform", "KHR_materials_pbrSpecularGlossiness"] }
+base64 = "0.13.0"
 # libktx-rs = "0.3.0"
 
 # async
