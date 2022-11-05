@@ -6,10 +6,13 @@ use shader_prepper::{IncludeProvider};
 use bytes::Bytes;
 use failure::Error as FailureError;
 use anyhow::Context;
+use parking_lot::Mutex;
 
 use raven_core::filesystem::{self, lazy};
 
 use crate::backend::{ShaderBinary, ShaderSource, PipelineShaderStage, PipelineShaderDesc, ShaderBinaryStage};
+
+static SHADER_INCLUDER_SAFETY_MUTEX: Mutex<()> = Mutex::new(());
 
 struct ShaderIncludeProvider {
     ctx: RunContext,
@@ -32,11 +35,20 @@ impl IncludeProvider for ShaderIncludeProvider {
             folder.join(path).to_str().unwrap().to_owned()
         };
 
-        let bytes: Arc<Bytes> = smol::block_on(
-            lazy::LoadFile::new(PathBuf::from(file_path.clone()))
-                .into_lazy()
-                .eval(&self.ctx)
-        )?;
+        // TODO: bugs here.
+        // When multiple threads wants to call eval() on LoadFile, the eval will call unwrap() on a None value.
+        // See turbosloth::lazy::Lazy lazy.rs (line 490)
+        let bytes: Arc<Bytes> = {
+            // For now, we just forcing only one thread can load file.
+            let _guard = SHADER_INCLUDER_SAFETY_MUTEX.lock();
+
+            smol::block_on(
+                lazy::LoadFile::new(PathBuf::from(file_path.clone()))
+                    .unwrap_or_else(|err| panic!("Failed to load file: {:?} with {:?}", path, err))
+                    .into_lazy()
+                    .eval(&self.ctx)
+            )?
+        };
 
         Ok((String::from_utf8(bytes.to_vec())?, file_path))
     }
@@ -88,7 +100,7 @@ impl LazyWorker for CompileShader {
             if filesystem::exist(&spv_name, filesystem::ProjectFolder::ShaderBinary)? {
                 // just load the compiled spv.
                 // TODO: notice that this can be the old version of current shader, need to cache the file version.
-                let spirv = lazy::LoadFile::new(self.source.clone()).run(ctx).await?;
+                let spirv = lazy::LoadFile::new(self.source.clone())?.run(ctx).await?;
 
                 let name = PathBuf::from(spv_name);
                 return Ok(ShaderBinary { path: Some(name), spirv });
@@ -97,7 +109,7 @@ impl LazyWorker for CompileShader {
 
         match ext.as_str() {
             "spv" => {
-                let spirv = lazy::LoadFile::new(self.source.clone()).run(ctx.clone()).await?;
+                let spirv = lazy::LoadFile::new(self.source.clone())?.run(ctx.clone()).await?;
 
                 // store a copy in the ProjectFolder::ShaderBinary
                 lazy::StoreFile::new(spirv.clone(), filesystem::ProjectFolder::ShaderBinary, spv_name.clone()).run(ctx).await?;
@@ -106,15 +118,19 @@ impl LazyWorker for CompileShader {
             }
             "glsl" => unimplemented!(),
             "hlsl" => {
+                
                 let file_name = PathBuf::from(self.source.to_str().unwrap().to_owned());
                 let mut path = filesystem::get_project_folder_path_absolute(filesystem::ProjectFolder::ShaderSource)?;
                 path.extend(file_name.iter());
+                
+                let source = {
+                    shader_prepper::process_file(
+                        &path.to_string_lossy(),
+                        &mut ShaderIncludeProvider { ctx },
+                        String::new(),
+                    )
+                };
 
-                let source = shader_prepper::process_file(
-                    &path.to_string_lossy(),
-                    &mut ShaderIncludeProvider { ctx },
-                    String::new(),
-                );
                 let source = source
                     .map_err(|err| anyhow::anyhow!("{}", err))
                     .with_context(|| format!("shader path: {:?}", self.source))?;
@@ -127,6 +143,7 @@ impl LazyWorker for CompileShader {
                 let spirv = compile_shader_hlsl(&name, &source_text, &self.entry, &target_profile)?;
 
                 let name = PathBuf::from(name + ".spv");
+                
                 Ok(ShaderBinary { path: Some(name), spirv })
             }
             _ => anyhow::bail!("Unrecognized shader file extension: {}", ext),
@@ -254,7 +271,7 @@ fn compile_shader_hlsl(
             "-WX",  // warnings as errors
             "-Ges", // strict mode
         ],
-        // TODO: add shader macro defines control to macro
+        // TODO: add shader macro defines controls
         &[],
     )
     .map_err(|err| anyhow::anyhow!("{}", err))?;

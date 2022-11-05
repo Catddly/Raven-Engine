@@ -13,7 +13,6 @@ mod error;
 pub use asset_manager::{AssetManager, AssetLoadDesc};
 
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::{marker::PhantomData, fmt::Debug};
 
 use bytes::Bytes;

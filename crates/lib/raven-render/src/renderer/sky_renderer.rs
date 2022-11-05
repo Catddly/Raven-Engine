@@ -2,7 +2,7 @@ use std::{sync::Arc};
 
 use ash::vk;
 
-use raven_core::{asset::{asset_registry::{AssetHandle, get_runtime_asset_registry}, AssetType, VecArrayQueryParam}, utility::as_byte_slice_values};
+use raven_core::{asset::{asset_registry::{AssetHandle, get_runtime_asset_registry}, AssetType, VecArrayQueryParam}};
 use raven_rg::{RenderGraphBuilder, RgHandle, IntoPipelineDescriptorBindings, RenderGraphPassBindable, RenderGraphPassBinding};
 use raven_rhi::{backend::{Image, ImageDesc, ImageSubresource, AccessType}, Rhi};
 
@@ -19,13 +19,13 @@ impl SkyRenderer {
         }
     }
 
-    pub fn new_cubemap(rhi: &Rhi, asset: &Arc<AssetHandle>) -> Self {
-        unimplemented!("Cubemap");
+    // pub fn new_cubemap(rhi: &Rhi, asset: &Arc<AssetHandle>) -> Self {
+    //     unimplemented!("Cubemap");
 
-        Self {
-            cubemap: None,
-        }
-    }
+    //     Self {
+    //         cubemap: None,
+    //     }
+    // }
 
     pub fn new_cubemap_split(rhi: &Rhi, assets: &[Arc<AssetHandle>]) -> Self {
         assert_eq!(assets.len(), 6);

@@ -5,7 +5,6 @@ use std::{collections::VecDeque};
 
 use ash::vk;
 use glam::{Vec3, Quat};
-use turbosloth::*;
 
 use raven_core::{
     winit::{
@@ -14,8 +13,7 @@ use raven_core::{
         window::{Window, WindowBuilder},
         event::{WindowEvent, Event, VirtualKeyCode, ElementState}, 
         platform::run_return::EventLoopExtRunReturn
-    }, asset::{loader::{mesh_loader::GltfMeshLoader, AssetLoader, texture_loader::JpgTextureLoader}, AssetType, AssetManager, AssetLoadDesc},
-    concurrent::executor, 
+    }, asset::{AssetManager, AssetLoadDesc}, 
     render::camera::{self}, 
     input::InputBinding, 
     utility::as_byte_slice_values,
@@ -158,13 +156,13 @@ pub fn main_loop(engine_context: &mut EngineContext<impl user::App>) {
 
     filesystem::exist_or_create(filesystem::ProjectFolder::Baked).unwrap();
 
-    asset_manager.load_asset(AssetLoadDesc::load_mesh("mesh/sphere.gltf"));
-    asset_manager.load_asset(AssetLoadDesc::load_texture("texture/skybox/right.jpg"));
-    asset_manager.load_asset(AssetLoadDesc::load_texture("texture/skybox/left.jpg"));
-    asset_manager.load_asset(AssetLoadDesc::load_texture("texture/skybox/top.jpg"));
-    asset_manager.load_asset(AssetLoadDesc::load_texture("texture/skybox/bottom.jpg"));
-    asset_manager.load_asset(AssetLoadDesc::load_texture("texture/skybox/front.jpg"));
-    asset_manager.load_asset(AssetLoadDesc::load_texture("texture/skybox/back.jpg"));
+    asset_manager.load_asset(AssetLoadDesc::load_mesh("mesh/sphere.gltf")).unwrap();
+    asset_manager.load_asset(AssetLoadDesc::load_texture("texture/skybox/right.jpg")).unwrap();
+    asset_manager.load_asset(AssetLoadDesc::load_texture("texture/skybox/left.jpg")).unwrap();
+    asset_manager.load_asset(AssetLoadDesc::load_texture("texture/skybox/top.jpg")).unwrap();
+    asset_manager.load_asset(AssetLoadDesc::load_texture("texture/skybox/bottom.jpg")).unwrap();
+    asset_manager.load_asset(AssetLoadDesc::load_texture("texture/skybox/front.jpg")).unwrap();
+    asset_manager.load_asset(AssetLoadDesc::load_texture("texture/skybox/back.jpg")).unwrap();
 
     let handles = asset_manager.dispatch_load_tasks().unwrap();
     let tex_handles = handles.split_at(1).1;

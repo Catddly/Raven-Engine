@@ -14,10 +14,12 @@ pub struct LoadFile {
 }
 
 impl LoadFile {
-    pub fn new(path: PathBuf) -> Self {
-        Self {
+    pub fn new(path: PathBuf) -> anyhow::Result<Self> {
+        std::path::Path::try_exists(&path)?;
+
+        Ok(Self {
             path,
-        }
+        })
     }
 }
 
@@ -31,7 +33,7 @@ impl LazyWorker for LoadFile {
         FILE_HOT_WATCHER
             .lock()
             .watch(self.path.clone(), move |event| {
-                if matches!(event, hotwatch::Event::Write(_) | hotwatch::Event::NoticeWrite(_)) {
+                if matches!(event, hotwatch::Event::Write(_)) {
                     // The period between LoadFile begin to run on another thread and loading from the file,
                     // the file might be changed by someone accidentally.
                     // When this happened, we need to invalidate this loading operation, and start a new one.
@@ -45,7 +47,7 @@ impl LazyWorker for LoadFile {
         let mut buffer = Vec::new();
         std::io::Read::read_to_end(&mut File::open(&self.path)?, &mut buffer)
             .with_context(|| format!("Failed to read file {:?}", self.path))?;
-
+            
         Ok(Bytes::from(buffer))
     }
 }

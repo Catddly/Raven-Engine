@@ -3,7 +3,7 @@ use std::{sync::Arc, path::PathBuf, io::Read};
 use ash::vk;
 
 use glam::{Affine3A, Quat, Vec3};
-use raven_core::{asset::{asset_registry::{AssetHandle, get_runtime_asset_registry}, BakedAsset, AssetType, Mesh, PackedVertex, VecArrayQueryParam, Material}, utility, filesystem::{self, ProjectFolder}};
+use raven_core::{asset::{asset_registry::{AssetHandle, get_runtime_asset_registry}, PackedVertex, VecArrayQueryParam, Material}, utility, filesystem::{self, ProjectFolder}};
 use raven_rg::{RenderGraphBuilder, RgHandle, IntoPipelineDescriptorBindings, RenderGraphPassBinding, image_clear, create_engine_global_bindless_descriptor_set};
 use raven_rhi::{backend::{Device, ImageDesc, Image, BufferDesc, Buffer, renderpass, RenderPass, descriptor::update_descriptor_set_buffer, RasterPipelineDesc, PipelineShaderDesc, PipelineShaderStage, AccessType, ImageViewDesc, ImageSubresource}, Rhi, copy_engine::CopyEngine};
 

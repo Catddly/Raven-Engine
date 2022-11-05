@@ -1,20 +1,20 @@
-use std::{path::PathBuf, ops::{Range}, sync::Arc};
+use std::{path::PathBuf, sync::Arc};
 use std::collections::HashMap;
 
 use parking_lot::Mutex;
 use turbosloth::*;
 use memmap2::{Mmap, MmapOptions};
-use unsafe_any::UnsafeAny;
 
-use crate::{concurrent::executor, filesystem::{self, ProjectFolder, lazy::LoadFile}};
+use crate::{concurrent::executor, filesystem::{self, ProjectFolder}};
 
 
+use super::error::AssetPipelineError;
 use super::{
     loader::{
         LoadAssetType, extract_mesh_type, extract_texture_type, 
         AssetLoader, LoadAssetMeshType, mesh_loader::GltfMeshLoader, LoadAssetTextureType, texture_loader::JpgTextureLoader, extract_asset_type
     }, 
-    error::AssetPipelineError, RawAsset, asset_registry::{AssetHandle, get_runtime_asset_registry}, asset_process::AssetProcessor, asset_baker::AssetBaker, AssetType, Texture, Mesh, BakedAsset, BakedRawAsset
+    RawAsset, asset_registry::{AssetHandle, get_runtime_asset_registry}, asset_process::AssetProcessor, asset_baker::AssetBaker, BakedAsset, BakedRawAsset
 };
 
 lazy_static::lazy_static! {
@@ -30,16 +30,9 @@ impl From<PathBuf> for AssetPipelineKey {
     }
 }
 
-enum LoadGroup {
-    Single(usize),
-    Batch(Range<usize>),
-}
-
-pub struct LoadGroupHandle(usize);
-
 pub struct AssetManager {
     loaders: Mutex<Vec<Arc<dyn AssetLoader + Send + Sync>>>,
-    loader_groups: Mutex<Vec<LoadGroup>>,
+    //loader_groups: Mutex<Vec<LoadGroup>>,
 
     lazy_cache: Arc<LazyCache>,
 }
@@ -83,19 +76,19 @@ impl AssetManager {
     pub fn new() -> Self {
         Self {
             loaders: Mutex::new(Vec::new()),
-            loader_groups: Mutex::new(Vec::new()),
+            //loader_groups: Mutex::new(Vec::new()),
 
             lazy_cache: LazyCache::create(),
         }
     }
 
-    pub fn load_asset(&self, load_desc: AssetLoadDesc) {
+    pub fn load_asset(&self, load_desc: AssetLoadDesc) -> anyhow::Result<()> {
         let is_baked = self.is_baked(&load_desc.uri);
         if let Some(baked) = is_baked {
             let file = std::fs::File::open(baked.clone()).expect("Failed to open the baked file path!");
             let mmap = unsafe {
-                MmapOptions::new().map(&file).unwrap_or_else(|err| panic!("Failed to mmap {:?} with {:?}", baked, err))
-            };
+                MmapOptions::new().map(&file).map_err(|err| AssetPipelineError::LoadFailure { err })
+            }?;
 
             // use origin uri here
             ASSETS_MMAP.lock().entry(load_desc.uri.clone()).or_insert_with(|| mmap);
@@ -107,22 +100,19 @@ impl AssetManager {
             let mut loaders = self.loaders.lock();
             let AssetLoadDesc { uri, load_ty: _ } = load_desc;
 
-            let offset = loaders.len();
-
             // use origin uri here
             loaders.push(Arc::new(BakedAssetLoader { handle, uri }));
 
-            let mut loader_groups = self.loader_groups.lock();
-            let _handle = LoadGroupHandle(loader_groups.len());
-            loader_groups.push(LoadGroup::Single(offset));
+            // let mut loader_groups = self.loader_groups.lock();
+            // let _handle = LoadGroupHandle(loader_groups.len());
+            // loader_groups.push(LoadGroup::Single(offset));
 
-            return;
+            return Ok(());
         }
 
         let mut loaders = self.loaders.lock();
         let AssetLoadDesc { uri, load_ty } = load_desc;
 
-        let offset = loaders.len();
         match load_ty {
             LoadAssetType::Mesh(mesh_ty) => {
                 match mesh_ty {
@@ -146,10 +136,7 @@ impl AssetManager {
             _ => unimplemented!()
         }
 
-        let mut loader_groups = self.loader_groups.lock();
-        let _handle = LoadGroupHandle(loader_groups.len());
-        loader_groups.push(LoadGroup::Single(offset));
-        //handle
+        Ok(())
     }
 
     pub fn dispatch_load_tasks(&self) -> anyhow::Result<Vec<Arc<AssetHandle>>> {
