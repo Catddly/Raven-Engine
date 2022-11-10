@@ -8,11 +8,13 @@ use byte_slice_cast::AsSliceOf;
 use super::{RenderPass, ShaderSource, Device, ShaderBinaryStage, RHIError, descriptor::{self, PipelineSetLayouts}, PipelineShaderStage, ShaderBinary, constants};
 use super::descriptor::PipelineSetBindings;
 
+pub type PipelineSetLayoutInfo = BTreeMap<u32, vk::DescriptorType>;
+
 #[derive(Debug)]
 pub struct CommonPipeline {
     pub pipeline_layout: vk::PipelineLayout,
     pub pipeline: vk::Pipeline,
-    pub set_layout_infos: Vec<BTreeMap<u32, vk::DescriptorType>>,
+    pub set_layout_infos: Vec<PipelineSetLayoutInfo>,
     pub descriptor_pool_sizes: Vec<vk::DescriptorPoolSize>,
     pub descriptor_set_layouts: Vec<vk::DescriptorSetLayout>,
     pub pipeline_bind_point: vk::PipelineBindPoint,

@@ -2,9 +2,12 @@ use std::sync::Arc;
 
 use ash::vk;
 
-use raven_core::utility::as_byte_slice_values;
+use raven_core::{utility::as_byte_slice_values, math::max_mipmap_level};
 use raven_rg::{RenderGraphBuilder, RgHandle, RenderGraphPassBindable, IntoPipelineDescriptorBindings};
 use raven_rhi::{backend::{Image, AccessType, ImageDesc}, Rhi};
+
+const CONVOLVED_CUBEMAP_RESOLUTION: usize = 64;
+const PREFILTER_CUBEMAP_RESOLUTION: usize = 512;
 
 pub struct IblRenderer {
     convolved_cubemap: Arc<Image>,
@@ -15,11 +18,13 @@ pub struct IblRenderer {
 
 impl IblRenderer {
     pub fn new(rhi: &Rhi) -> Self {
-        let convolved = rhi.device.create_image(ImageDesc::new_cube(64, vk::Format::R8G8B8A8_UNORM)
+        let convolved = rhi.device.create_image(ImageDesc::new_cube(CONVOLVED_CUBEMAP_RESOLUTION as _, vk::Format::R16G16B16A16_SFLOAT)
+            .mipmap_level(max_mipmap_level(CONVOLVED_CUBEMAP_RESOLUTION as _, CONVOLVED_CUBEMAP_RESOLUTION as _))
             .usage_flags(vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::STORAGE), None)
             .expect("Failed to create convolved cubamap!");
 
-        let prefilter = rhi.device.create_image(ImageDesc::new_cube(512, vk::Format::R16G16B16A16_SFLOAT)
+        let prefilter = rhi.device.create_image(ImageDesc::new_cube(PREFILTER_CUBEMAP_RESOLUTION as _, vk::Format::R16G16B16A16_SFLOAT)
+            .mipmap_level(max_mipmap_level(PREFILTER_CUBEMAP_RESOLUTION as _, PREFILTER_CUBEMAP_RESOLUTION as _))
             .usage_flags(vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::STORAGE), None)
             .expect("Failed to create prefilter cubamap!");
 
@@ -53,61 +58,76 @@ impl IblRenderer {
         if self.need_convolve {
             {
                 let mut pass = rg.add_pass("convolve cubemap");
-                let pipeline = pass.register_compute_pipeline("pbr/ibl/convolve_cubemap.hlsl");
+                let pipeline = pass.register_compute_pipeline("pbr/ibl/ibl_diffuse.hlsl");
     
                 let cubemap_ref = pass.read(cubemap, AccessType::AnyShaderReadSampledImageOrUniformTexelBuffer);
                 let convolve_cubemap_ref = pass.write(&mut convolve_cubemap, AccessType::ComputeShaderWrite);
     
+                let cubemap_extent = cubemap.desc().extent;
                 pass.render(move |ctx| {
-                    let mut convolve_cubemap_binding = convolve_cubemap_ref.bind();
-                    convolve_cubemap_binding.with_image_view(vk::ImageViewType::TYPE_2D_ARRAY);
+                    let mip_level = max_mipmap_level(CONVOLVED_CUBEMAP_RESOLUTION as _, CONVOLVED_CUBEMAP_RESOLUTION as _);
+                    let bound_pipeline = ctx.bind_compute_pipeline(pipeline.into_bindings())?;
+             
+                    for level in 0..mip_level {
+                        let mut cubemap_binding = cubemap_ref.bind();
+                        cubemap_binding.with_image_view(vk::ImageViewType::TYPE_2D_ARRAY);
+
+                        let mut convolve_cubemap_binding = convolve_cubemap_ref.bind();
+                        convolve_cubemap_binding.with_image_view(vk::ImageViewType::TYPE_2D_ARRAY);
+                        convolve_cubemap_binding.with_base_mipmap_level(level);
+
+                        bound_pipeline.rebind(0, &[
+                            cubemap_binding, convolve_cubemap_binding
+                        ])?;
+
+                        let convolved_res = (CONVOLVED_CUBEMAP_RESOLUTION >> level).max(1) as u32;
     
-                    let bound_pipeline = ctx.bind_compute_pipeline(pipeline.into_bindings()
-                        .descriptor_set(0, &[
-                            cubemap_ref.bind(),
-                            convolve_cubemap_binding
-                        ])
-                    )?;
-    
-                    let push_constants = [64, 64];
-                    bound_pipeline.push_constants(vk::ShaderStageFlags::COMPUTE, 0, as_byte_slice_values(&push_constants));
-    
-                    bound_pipeline.dispatch([64, 64, 6]);
-    
+                        let push_constants = [cubemap_extent[0], convolved_res];
+                        bound_pipeline.push_constants(vk::ShaderStageFlags::COMPUTE, 0, as_byte_slice_values(&push_constants));
+        
+                        bound_pipeline.dispatch([convolved_res.max(8), convolved_res.max(8), 6]);
+                    }
+                    
                     Ok(())
                 });
             }
 
             {
                 let mut pass = rg.add_pass("prefilter cubemap");
-                let pipeline = pass.register_compute_pipeline("pbr/ibl/prefilter_cubemap.hlsl");
+                let pipeline = pass.register_compute_pipeline("pbr/ibl/ibl_specular_light.hlsl");
     
                 let cubemap_ref = pass.read(cubemap, AccessType::AnyShaderReadSampledImageOrUniformTexelBuffer);
                 let prefilter_cubemap_ref = pass.write(&mut prefilter_cubemap, AccessType::ComputeShaderWrite);
     
                 pass.render(move |ctx| {
-                    let mut prefilter_cubemap_binding = prefilter_cubemap_ref.bind();
-                    prefilter_cubemap_binding.with_image_view(vk::ImageViewType::TYPE_2D_ARRAY);
+                    let mip_level = max_mipmap_level(PREFILTER_CUBEMAP_RESOLUTION as _, PREFILTER_CUBEMAP_RESOLUTION as _);
+                    let bound_pipeline = ctx.bind_compute_pipeline(pipeline.into_bindings())?;
     
-                    let bound_pipeline = ctx.bind_compute_pipeline(pipeline.into_bindings()
-                        .descriptor_set(0, &[
-                            cubemap_ref.bind(),
-                            prefilter_cubemap_binding
-                        ])
-                    )?;
+                    for level in 0..mip_level {
+                        let mut prefilter_cubemap_binding = prefilter_cubemap_ref.bind();
+                        prefilter_cubemap_binding.with_image_view(vk::ImageViewType::TYPE_2D_ARRAY);
+                        prefilter_cubemap_binding.with_base_mipmap_level(level);
+
+                        bound_pipeline.rebind(0, &[
+                            cubemap_ref.bind(), prefilter_cubemap_binding
+                        ])?;
+
+                        let convolved_res = (PREFILTER_CUBEMAP_RESOLUTION >> level).max(1) as u32;
     
-                    let push_constants = [512, 512];
-                    bound_pipeline.push_constants(vk::ShaderStageFlags::COMPUTE, 0, as_byte_slice_values(&push_constants));
-    
-                    bound_pipeline.dispatch([512, 512, 6]);
-    
+                        // TODO: bug found! When using three u32 value, the cmd_dispatch will crash
+                        let push_constants = [PREFILTER_CUBEMAP_RESOLUTION as u32, convolved_res];
+                        bound_pipeline.push_constants(vk::ShaderStageFlags::COMPUTE, 0, as_byte_slice_values(&push_constants));
+        
+                        bound_pipeline.dispatch([convolved_res.max(8), convolved_res.max(8), 6]);
+                    }
+
                     Ok(())
                 });
             }
 
             {
                 let mut pass = rg.add_pass("brdf lut");
-                let pipeline = pass.register_compute_pipeline("pbr/ibl/generate_brdf_lut.hlsl");
+                let pipeline = pass.register_compute_pipeline("pbr/ibl/ibl_specular_brdf.hlsl");
     
                 let brdf_ref = pass.write(&mut brdf_lut, AccessType::ComputeShaderWrite);
     

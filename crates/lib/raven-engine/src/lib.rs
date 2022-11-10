@@ -3,8 +3,7 @@ pub mod prelude;
 
 use std::{collections::VecDeque};
 
-use ash::vk;
-use glam::{Vec3, Quat};
+use glam::{Vec3, Quat, Affine3A};
 
 use raven_core::{
     winit::{
@@ -16,7 +15,6 @@ use raven_core::{
     }, asset::{AssetManager, AssetLoadDesc}, 
     render::camera::{self}, 
     input::InputBinding, 
-    utility::as_byte_slice_values,
 };
 
 extern crate log as glog;
@@ -26,7 +24,7 @@ use raven_core::log;
 use raven_core::console;
 use raven_core::input::{InputManager, KeyCode, MouseButton};
 use raven_core::filesystem::{self, ProjectFolder};
-use raven_render::{MeshRenderer, MeshRasterScheme, MeshShadingContext, SkyRenderer, IblRenderer};
+use raven_render::{WorldRenderer};
 use raven_rhi::{RHIConfig, Rhi, backend};
 use raven_rg::{Executor, IntoPipelineDescriptorBindings, RenderGraphPassBindable, DrawFrameContext};
 
@@ -41,6 +39,7 @@ pub struct EngineContext<App> {
 
     rhi: Rhi,
     rg_executor: Executor,
+    renderer: WorldRenderer,
 
     asset_manager: AssetManager,
 
@@ -105,6 +104,9 @@ pub fn init(app: impl user::App) -> anyhow::Result<EngineContext<impl user::App>
         .build(&event_loop)
         .expect("Failed to create a window!");
 
+    let render_resolution = main_window.inner_size();
+    let render_resolution = [render_resolution.width, render_resolution.height];
+
     // create render device
     let rhi_config = RHIConfig {
         enable_debug: true,
@@ -114,6 +116,7 @@ pub fn init(app: impl user::App) -> anyhow::Result<EngineContext<impl user::App>
     let rhi = Rhi::new(rhi_config, &main_window)?;
 
     let rg_executor = Executor::new(&rhi)?;
+    let renderer = WorldRenderer::new(&rhi, render_resolution);
 
     let mut app = app;
     app.init()?;
@@ -126,6 +129,7 @@ pub fn init(app: impl user::App) -> anyhow::Result<EngineContext<impl user::App>
 
         rhi,
         rg_executor,
+        renderer,
 
         asset_manager: AssetManager::new(),
 
@@ -137,26 +141,19 @@ pub fn init(app: impl user::App) -> anyhow::Result<EngineContext<impl user::App>
 pub fn main_loop(engine_context: &mut EngineContext<impl user::App>) {
     let EngineContext { 
         event_loop,
-        main_window,
+        main_window: _,
         input_manager,
         
         rhi,
         rg_executor,
+        renderer,
 
         asset_manager,
 
         app,
     } = engine_context;
 
-    let render_resolution = main_window.inner_size();
-    let render_resolution = [render_resolution.width, render_resolution.height];
-
-    // temporary
-    let main_img_desc: backend::ImageDesc = backend::ImageDesc::new_2d(render_resolution, vk::Format::R8G8B8A8_UNORM);
-
-    filesystem::exist_or_create(filesystem::ProjectFolder::Baked).unwrap();
-
-    asset_manager.load_asset(AssetLoadDesc::load_mesh("mesh/sphere.gltf")).unwrap();
+    asset_manager.load_asset(AssetLoadDesc::load_mesh("mesh/cornell_box/scene.gltf")).unwrap();
     asset_manager.load_asset(AssetLoadDesc::load_texture("texture/skybox/right.jpg")).unwrap();
     asset_manager.load_asset(AssetLoadDesc::load_texture("texture/skybox/left.jpg")).unwrap();
     asset_manager.load_asset(AssetLoadDesc::load_texture("texture/skybox/top.jpg")).unwrap();
@@ -167,22 +164,21 @@ pub fn main_loop(engine_context: &mut EngineContext<impl user::App>) {
     let handles = asset_manager.dispatch_load_tasks().unwrap();
     let tex_handles = handles.split_at(1).1;
 
-    let sky_renderer = SkyRenderer::new_cubemap_split(rhi, tex_handles);
-    let mut ibl_renderer = IblRenderer::new(&rhi);
+    renderer.add_cubemap_split(&rhi, tex_handles);
+    let mesh_handle = renderer.add_mesh(&handles[0]);
 
-    let mut mesh_renderer = MeshRenderer::new(rhi, MeshRasterScheme::Deferred, render_resolution);
-    mesh_renderer.add_asset_mesh(&handles[0]);
+    let xform = Affine3A::from_scale_rotation_translation(
+        Vec3::splat(1.5),
+        Quat::from_rotation_y(-90.0_f32.to_radians()), 
+        Vec3::splat(0.0)
+    );
+    let _instance = renderer.add_mesh_instance(xform, mesh_handle);
 
+    let resolution = renderer.render_resolution();
     let mut camera = camera::Camera::builder()
-        .aspect_ratio(render_resolution[0] as f32 / render_resolution[1] as f32)
+        .aspect_ratio(resolution[0] as f32 / resolution[1] as f32)
         .build();
-    let mut camera_controller = camera::controller::FirstPersonController::new(Vec3::new(0.0, 0.35, 10.0), Quat::IDENTITY);
-
-    let mut static_events = Vec::new();
-    let mut last_frame_time = std::time::Instant::now();
-
-    const FILTER_FRAME_COUNT: usize = 10;
-    let mut dt_filter_queue = VecDeque::with_capacity(FILTER_FRAME_COUNT);
+    let mut camera_controller = camera::controller::FirstPersonController::new(Vec3::new(0.0, 1.5, 5.0), Quat::IDENTITY);
 
     input_manager.add_binding(
         KeyCode::vkcode(VirtualKeyCode::W), 
@@ -209,9 +205,15 @@ pub fn main_loop(engine_context: &mut EngineContext<impl user::App>) {
         InputBinding::new("lift", 1.0).activation_time(0.2)
     );
 
+    let mut static_events = Vec::new();
+    let mut last_frame_time = std::time::Instant::now();
+
+    const FILTER_FRAME_COUNT: usize = 10;
+    let mut dt_filter_queue = VecDeque::with_capacity(FILTER_FRAME_COUNT);
+
     let mut running = true;
     while running { // main loop start
-        // filter delta time to get a smooth result for simulation and rendering
+        // filter delta time to get a smooth dt for simulation and rendering
         let dt = {
             let now = std::time::Instant::now();
             let delta = now - last_frame_time;
@@ -269,8 +271,10 @@ pub fn main_loop(engine_context: &mut EngineContext<impl user::App>) {
             let input = input_manager.map(dt);
             let mouse_delta = input_manager.mouse_pos_delta() * dt;
 
-            camera_controller.update(&mut camera, mouse_delta, input_manager.is_mouse_hold(MouseButton::LEFT),
-                input["walk"], input["strafe"], input["lift"]);
+            camera_controller.update(&mut camera, mouse_delta,
+                input_manager.is_mouse_hold(MouseButton::LEFT),
+                input["walk"], input["strafe"], input["lift"]
+            );
             let cam_matrices = camera.camera_matrices();
 
             // user-side app tick
@@ -288,100 +292,10 @@ pub fn main_loop(engine_context: &mut EngineContext<impl user::App>) {
         {
             // prepare and compile render graph
             let prepare_result = rg_executor.prepare(|rg| {
-                // No renderer yet!
-                let mut main_img = rg.new_resource(main_img_desc);
-                {
-                    let cubemap = sky_renderer.get_cubemap();
-                    let is_cubemap_exist = cubemap.is_some();
-
-                    let cubemap_handle = if let Some(cubemap) = cubemap.as_ref() {
-                        Some(rg.import(cubemap.clone(), backend::AccessType::AnyShaderReadSampledImageOrUniformTexelBuffer))
-                    } else {
-                        None
-                    };
-
-                    let (convolved_cubemap, prefilter_cubemap, brdf) = if is_cubemap_exist {
-                        let (convolved, prefilter, brdf) = ibl_renderer.convolve_if_needed(rg, cubemap_handle.as_ref().unwrap());
-                        (Some(convolved), Some(prefilter), Some(brdf))
-                    } else {
-                        (None, None, None)
-                    };
-                    
-                    // mesh rasterize
-                    let shading_context = mesh_renderer.prepare_rg(rg);
+                let main_img = renderer.prepare_rg(rg);
     
-                    // lighting
-                    match &shading_context {
-                        MeshShadingContext::GBuffer(gbuffer) => {        
-                            let mut pass = rg.add_pass("gbuffer lighting");
-                            let pipeline = pass.register_compute_pipeline("defer/defer_lighting.hlsl");
-
-                            let gbuffer_img_ref = pass.read(&gbuffer.packed_gbuffer, backend::AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer);
-                            let depth_img_ref = pass.read(&gbuffer.depth, backend::AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer);
-                            let cubemap_ref = if let Some(cubemap) = cubemap_handle {
-                                Some(pass.read(&cubemap, backend::AccessType::AnyShaderReadSampledImageOrUniformTexelBuffer))
-                            } else {
-                                None
-                            };
-                            let convolved_cubemap_ref = if let Some(convolved_cubemap) = convolved_cubemap {
-                                Some(pass.read(&convolved_cubemap, backend::AccessType::AnyShaderReadSampledImageOrUniformTexelBuffer))
-                            } else {
-                                None
-                            };
-                            let prefilter_cubemap_ref = if let Some(prefilter_cubemap) = prefilter_cubemap {
-                                Some(pass.read(&prefilter_cubemap, backend::AccessType::AnyShaderReadSampledImageOrUniformTexelBuffer))
-                            } else {
-                                None
-                            };
-                            let brdf_ref = if let Some(brdf) = brdf {
-                                Some(pass.read(&brdf, backend::AccessType::AnyShaderReadSampledImageOrUniformTexelBuffer))
-                            } else {
-                                None
-                            };
-                            let main_img_ref = pass.write(&mut main_img, backend::AccessType::ComputeShaderWrite);
-            
-                            let extent = gbuffer.packed_gbuffer.desc().extent;
-                            pass.render(move |context| {
-                                let mut depth_img_binding = depth_img_ref.bind();
-                                depth_img_binding.with_aspect(vk::ImageAspectFlags::DEPTH);
-    
-                                // bind pipeline and descriptor set
-                                let bound_pipeline = if is_cubemap_exist {
-                                    context.bind_compute_pipeline(pipeline.into_bindings()
-                                        .descriptor_set(0, &[
-                                            gbuffer_img_ref.bind(),
-                                            depth_img_binding,
-                                            main_img_ref.bind(),
-                                            cubemap_ref.unwrap().bind(),
-                                            convolved_cubemap_ref.unwrap().bind(),
-                                            prefilter_cubemap_ref.unwrap().bind(),
-                                            brdf_ref.unwrap().bind(),
-                                        ])
-                                    )?
-                                } else {
-                                    context.bind_compute_pipeline(pipeline.into_bindings()
-                                        .descriptor_set(0, &[
-                                            gbuffer_img_ref.bind(),
-                                            depth_img_binding,
-                                            main_img_ref.bind()
-                                        ])
-                                    )?
-                                };
-
-                                let push_constants = [extent[0], extent[1]];
-                                bound_pipeline.push_constants(vk::ShaderStageFlags::COMPUTE, 0, as_byte_slice_values(&push_constants));
-                                
-                                bound_pipeline.dispatch(extent);
-            
-                                Ok(())
-                            });
-                        },
-                        _ => unimplemented!(),
-                    }
-                }
-    
-                // copy to swapchain
-                let mut swapchain_img = rg.get_swapchain(render_resolution);
+                // copy final image to swapchain
+                let mut swapchain_img = rg.get_swapchain(resolution);
                 {
                     let mut pass = rg.add_pass("final blit");
                     let pipeline = pass.register_compute_pipeline("image_blit.hlsl");
@@ -398,7 +312,7 @@ pub fn main_loop(engine_context: &mut EngineContext<impl user::App>) {
                             ])
                         )?;
     
-                        bound_pipeline.dispatch([render_resolution[0], render_resolution[1], 1]);
+                        bound_pipeline.dispatch([resolution[0], resolution[1], 1]);
     
                         Ok(())
                     });
@@ -419,17 +333,17 @@ pub fn main_loop(engine_context: &mut EngineContext<impl user::App>) {
             }
         } // tick render end
     } // main loop end
-    
-    rhi.device.wait_idle();
-    mesh_renderer.clean(rhi);
-    ibl_renderer.clean(rhi);
-    sky_renderer.clean(rhi);
+
     glog::trace!("Exit main loop successfully!");
 }
 
 /// Shutdown raven engine.
 pub fn shutdown(engine_context: EngineContext<impl user::App>) {
+    let rhi = engine_context.rhi;
+    rhi.device.wait_idle();
+
     engine_context.app.shutdown();
+    engine_context.renderer.clean(&rhi);
     engine_context.rg_executor.shutdown();
     glog::trace!("Raven Engine shutdown.");
 }

@@ -6,7 +6,7 @@ use std::{
 
 use gltf::{Gltf, Document, buffer::Source as BufferSource, Error, image::Source as ImageSource, mesh::Mode, Material as GltfMaterial, texture::TextureTransform};
 use bytes::Bytes;
-use glam::{Mat4, Vec3, Vec4, Quat};
+use glam::{Mat4, Vec3, Vec4};
 
 use crate::{filesystem::{self, ProjectFolder}, asset::{loader::loader::LoadAssetMeshType, Mesh, RawAsset, Material, TextureDesc, TextureGammaSpace, Texture, TextureSource}};
 use super::super::loader::{self, AssetLoader};
@@ -291,7 +291,7 @@ fn load_gltf_material(mat: &GltfMaterial, images: &[Bytes]) -> anyhow::Result<(V
 fn load_gltf_default_scene(doc: &Document, buffers: &[Bytes], images: &[Bytes]) -> anyhow::Result<Mesh::Raw> {
     let scene = doc.default_scene().ok_or(anyhow::anyhow!("Failed to load default scene from gltf!"))?;
 
-    let universal_trans = Mat4::from_quat(Quat::from_rotation_y(90.0_f32.to_radians()));
+    let universal_trans = Mat4::IDENTITY;
     let mut raw_mesh = Mesh::Raw::default();
 
     let mut read_node_func = |node: &gltf::Node, transform: Mat4| -> anyhow::Result<()>  {

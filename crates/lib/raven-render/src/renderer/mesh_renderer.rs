@@ -2,7 +2,7 @@ use std::{sync::Arc, path::PathBuf, io::Read};
 
 use ash::vk;
 
-use glam::{Affine3A, Quat, Vec3};
+use glam::{Affine3A};
 use raven_core::{asset::{asset_registry::{AssetHandle, get_runtime_asset_registry}, PackedVertex, VecArrayQueryParam, Material}, utility, filesystem::{self, ProjectFolder}};
 use raven_rg::{RenderGraphBuilder, RgHandle, IntoPipelineDescriptorBindings, RenderGraphPassBinding, image_clear, create_engine_global_bindless_descriptor_set};
 use raven_rhi::{backend::{Device, ImageDesc, Image, BufferDesc, Buffer, renderpass, RenderPass, descriptor::update_descriptor_set_buffer, RasterPipelineDesc, PipelineShaderDesc, PipelineShaderStage, AccessType, ImageViewDesc, ImageSubresource}, Rhi, copy_engine::CopyEngine};
@@ -50,6 +50,9 @@ pub struct MeshInstance {
     transform: Affine3A,
     handle: MeshHandle,
 }
+
+#[derive(Copy, Clone)]
+pub struct InstanceHandle(u32);
 
 pub struct MeshRenderer {
     // TODO: temporary, should move to the global renderer
@@ -167,22 +170,7 @@ impl MeshRenderer {
             vk::DescriptorType::STORAGE_BUFFER, 
             &bindless_tex_sizes_buffer);
 
-        // temporary hack
-        const INTERVAL: f32 = 2.5;
-
-        let mut mesh_instances = Vec::new();
-        for x in 0..5 {
-            for y in 0..5 {
-                mesh_instances.push(MeshInstance {
-                    transform: Affine3A::from_scale_rotation_translation(
-                        Vec3::splat(1.0),
-                        Quat::IDENTITY,
-                        Vec3::new(x as f32 * INTERVAL + -5.0, y as f32 * INTERVAL + -5.0, 0.0)
-                    ),
-                    handle: MeshHandle { id: 0 },
-                });
-            }
-        }
+        let mesh_instances = Vec::new();
 
         Self {
             renderpass,
@@ -359,6 +347,15 @@ impl MeshRenderer {
         };
 
         MeshHandle { id: u32::MAX }
+    }
+
+    pub fn add_mesh_instance(&mut self, transform: Affine3A, handle: MeshHandle) -> InstanceHandle {
+        let instance_handle = InstanceHandle(self.mesh_instances.len() as _);
+        self.mesh_instances.push(MeshInstance {
+            transform,
+            handle,
+        });
+        instance_handle
     }
 
     fn upload_gpu_mesh_data(&mut self,

@@ -3,7 +3,7 @@
 
 // Same in the raven-render::renderer::mesh_renderer::add_asset_mesh::UploadMaterial (it is a anonymous struct inside a function)
 struct Material {
-    float metallic;
+    float metalness;
     float roughness;
     float base_color[4];
     float emissive[3];

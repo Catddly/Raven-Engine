@@ -4,14 +4,13 @@ use std::{sync::Arc, collections::HashMap};
 use ash::vk;
 use arrayvec::ArrayVec;
 
-use raven_core::container::TempList;
 use raven_rhi::{
     backend::{Device, ImageViewDesc, Image, Buffer, RasterPipeline, ComputePipeline, CommandBuffer, RenderPass},
     backend::constants,
     backend::RHIError,
-    backend::renderpass::FrameBufferCacheKey,
-    backend::pipeline::CommonPipeline,
-    backend::descriptor::DescriptorSetBinding,
+    backend::{renderpass::FrameBufferCacheKey, descriptor},
+    backend::{pipeline::CommonPipeline},
+    backend::{descriptor::DescriptorSetBinding},
     dynamic_buffer::DynamicBuffer,
 };
 
@@ -51,6 +50,20 @@ impl RenderGraphPassBinding {
             RenderGraphPassBinding::ImageArray(images) => {
                 for image in images {
                     image.view_desc.aspect_mask = aspect;
+                }
+            },
+            _ => panic!("Try to add ImageAspectFlags to buffers!"),
+        }
+    }
+
+    pub fn with_base_mipmap_level(&mut self, base_level: u16) {
+        match self {
+            RenderGraphPassBinding::Image(image) => {
+                image.view_desc.base_mip_level = base_level as u32;
+            },
+            RenderGraphPassBinding::ImageArray(images) => {
+                for image in images {
+                    image.view_desc.base_mip_level = base_level as u32;
                 }
             },
             _ => panic!("Try to add ImageAspectFlags to buffers!"),
@@ -181,6 +194,17 @@ pub struct BoundComputePipeline<'context, 'exec, 'a> {
 }
 
 impl<'context, 'exec, 'a> BoundComputePipeline<'context, 'exec, 'a> {
+    pub fn rebind(&self, set_idx: u32, bindings: &[RenderGraphPassBinding]) -> anyhow::Result<(), RHIError> {
+        let bindings = rg_pass_binding_to_descriptor_set_bindings(&self.context.context, bindings)?;
+
+        descriptor::bind_descriptor_set_in_place(
+            self.context.device(), self.context.cb, 
+            set_idx, &self.pipeline, bindings.as_slice()
+        );
+
+        Ok(())
+    }
+
     pub fn dispatch(
         &self,
         threads: [u32; 3],
@@ -211,8 +235,8 @@ impl<'context, 'exec, 'a> BoundComputePipeline<'context, 'exec, 'a> {
             device.raw.cmd_push_constants(
                 self.context.cb.raw, 
                 self.pipeline.pipeline.pipeline_layout,
-                stage_flags, 
-                offset, 
+                stage_flags,
+                offset,
                 bytes
             );
         }
@@ -302,11 +326,13 @@ pub struct PassContext<'exec, 'a> {
 }
 
 impl<'exec, 'a> PassContext<'exec, 'a> {
+    
     #[inline]
     pub fn device(&self) -> &Device {
         &self.context.execution_params.device
     }
 
+    #[inline]
     pub fn global_dynamic_buffer(&mut self) -> &mut DynamicBuffer {
         self.context.global_dynamic_buffer
     } 
@@ -485,50 +511,12 @@ impl<'exec, 'a> PassContext<'exec, 'a> {
                 continue;
             }
 
-            let bindings: anyhow::Result<Vec<_>, RHIError> = bindings.iter()
-                .map(|pass_bingding| {
-                    Ok(match &pass_bingding {
-                        RenderGraphPassBinding::Image(image) => DescriptorSetBinding::Image(vk::DescriptorImageInfo::builder()
-                            .image_layout(image.layout)
-                            .image_view(self.context.get_image_view(image.handle, &image.view_desc)?)
-                            .build()
-                        ),
-                        RenderGraphPassBinding::ImageArray(images) => DescriptorSetBinding::ImageArray(
-                                images.iter()
-                                .map(|image| {
-                                    Ok(vk::DescriptorImageInfo::builder()
-                                        .image_layout(image.layout)
-                                        .image_view(self.context.get_image_view(image.handle, &image.view_desc)?)
-                                        .build())
-                                })
-                                .collect::<anyhow::Result<Vec<_>, RHIError>>()?
-                        ),
-                        RenderGraphPassBinding::Buffer(buffer) => DescriptorSetBinding::Buffer(vk::DescriptorBufferInfo::builder()
-                            .buffer(self.context.get_buffer(buffer.handle).raw)
-                            .range(vk::WHOLE_SIZE)
-                            .build()
-                        ),
-                        RenderGraphPassBinding::DynamicBuffer(offset) => DescriptorSetBinding::DynamicBuffer {
-                            buffer_info: vk::DescriptorBufferInfo::builder()
-                                .buffer(self.context.global_dynamic_buffer.buffer.raw)
-                                .range(self.context.global_dynamic_buffer.max_uniform_buffer_range() as _)
-                                .build(),
-                            offset: *offset,
-                        },
-                        RenderGraphPassBinding::DynamicStorageBuffer(offset) => DescriptorSetBinding::DynamicStorageBuffer {
-                            buffer_info: vk::DescriptorBufferInfo::builder()
-                                .buffer(self.context.global_dynamic_buffer.buffer.raw)
-                                //.range(self.context.global_dynamic_buffer.max_storage_buffer_range() as _)
-                                .range(vk::WHOLE_SIZE)
-                                .build(),
-                            offset: *offset,
-                        }
-                    })
-                })
-                .collect();
-            let bindings = bindings?;
+            let bindings = rg_pass_binding_to_descriptor_set_bindings(&self.context, bindings)?;
 
-            self.bind_descriptor_set(&pipeline, *set_idx, &bindings);
+            descriptor::bind_descriptor_set_in_place(
+                device, self.cb, 
+                *set_idx, pipeline, bindings.as_slice()
+            );
         }
 
         let device = self.context.execution_params.device;
@@ -548,117 +536,52 @@ impl<'exec, 'a> PassContext<'exec, 'a> {
 
         Ok(())
     }
+}
 
-    fn bind_descriptor_set(
-        &self,
-        pipeline: &CommonPipeline,
-        set_index: u32,
-        bindings: &[DescriptorSetBinding],
-    ) {
-        let raw_device = &self.context.execution_params.device.raw;
-
-        let pool = {
-            let descriptor_pool_ci = vk::DescriptorPoolCreateInfo::builder()
-                .max_sets(1)
-                .pool_sizes(&pipeline.descriptor_pool_sizes);
-    
-            unsafe { raw_device.create_descriptor_pool(&descriptor_pool_ci, None) }.unwrap()
-        };
-
-        // release in next frame
-        self.context.execution_params.device.defer_release(pool);
-
-        // create descriptor set
-        let descriptor_set = {
-            let allocate_info = vk::DescriptorSetAllocateInfo::builder()
-                .descriptor_pool(pool)
-                .set_layouts(std::slice::from_ref(
-                    &pipeline.descriptor_set_layouts[set_index as usize],
-                ));
-    
-            unsafe { raw_device.allocate_descriptor_sets(&allocate_info) }.unwrap()[0]
-        };
-
-        let set_layout_info = if let Some(set_layout_info) = pipeline.set_layout_infos.get(set_index as usize) {
-            set_layout_info
-        } else {
-            panic!("Expect set {} but not found in pipeline shader!", set_index)
-        };
-
-        let image_infos = TempList::new();
-        let buffer_infos = TempList::new();
-        // TODO: use some memory arena to avoid frequently allocations and deallocations
-        let mut dynamic_offsets: Vec<u32> = Vec::new();
-
-        // update descriptor set and bind it
-        let descriptor_writes = bindings.iter()
-            .enumerate()
-            // the binding must be defined in the pipeline shader
-            .filter(|(binding_idx, _)| set_layout_info.contains_key(&(*binding_idx as u32)))
-            .map(|(binding_idx, binding)| {
-                let write = vk::WriteDescriptorSet::builder()
-                    .dst_set(descriptor_set)
-                    .dst_binding(binding_idx as u32)
-                    .dst_array_element(0);
-
-                match binding {
-                    DescriptorSetBinding::Image(image) => write
-                        .descriptor_type(match image.image_layout {
-                            vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL => {
-                                vk::DescriptorType::SAMPLED_IMAGE
-                            }
-                            vk::ImageLayout::GENERAL => vk::DescriptorType::STORAGE_IMAGE,
-                            _ => unimplemented!(),
+fn rg_pass_binding_to_descriptor_set_bindings(
+    ctx: &ExecuteContext, 
+    bindings: &[RenderGraphPassBinding]
+) -> anyhow::Result<Vec<DescriptorSetBinding>, RHIError> {
+    let bindings = bindings.iter()
+        .map(|pass_bingding| {
+            Ok(match &pass_bingding {
+                RenderGraphPassBinding::Image(image) => DescriptorSetBinding::Image(vk::DescriptorImageInfo::builder()
+                    .image_layout(image.layout)
+                    .image_view(ctx.get_image_view(image.handle, &image.view_desc)?)
+                    .build()
+                ),
+                RenderGraphPassBinding::ImageArray(images) => DescriptorSetBinding::ImageArray(
+                        images.iter()
+                        .map(|image| {
+                            Ok(vk::DescriptorImageInfo::builder()
+                                .image_layout(image.layout)
+                                .image_view(ctx.get_image_view(image.handle, &image.view_desc)?)
+                                .build())
                         })
-                        .image_info(std::slice::from_ref(image_infos.add(*image)))
+                        .collect::<anyhow::Result<Vec<_>, RHIError>>()?
+                ),
+                RenderGraphPassBinding::Buffer(buffer) => DescriptorSetBinding::Buffer(vk::DescriptorBufferInfo::builder()
+                    .buffer(ctx.get_buffer(buffer.handle).raw)
+                    .range(vk::WHOLE_SIZE)
+                    .build()
+                ),
+                RenderGraphPassBinding::DynamicBuffer(offset) => DescriptorSetBinding::DynamicBuffer {
+                    buffer_info: vk::DescriptorBufferInfo::builder()
+                        .buffer(ctx.global_dynamic_buffer.buffer.raw)
+                        .range(ctx.global_dynamic_buffer.max_uniform_buffer_range() as _)
                         .build(),
-                    DescriptorSetBinding::ImageArray(images) => {
-                        assert!(!images.is_empty());
-
-                        write.descriptor_type(match images[0].image_layout {
-                            vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL => {
-                                vk::DescriptorType::SAMPLED_IMAGE
-                            }
-                            vk::ImageLayout::GENERAL => vk::DescriptorType::STORAGE_IMAGE,
-                            _ => unimplemented!(),
-                        })
-                        .image_info(images.as_slice())
-                        .build()
-                    },
-                    DescriptorSetBinding::Buffer(buffer) => write
-                        // TODO: all is storage buffer??
-                        .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-                        .buffer_info(std::slice::from_ref(buffer_infos.add(*buffer)))
+                    offset: *offset,
+                },
+                RenderGraphPassBinding::DynamicStorageBuffer(offset) => DescriptorSetBinding::DynamicStorageBuffer {
+                    buffer_info: vk::DescriptorBufferInfo::builder()
+                        .buffer(ctx.global_dynamic_buffer.buffer.raw)
+                        //.range(self.context.global_dynamic_buffer.max_storage_buffer_range() as _)
+                        .range(vk::WHOLE_SIZE)
                         .build(),
-                    DescriptorSetBinding::DynamicBuffer { buffer_info, offset } => {
-                        dynamic_offsets.push(*offset);
-                        write
-                            .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC)
-                            .buffer_info(std::slice::from_ref(buffer_infos.add(*buffer_info)))
-                            .build()
-                    },
-                    DescriptorSetBinding::DynamicStorageBuffer { buffer_info, offset } => {
-                        dynamic_offsets.push(*offset);
-                        write
-                            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER_DYNAMIC)
-                            .buffer_info(std::slice::from_ref(buffer_infos.add(*buffer_info)))
-                            .build()
-                    }
+                    offset: *offset,
                 }
             })
-            .collect::<Vec<_>>();
-
-        unsafe {
-            raw_device.update_descriptor_sets(&descriptor_writes, &[]);
-
-            raw_device.cmd_bind_descriptor_sets(
-                self.cb.raw, 
-                pipeline.pipeline_bind_point, 
-                pipeline.pipeline_layout, 
-                set_index, 
-                &[descriptor_set], 
-                dynamic_offsets.as_slice()
-            );
-        }
-    }
+        })
+        .collect::<anyhow::Result<Vec<_>, RHIError>>();
+    bindings
 }

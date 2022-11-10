@@ -36,6 +36,13 @@ impl SkyRenderer {
         }
     }
 
+    pub fn add_cubemap_split(&mut self, rhi: &Rhi, assets: &[Arc<AssetHandle>]) {
+        let cubemap = Self::create_cubemap_split(rhi, assets);
+        // override the old one
+        // TODO: delete the old one
+        self.cubemap = Some(cubemap);
+    }
+
     // cubemap split sequence:
     // +X, -X, +Y, -Y, +Z, -Z
     fn create_cubemap_split(rhi: &Rhi, assets: &[Arc<AssetHandle>]) -> Arc<Image> {
@@ -126,6 +133,7 @@ impl SkyRenderer {
         Arc::new(cubemap)
     }
 
+    #[inline]
     pub fn get_cubemap(&self) -> &Option<Arc<Image>> {
         &self.cubemap
     }

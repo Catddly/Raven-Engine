@@ -8,49 +8,14 @@
 
 #include "../color/luminance.hlsl"
 
+#include "../common/immutable_sampler.hlsl"
+
+#include "../pbr/multi_scatter_compensate.hlsl"
+#include "brdf_result.hlsl"
+
 #define USE_GGX_HEIGHT_CORRELATED_G_TERM 1
 
 #define MIN_DIELECTRICS_REFLECTIVITY 0.04
-
-struct BrdfResult
-{
-    // the evaluated value
-    float3 value;
-    float3 energy_preserve_ratio;
-    float  pdf;
-    float3 value_over_pdf;
-
-    static BrdfResult invalid()
-    {
-        BrdfResult result;
-        result.value = 0.0.xxx;
-        result.energy_preserve_ratio = 0.0.xxx;
-        result.pdf = 0.0;
-        result.value_over_pdf = 0.0;
-        return result;
-    }
-};
-
-struct BrdfSample
-{
-    float3 wi;
-    float3 weight;
-
-    static BrdfSample invalid()
-    {
-        BrdfSample result;
-        result.wi = float3(0.0, 0.0, -1.0);
-        result.weight = 0.0.xxx;
-        return result;
-    }
-
-    // perform sample on tangent space
-    // is wi.z is negative, means this vector is on the opposite direction of the hemisphere
-    bool is_valid()
-    {
-        return wi.z > 1e-7;
-    }
-};
 
 // G in DFG
 // Describes the self-shadowing property of the microfacets. 
@@ -179,8 +144,11 @@ struct SpecularBrdf
     // PDF of sampling a reflection vector L using 'sample'.
     // Note that PDF of sampling given microfacet normal is (G1 * D) when vectors are in local space (in the hemisphere around shading normal). 
     // Remaining terms (1.0f / (4.0f * NdotV)) are specific for reflection case, and come from multiplying PDF by jacobian of reflection operator
-    float pdf(float ndoth, float ndotv, float alpha2)
+    float pdf(float ndoth, float ndotv)
     {
+        const float alpha = roughness * roughness;
+        const float alpha2 = alpha * alpha;
+
         ndoth = max(0.00001, ndoth);
 	    ndotv = max(0.00001, ndotv);
 	    return (ndf_ggx(max(0.00001, alpha2), ndoth) * ShadowMaskTermSmith::smith_ggx_split_Ga(alpha2, ndotv * ndotv)) / (4.0 * ndotv);
@@ -212,10 +180,6 @@ struct SpecularBrdf
         // note: hdotl is same as hdotl here
         // clamp dot products here to small value to prevent numerical instability. Assume that rays incident from below the hemisphere have been filtered
         float hdotl = max(0.00001, min(1.0, dot(h, wi)));
-        // const float3 normal = float3(0.0f, 0.0f, 1.0f);
-        // float ndotl = max(0.00001, min(1.0, dot(normal, wi)));
-        // float ndotv = max(0.00001, min(1.0, dot(normal, wo)));
-
         float3 f = fresnel_schlick(F0, get_F90(F0), hdotl);
 
         // Calculate weight of the sample specific for selected sampling method
@@ -249,7 +213,7 @@ struct SpecularBrdf
 
         result.value_over_pdf = f * smith.g2_over_g1_wo;
         result.value = f * (d * g * wi.z);
-        result.energy_preserve_ratio = 1.0.xxx - f;
+        result.refraction_ratio = 1.0.xxx - f;
         result.pdf = (d * ShadowMaskTermSmith::smith_ggx_split_Ga(alpha2, wo.z * wo.z)) / (4.0 * wo.z);
         return result;
     }
@@ -271,11 +235,6 @@ float3 metalness_albedo_boost(float metalness, float3 diffuse_albedo) {
     const float3 y3 = y * y * y;
 
     return 1.0 + (0.25-(x-0.5)*(x-0.5)) * (a0+a1*abs(x-0.5)) * (e1*y + e3*y3);
-}
-
-float3 fresnel_schlick_roughness(float ndotv, float3 F0, float roughness)
-{
-    return F0 + (max((1.0 - roughness).xxx, F0) - F0) * pow(clamp(1.0 - ndotv, 0.0, 1.0), 5.0);
 }
 
 struct DiffuseBrdf
@@ -306,7 +265,7 @@ struct DiffuseBrdf
         // result.pdf = PI_RECIP_ONE * wi.z; // cosine-weighted pdf
         // result.value_over_pdf = reflectance;
         // result.value = result.value_over_pdf * result.pdf;
-        // result.energy_preserve_ratio = 0.0.xxx; // no meaning, ks is already in fresnel term.
+        // result.refraction_ratio = 0.0.xxx; // no meaning, ks is already in fresnel term.
 
 		// sample diffuse ray using cosine-weighted hemisphere sampling 
         float3 sample_dir = sample_hemisphere(urand);
@@ -340,7 +299,7 @@ struct DiffuseBrdf
         result.pdf = PI_RECIP_ONE * wi.z; // cosine-weighted pdf
         result.value_over_pdf = reflectance;
         result.value = result.value_over_pdf * result.pdf;
-        result.energy_preserve_ratio = 0.0.xxx; // no meaning, ks is already in fresnel term.
+        result.refraction_ratio = 0.0.xxx; // no meaning, ks is already in fresnel term.
         return result;
     }
 };
@@ -350,42 +309,29 @@ struct Brdf
     DiffuseBrdf  diffuse_brdf;
     SpecularBrdf specular_brdf;
 
-    static DiffuseBrdf metalness_to_diffuse_reflectance(float3 albedo, float metelness)
+    static DiffuseBrdf metalness_to_diffuse_reflectance(float3 albedo, float metalness)
     {
         DiffuseBrdf diff = DiffuseBrdf::zero();
-        diff.reflectance = albedo * (1.0 - metelness);
+        diff.reflectance = albedo * (1.0 - metalness);
+
+        float3 albedo_boost = metalness_albedo_boost(metalness, albedo);
+        diff.reflectance = min(1.0, diff.reflectance * albedo_boost);
+
         return diff;
     }
 
-    static SpecularBrdf metalness_to_specular_F0(float3 albedo, float metelness)
+    static SpecularBrdf metalness_to_specular_F0(float3 albedo, float metalness)
     {
         SpecularBrdf spec = SpecularBrdf::zero();
-        spec.F0 = lerp(MIN_DIELECTRICS_REFLECTIVITY.xxx, albedo, metelness);
+        spec.F0 = lerp(MIN_DIELECTRICS_REFLECTIVITY.xxx, albedo, metalness);
+
+        float3 albedo_boost = metalness_albedo_boost(metalness, albedo);
+        spec.F0 = min(1.0, spec.F0 * albedo_boost);
+
         return spec;
     }
 
-    // static void metalness_brdf_interpolation(inout DiffuseBrdf diff, inout SpecularBrdf spec, float metalness)
-    // {
-    //     const float3 gbuffer_albedo = diff.spe;
-
-    //     // lerp from 0.04 to albedo using metalness
-    //     // It is the F0 in https://learnopengl.com/PBR/Lighting
-    //     float3 spec_lerped_albedo = lerp(spec.albedo, gbuffer_albedo, metalness);
-    //     // remember that ks in the F term in brdf.
-    //     // kd + ks = 1. so kd = 1.0 - ks.
-    //     // so kd = (1.0.xxx - F) * (1.0 - metalness)
-    //     // Why multiply one minus metalness here, because when a material is fully dielectric,
-    //     // it diffuse color become completely absorb by the electronics.
-    //     // (i.e. metallic surfaces don't refract light and thus have no diffuse reflections)
-    //     float3 diff_lerped_albedo = gbuffer_albedo * max(0.0, 1.0 - metalness);
-
-    //     float3 albedo_boost = metalness_albedo_boost(metalness, gbuffer_albedo);
-
-    //     diff.albedo = min(1.0, diff_lerped_albedo * albedo_boost);
-    //     spec.albedo = min(1.0, spec_lerped_albedo * albedo_boost);
-    // }
-
-    static Brdf from_gbuffer(GBuffer gbuffer)
+    static Brdf from_gbuffer(GBuffer gbuffer, float ndotv)
     {
         Brdf result;
 
@@ -395,10 +341,11 @@ struct Brdf
 
         result.diffuse_brdf = diffuse;
         result.specular_brdf = specular;
+
         return result;
     }
 
-    float3 eval_ndotl_weighted(float3 wi, float3 wo)
+    float3 eval_ndotl_weighted(float3 wi, float3 wo, in MultiScatterCompensate compensate)
     {
         if (wi.z <= 0 || wo.z <= 0)
         {
@@ -408,12 +355,20 @@ struct Brdf
         BrdfResult diff = diffuse_brdf.eval_ndotl_weighted(wi);
         BrdfResult spec = specular_brdf.eval_ndotl_weighted(wi, wo);
 
-        // TODO: Conservation Of Energy
-        // The higher the roughness is, the more energy lost.
-        // Due to G term in brdf (the shadowing-masking term) do not consider multi-bouncing of the microsurface.
-        // We lost energy when the microsurface is more uneven.
+        return compensate.compensate_brdf(diff, spec, wo);
+    }
 
-        return diff.value * spec.energy_preserve_ratio + spec.value;
+    float3 eval_ndotl_weighted_direction_light(float3 wi, float3 wo, in MultiScatterCompensate compensate)
+    {
+        if (wi.z <= 0 || wo.z <= 0)
+        {
+            return 0.0.xxx;
+        }
+
+        BrdfResult diff = diffuse_brdf.eval_ndotl_weighted(wi);
+        BrdfResult spec = specular_brdf.eval_ndotl_weighted(wi, wo);
+
+        return compensate.compensate_brdf_direction_light(diff, spec, wi, wo);
     }
 };
 

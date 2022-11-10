@@ -6,7 +6,7 @@ use ash::vk;
 
 use crate::backend::{ImageViewDesc, SamplerDesc};
 
-use super::{Device, Buffer, Image};
+use super::{Device, Buffer, Image, pipeline::{CommonPipeline, PipelineSetLayoutInfo}, CommandBuffer};
 
 /// Descriptor set binding information to bind the actual resource to descriptor.
 pub enum DescriptorSetBinding {
@@ -319,6 +319,139 @@ pub fn update_descriptor_set_image(
             device.raw
                 .update_descriptor_sets(std::slice::from_ref(&write_descriptor_set), &[]);
         }
+}
+
+/// Bind a descriptor set in place.
+/// It will create a descriptor pool for this set and create the descriptor immediately.
+/// The pool will be destroyed in next frame.
+pub fn bind_descriptor_set_in_place(
+    device: &Device,
+    cmd: &CommandBuffer,
+    set_idx: u32,
+    pipeline: &CommonPipeline,
+    bindings: &[DescriptorSetBinding],
+) {
+    let raw_device = &device.raw;
+
+    let pool = {
+        let descriptor_pool_ci = vk::DescriptorPoolCreateInfo::builder()
+            .max_sets(1)
+            .pool_sizes(&pipeline.descriptor_pool_sizes);
+
+        unsafe { raw_device.create_descriptor_pool(&descriptor_pool_ci, None) }.unwrap()
+    };
+
+    // release in next frame
+    device.defer_release(pool);
+
+    // create descriptor set in place
+    let descriptor_set = {
+        let allocate_info = vk::DescriptorSetAllocateInfo::builder()
+            .descriptor_pool(pool)
+            .set_layouts(std::slice::from_ref(
+                &pipeline.descriptor_set_layouts[set_idx as usize],
+            ));
+
+        unsafe { raw_device.allocate_descriptor_sets(&allocate_info) }.unwrap()[0]
+    };
+
+    let set_layout_info = if let Some(set_layout_info) = pipeline.set_layout_infos.get(set_idx as usize) {
+        set_layout_info
+    } else {
+        panic!("Expect set {} but not found in pipeline shader!", set_idx)
+    };
+
+    let mut image_infos = TempList::new();
+    let mut buffer_infos = TempList::new();
+    // TODO: use some memory arena to avoid frequently allocations and deallocations
+    let mut dynamic_offsets: Vec<u32> = Vec::new();
+
+    // update descriptor set and bind it
+    let writes = write_descriptor_set_bindings(
+        bindings, set_layout_info, descriptor_set,
+        &mut image_infos, &mut buffer_infos, &mut dynamic_offsets
+    );
+
+    unsafe {
+        raw_device.update_descriptor_sets(&writes, &[]);
+
+        raw_device.cmd_bind_descriptor_sets(
+            cmd.raw,
+            pipeline.pipeline_bind_point,
+            pipeline.pipeline_layout, 
+            set_idx, 
+            &[descriptor_set], 
+            dynamic_offsets.as_slice()
+        );
+    }
+}
+
+pub fn write_descriptor_set_bindings(
+    bindings: &[DescriptorSetBinding], 
+    set_layout_info: &PipelineSetLayoutInfo,
+    set: vk::DescriptorSet,
+    image_infos: &mut TempList<vk::DescriptorImageInfo>,
+    buffer_infos: &mut TempList<vk::DescriptorBufferInfo>,
+    dynamic_offsets: &mut Vec<u32>,
+) -> Vec<vk::WriteDescriptorSet> {
+    let writes = bindings.iter()
+        .enumerate()
+        // the binding must be defined in the pipeline shader
+        .filter(|(binding_idx, _)| set_layout_info.contains_key(&(*binding_idx as u32)))
+        .map(|(binding_idx, binding)| {
+            let write = vk::WriteDescriptorSet::builder()
+                .dst_set(set)
+                .dst_binding(binding_idx as u32)
+                .dst_array_element(0);
+
+            match binding {
+                DescriptorSetBinding::Image(image) => write
+                    .descriptor_type(match image.image_layout {
+                        vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL => {
+                            vk::DescriptorType::SAMPLED_IMAGE
+                        }
+                        vk::ImageLayout::GENERAL => vk::DescriptorType::STORAGE_IMAGE,
+                        _ => unimplemented!(),
+                    })
+                    .image_info(std::slice::from_ref(image_infos.add(*image)))
+                    .build(),
+                DescriptorSetBinding::ImageArray(images) => {
+                    assert!(!images.is_empty());
+
+                    write.descriptor_type(match images[0].image_layout {
+                        vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL => {
+                            vk::DescriptorType::SAMPLED_IMAGE
+                        }
+                        vk::ImageLayout::GENERAL => vk::DescriptorType::STORAGE_IMAGE,
+                        _ => unimplemented!(),
+                    })
+                    .image_info(images.as_slice())
+                    .build()
+                },
+                DescriptorSetBinding::Buffer(buffer) => write
+                    // TODO: all is storage buffer??
+                    .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                    .buffer_info(std::slice::from_ref(buffer_infos.add(*buffer)))
+                    .build(),
+                DescriptorSetBinding::DynamicBuffer { buffer_info, offset } => {
+                    dynamic_offsets.push(*offset);
+                    write
+                        .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC)
+                        .buffer_info(std::slice::from_ref(buffer_infos.add(*buffer_info)))
+                        .build()
+                },
+                DescriptorSetBinding::DynamicStorageBuffer { buffer_info, offset } => {
+                    dynamic_offsets.push(*offset);
+                    write
+                        .descriptor_type(vk::DescriptorType::STORAGE_BUFFER_DYNAMIC)
+                        .buffer_info(std::slice::from_ref(buffer_infos.add(*buffer_info)))
+                        .build()
+                }
+            }
+        })
+        .collect::<Vec<_>>();
+
+    writes
 }
 
 #[inline]

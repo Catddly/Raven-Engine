@@ -93,22 +93,18 @@ PsOut ps_main(PsIn ps) {
     // in right hand coordinate system, cross(ddy, ddx), not (ddx, ddy)
     float3 geometric_normal_vs = normalize(cross(dy, dx));
 
-    // Texture2D test = bindless_textures[NonUniformResourceIndex(0)];
-    // float4 pixel = test.Sample(sampler_llce, float2(0.0, 0.0));
-
     GBuffer gbuffer = GBuffer::zero();
-    //gbuffer.albedo = base_color * ps.color.rgb;
-    gbuffer.albedo = float3(1.0, 1.0, 1.0);
+    gbuffer.albedo = base_color * ps.color.rgb;
     gbuffer.normal = normal_ws;
 
     // hack calculate roughness and metalness from instance_index
-    uint x = push_constants.instance_index / 5;
-    uint y = push_constants.instance_index % 5;
+    // uint x = push_constants.instance_index / 5;
+    // uint y = push_constants.instance_index % 5;
 
-    // gbuffer.metallic = mat.metallic;
-    // gbuffer.roughness = mat.roughness;
-    gbuffer.metalness = lerp(0.1, 1.0, x / 4.0);
-    gbuffer.roughness = lerp(0.1, 1.0, y / 4.0);
+    gbuffer.metalness = mat.metalness;
+    gbuffer.roughness = mat.roughness;
+    // gbuffer.metalness = lerp(0.0, 1.0, x / 4.0);
+    // gbuffer.roughness = lerp(0.0, 1.0, y / 4.0);
 
     PsOut psout;
     psout.gbuffer = asfloat(gbuffer.pack().data);

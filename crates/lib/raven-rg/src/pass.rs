@@ -120,9 +120,9 @@ impl<'rg> PassBuilder<'rg> {
     /// Constrain: access_type must be the read operation.
     pub fn raster_read<ResType: Resource>(
         &mut self,
-        handle: &mut Handle<ResType>,
+        handle: &Handle<ResType>,
         access_type: AccessType,
-    ) -> GraphResourceRef<ResType, RT> {
+    ) -> GraphResourceRef<ResType, SRV> {
         assert!(backend::barrier::is_read_only_raster_access(&access_type), "Invalid raster read access type: {:?}", &access_type);
 
         self.read_impl(handle, access_type)

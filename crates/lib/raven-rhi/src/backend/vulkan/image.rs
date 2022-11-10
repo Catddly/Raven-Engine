@@ -83,7 +83,7 @@ impl Image {
             .subresource_range(vk::ImageSubresourceRange {
                 aspect_mask: view_desc.aspect_mask,
                 base_mip_level: view_desc.base_mip_level,
-                level_count: view_desc.level_count.unwrap_or(image_desc.mip_levels as u32),
+                level_count: view_desc.level_count.unwrap_or(image_desc.mip_levels as u32 - view_desc.base_mip_level),
                 base_array_layer: 0,
                 layer_count: match image_desc.image_type {
                     ImageType::Cube | ImageType::CubeArray => 6,
