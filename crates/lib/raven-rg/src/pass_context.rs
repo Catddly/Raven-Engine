@@ -89,6 +89,14 @@ pub trait RenderGraphPassBindable {
     fn bind(&self) -> RenderGraphPassBinding;
 }
 
+impl RenderGraphPassBindable for GraphResourceRef<Buffer, SRV> {
+    fn bind(&self) -> RenderGraphPassBinding {
+        RenderGraphPassBinding::Buffer(PassBufferBinding {
+            handle: self.handle.clone(),
+        })
+    }
+}
+
 impl RenderGraphPassBindable for GraphResourceRef<Image, SRV> {
     fn bind(&self) -> RenderGraphPassBinding {
         RenderGraphPassBinding::Image(PassImageBinding {
@@ -111,6 +119,14 @@ impl RenderGraphPassBindable for Vec<GraphResourceRef<Image, SRV>> {
             })    
             .collect()
         )
+    }
+}
+
+impl RenderGraphPassBindable for GraphResourceRef<Buffer, UAV> {
+    fn bind(&self) -> RenderGraphPassBinding {
+        RenderGraphPassBinding::Buffer(PassBufferBinding {
+            handle: self.handle.clone(),
+        })
     }
 }
 

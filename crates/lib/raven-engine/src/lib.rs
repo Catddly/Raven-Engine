@@ -153,7 +153,7 @@ pub fn main_loop(engine_context: &mut EngineContext<impl user::App>) {
         app,
     } = engine_context;
 
-    asset_manager.load_asset(AssetLoadDesc::load_mesh("mesh/cornell_box/scene.gltf")).unwrap();
+    asset_manager.load_asset(AssetLoadDesc::load_mesh("mesh/sphere.gltf")).unwrap();
     asset_manager.load_asset(AssetLoadDesc::load_texture("texture/skybox/right.jpg")).unwrap();
     asset_manager.load_asset(AssetLoadDesc::load_texture("texture/skybox/left.jpg")).unwrap();
     asset_manager.load_asset(AssetLoadDesc::load_texture("texture/skybox/top.jpg")).unwrap();
@@ -178,7 +178,7 @@ pub fn main_loop(engine_context: &mut EngineContext<impl user::App>) {
     let mut camera = camera::Camera::builder()
         .aspect_ratio(resolution[0] as f32 / resolution[1] as f32)
         .build();
-    let mut camera_controller = camera::controller::FirstPersonController::new(Vec3::new(0.0, 1.5, 5.0), Quat::IDENTITY);
+    let mut camera_controller = camera::controller::FirstPersonController::new(Vec3::new(0.0, 0.5, 5.0), Quat::IDENTITY);
 
     input_manager.add_binding(
         KeyCode::vkcode(VirtualKeyCode::W), 
@@ -210,6 +210,9 @@ pub fn main_loop(engine_context: &mut EngineContext<impl user::App>) {
 
     const FILTER_FRAME_COUNT: usize = 10;
     let mut dt_filter_queue = VecDeque::with_capacity(FILTER_FRAME_COUNT);
+
+    // Temp
+    let mut display_sh_cubemap = false;
 
     let mut running = true;
     while running { // main loop start
@@ -277,6 +280,10 @@ pub fn main_loop(engine_context: &mut EngineContext<impl user::App>) {
             );
             let cam_matrices = camera.camera_matrices();
 
+            if input_manager.is_mouse_just_pressed(MouseButton::RIGHT) {
+                display_sh_cubemap = !display_sh_cubemap;
+            }
+
             // user-side app tick
             app.tick(dt);
 
@@ -284,6 +291,8 @@ pub fn main_loop(engine_context: &mut EngineContext<impl user::App>) {
 
             DrawFrameContext {
                 cam_matrices,
+
+                display_sh_cubemap : if display_sh_cubemap { 1 } else { 0 },
             }
         };
         // tick render end

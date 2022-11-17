@@ -44,6 +44,8 @@ pub struct ExecutionParams<'a> {
 #[derive(Copy, Clone)]
 pub struct DrawFrameContext {
     pub cam_matrices: CameraMatrices,
+
+    pub display_sh_cubemap: u32,
 }
 
 #[derive(Copy, Clone)]

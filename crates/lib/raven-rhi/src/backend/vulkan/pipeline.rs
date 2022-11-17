@@ -335,7 +335,7 @@ pub fn create_compute_pipeline(
         let reflection_data = rspirv_reflect::Reflection::new_from_spirv(&shader_binary.spirv)
             .expect("Failed to get spirv reflection data!");
 
-        (reflection_data.get_descriptor_sets().unwrap(), reflection_data.get_push_constant_range().unwrap(), reflection_data.get_compute_group_size().unwrap())
+        (reflection_data.get_descriptor_sets().expect("get sets error"), reflection_data.get_push_constant_range().unwrap(), reflection_data.get_compute_group_size().unwrap())
     };
 
     // TODO: thing of the global descriptors layout of the engine

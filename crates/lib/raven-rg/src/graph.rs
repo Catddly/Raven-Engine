@@ -319,6 +319,7 @@ impl RenderGraph {
                         }
                     }
                     GraphResource::Imported(GraphResourceImportedData::Image { raw, .. }) => {
+                        // insert usage
                         let mut image_usage: vk::ImageUsageFlags = image_access_mask_to_usage_flags(access_mask);
                         image_usage |= raw.desc.usage;
 
@@ -328,8 +329,7 @@ impl RenderGraph {
                     // buffer usage flags update
                     GraphResource::Created(GraphResourceCreatedData {
                         desc: GraphResourceDesc::Buffer(_),
-                    })
-                    | GraphResource::Imported(GraphResourceImportedData::Buffer { .. }) => {
+                    }) => {
                         let buffer_usage: vk::BufferUsageFlags = buffer_access_mask_to_usage_flags(access_mask);
 
                         if let ResourceUsage::Buffer(buffer) = &mut resource_usages[resource_index] {
@@ -337,6 +337,13 @@ impl RenderGraph {
                         } else {
                             panic!("Expect {} to be buffer resource!", resource_index);
                         }
+                    }
+                    GraphResource::Imported(GraphResourceImportedData::Buffer { raw, .. }) => {
+                        // insert usage
+                        let mut buffer_usage: vk::BufferUsageFlags = buffer_access_mask_to_usage_flags(access_mask);
+
+                        buffer_usage |= raw.desc.usage;
+                        resource_usages[resource_index] = ResourceUsage::Buffer(buffer_usage);
                     }
                 };
             }

@@ -35,7 +35,7 @@ impl WorldRenderer {
     }
 
     pub fn add_cubemap_split(&mut self, rhi: &Rhi, asset_handles: &[Arc<AssetHandle>]) {
-        self.sky_renderer.add_cubemap_split(rhi, asset_handles)
+        self.sky_renderer.add_cubemap_split(rhi, asset_handles);
     }
 
     pub fn add_mesh(&mut self, asset_handle: &Arc<AssetHandle>) -> MeshHandle {
@@ -60,9 +60,9 @@ impl WorldRenderer {
                 None
             };
 
-            let (convolved_cubemap, prefilter_cubemap, brdf) = if is_cubemap_exist {
-                let (convolved, prefilter, brdf) = self.ibl_renderer.convolve_if_needed(rg, cubemap_handle.as_ref().unwrap());
-                (Some(convolved), Some(prefilter), Some(brdf))
+            let (sh_buffer, prefilter_cubemap, brdf) = if is_cubemap_exist {
+                let (sh, prefilter, brdf) = self.ibl_renderer.convolve_if_needed(rg, cubemap_handle.as_ref().unwrap());
+                (Some(sh), Some(prefilter), Some(brdf))
             } else {
                 (None, None, None)
             };
@@ -83,8 +83,8 @@ impl WorldRenderer {
                     } else {
                         None
                     };
-                    let convolved_cubemap_ref = if let Some(convolved_cubemap) = convolved_cubemap {
-                        Some(pass.read(&convolved_cubemap, AccessType::AnyShaderReadSampledImageOrUniformTexelBuffer))
+                    let sh_buffer_ref = if let Some(sh_buffer) = sh_buffer {
+                        Some(pass.read(&sh_buffer, AccessType::AnyShaderReadUniformBuffer))
                     } else {
                         None
                     };
@@ -113,7 +113,7 @@ impl WorldRenderer {
                                     depth_img_binding,
                                     main_img_ref.bind(),
                                     cubemap_ref.unwrap().bind(),
-                                    convolved_cubemap_ref.unwrap().bind(),
+                                    sh_buffer_ref.unwrap().bind(),
                                     prefilter_cubemap_ref.unwrap().bind(),
                                     brdf_ref.unwrap().bind(),
                                 ])

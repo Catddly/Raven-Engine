@@ -59,4 +59,22 @@ float2 hammersley(uint i, uint n) {
     return float2(float(i) / float(n), radical_inverse_vdc(i));
 }
 
+// Generate a Spherical Fibonacci Sequences.
+// Return a unit direction vector in cartesian.
+// See https://stackoverflow.com/questions/9600801/evenly-distributing-n-points-on-a-sphere/26127012#26127012
+float3 spherical_fibonacci(uint i, uint n) {
+    const float sqrt_5 = 2.2360679774997896964092;
+    const float phi = PI * (3.0 - sqrt_5); // golden angle in radians
+
+    float y = 1.0 - (float(i) / float(n - 1)) * 2.0; // y goes from 1 to -1
+    float radius = sqrt(1.0 - y * y); // radius at y
+
+    float theta = phi * float(i); // golden angle increment
+
+    float x = cos(theta) * radius;
+    float z = sin(theta) * radius;
+
+    return normalize(float3(x, y, z));
+}
+
 #endif

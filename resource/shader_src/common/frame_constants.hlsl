@@ -11,6 +11,8 @@ struct CameraMatrices {
 // Same in raven-rg::executor::DrawFrameContext
 struct FrameConstants {
     CameraMatrices camera_matrices;
+
+    uint display_sh_cubemap;
 };
 
 [[vk::binding(0, 2)]] ConstantBuffer<FrameConstants> frame_constants_dyn;
