@@ -18,7 +18,7 @@ use crate::{
     compiled_graph::{RegisteredResource, RenderGraphPipelineHandles, GraphPreparedResource, GraphPreparedResourceRef}, executor::{ExecutionParams},
 };
 
-const MAX_TRANSITION_PER_BATCH: usize = 32;
+const MAX_TRANSITION_PER_BATCH: usize = 64;
 
 pub(crate) struct ExecutingRenderGraph<'exec, 'dynamic> {
     pub(crate) execution_params: ExecutionParams<'exec>,
@@ -43,7 +43,7 @@ impl<'exec, 'dynamic> ExecutingRenderGraph<'exec, 'dynamic> {
         // consume all the passes and be ready for executing
         let mut passes: Vec<_> = std::mem::take(&mut self.passes).into();
 
-        // transition all the resources to the first access type.
+        // transition all the resources to the first access type to reduce some pipeline bubbles
         {
             let mut transition_resources = Vec::new();
 
@@ -53,8 +53,7 @@ impl<'exec, 'dynamic> ExecutingRenderGraph<'exec, 'dynamic> {
 
                     transition_resources.push((registered_res, PassResourceAccessType {
                         access_type: pass_ref.access.access_type,
-                        // force all to sync if possible!
-                        // WARN!!!!!!! Do not force it, this is not good!
+                        // Force to reduce pipeline bubbles
                         skip_sync_if_same: true,
                     }));
 
@@ -64,6 +63,9 @@ impl<'exec, 'dynamic> ExecutingRenderGraph<'exec, 'dynamic> {
             }
 
             // transition all the resources in batched
+            // for (transition_resource, access) in transition_resources {
+            //     self.resource_transition(&cb, transition_resource, access);
+            // }
             self.resource_transition_batched(&cb, transition_resources);
         }
 
@@ -150,6 +152,7 @@ impl<'exec, 'dynamic> ExecutingRenderGraph<'exec, 'dynamic> {
         cb: &CommandBuffer,
         pass: Pass,
     ) {
+        //glog::debug!("Recording {} pass", pass.name);
         // TODO: add pass performance ticker and debug marker!
 
         // transition all the pass resources to dst access
@@ -157,6 +160,9 @@ impl<'exec, 'dynamic> ExecutingRenderGraph<'exec, 'dynamic> {
             .map(|pass_res| (&self.registered_resources[pass_res.handle.id as usize], pass_res.access.clone()))
             .collect::<Vec<_>>();
 
+        // for (transition_resource, access) in transition_resources {
+        //     self.resource_transition(&cb, transition_resource, access);
+        // }
         self.resource_transition_batched(&cb, transition_resources);
 
         let mut context = PassContext {
@@ -254,6 +260,9 @@ impl<'exec, 'dynamic> ExecutingRenderGraph<'exec, 'dynamic> {
             return;
         }
 
+        // Used to avoid transition collision
+        let mut need_transition: ArrayVec<bool, MAX_TRANSITION_PER_BATCH> = ArrayVec::new();
+
         let mut transitions: ArrayVec<(AccessType, AccessType), MAX_TRANSITION_PER_BATCH> = ArrayVec::new();
 
         let mut buf_barriers: ArrayVec<BufferBarrier, MAX_TRANSITION_PER_BATCH> = ArrayVec::new();
@@ -263,8 +272,10 @@ impl<'exec, 'dynamic> ExecutingRenderGraph<'exec, 'dynamic> {
         for (resource, access) in resources.iter() {
             // allow pipeline to overlap
             if resource.get_current_access() == access.access_type && access.skip_sync_if_same {
+                need_transition.push(false); 
                 continue;
             }
+            need_transition.push(true);
 
             match resource.resource {
                 // Note: pass in ref here have cons that, it can only have one argument
@@ -277,11 +288,16 @@ impl<'exec, 'dynamic> ExecutingRenderGraph<'exec, 'dynamic> {
                 GraphPreparedResource::Delayed(_) => panic!("No transition on GraphPreparedResource::Delayed!"),
             }
         }
+        assert_eq!(need_transition.len(), resources.len());
+
+        //dbg!(&transitions);
 
         let mut idx = 0;
-        for (resource, access) in resources.iter() {
-            // allow pipeline to overlap
-            if resource.get_current_access() == access.access_type && access.skip_sync_if_same {
+        for (res_idx, (resource, access)) in resources.iter().enumerate() {
+            // if resource.get_current_access() == access.access_type && access.skip_sync_if_same {
+            //     continue;
+            // }
+            if !need_transition[res_idx] {
                 continue;
             }
 

@@ -1,9 +1,11 @@
 use std::collections::HashMap;
 
 use parking_lot::Mutex;
-use ash::vk::{self};
+use ash::vk;
 use derive_builder::Builder;
 use vk_sync::AccessType;
+
+use raven_core::math;
 
 use super::allocator::{MemoryLocation, AllocationCreateDesc, self, Allocation};
 use super::{Device, RHIError, BufferDesc, ImageBarrier};
@@ -370,32 +372,55 @@ impl ImageDesc {
             ..Default::default()
         }.array_elements(6).create_flags(vk::ImageCreateFlags::CUBE_COMPATIBLE)
     }
-    
-    #[inline]
+
+    pub fn divide_up_extent(mut self, division: [u32; 3]) -> Self {
+        for (extent, div) in self.extent.iter_mut().zip(&division) {
+            *extent = ((*extent + div - 1) / div).max(1);
+        }
+        self
+    }
+
+    pub fn divide_extent(mut self, division: [u32; 3]) -> Self {
+        for (extent, div) in self.extent.iter_mut().zip(&division) {
+            *extent = (*extent / div).max(1);
+        }
+        self
+    }
+
+    pub fn half_resolution(self) -> Self {
+        self.divide_up_extent([2, 2, 2])
+    }
+
+    pub fn full_mipmap_levels(mut self) -> Self {
+        self.mip_levels = math::max_mipmap_level_3d(self.extent[0], self.extent[1], self.extent[2]);
+        self
+    }
+
     pub fn array_elements(mut self, num: u32) -> Self {
         self.array_elements = num;
         self
     }
 
-    #[inline]
+    pub fn format(mut self, format: vk::Format) -> Self {
+        self.format = format;
+        self
+    }
+
     pub fn create_flags(mut self, flags: vk::ImageCreateFlags) -> Self {
         self.flags = flags;
         self
     }
 
-    #[inline]
     pub fn usage_flags(mut self, flags: vk::ImageUsageFlags) -> Self {
         self.usage = flags;
         self
     }
 
-    #[inline]
     pub fn image_type(mut self, image_type: ImageType) -> Self {
         self.image_type = image_type;
         self
     }
 
-    #[inline]
     pub fn mipmap_level(mut self, level: u16) -> Self {
         self.mip_levels = level;
         self

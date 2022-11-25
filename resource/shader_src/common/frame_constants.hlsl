@@ -13,6 +13,9 @@ struct FrameConstants {
     CameraMatrices camera_matrices;
 
     uint display_sh_cubemap;
+    float pre_exposure_mult;
+    float pre_exposure_prev_frame_mult;
+    float pre_exposure_delta;
 };
 
 [[vk::binding(0, 2)]] ConstantBuffer<FrameConstants> frame_constants_dyn;

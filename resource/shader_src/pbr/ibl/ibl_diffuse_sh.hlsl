@@ -24,7 +24,7 @@ float3 get_env_radiance(float3 location)
 void main(uint3 px: SV_DispatchThreadID)
 {
     // Run only once
-    if (px.x >= 1 || px.y >= 1 || px.z >= 1)
+    if (any(px >= 1))
     {
         return;
     }

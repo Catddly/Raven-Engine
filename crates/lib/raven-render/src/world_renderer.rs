@@ -7,7 +7,78 @@ use raven_core::{utility::as_byte_slice_values, asset::asset_registry::AssetHand
 use raven_rg::{RenderGraphBuilder, RgHandle, IntoPipelineDescriptorBindings, RenderGraphPassBindable};
 use raven_rhi::{Rhi, backend::{ImageDesc, Image, AccessType}};
 
-use crate::{MeshRenderer, IblRenderer, SkyRenderer, MeshRasterScheme, MeshShadingContext, renderer::mesh_renderer::{MeshHandle, InstanceHandle}};
+use crate::{MeshRenderer, IblRenderer, SkyRenderer, MeshRasterScheme, MeshShadingContext, renderer::{mesh_renderer::{MeshHandle, InstanceHandle}, post_process_renderer::{PostProcessRenderer, self}}};
+
+pub struct AutoExposureAdjustment {
+    pub speed_log2: f32,
+
+    ev_fast: f32,
+    ev_slow: f32,
+
+    enabled: bool,
+}
+
+impl AutoExposureAdjustment {
+    pub fn new() -> Self {
+        Self {
+            speed_log2: 2.5_f32.log2(),
+
+            ev_fast: 0.0,
+            ev_slow: 0.0,
+
+            // TODO: change to runtime variable
+            enabled: post_process_renderer::ENABLE_AUTO_EXPOSURE,
+        }
+    }
+
+    /// Get the smoothed transitioned exposure value
+    pub fn get_ev_smoothed(&self) -> f32 {
+        const DYNAMIC_EXPOSURE_BIAS: f32 = -2.0;
+
+        if self.enabled {
+            (self.ev_slow + self.ev_fast) * 0.5 + DYNAMIC_EXPOSURE_BIAS
+        } else {
+            0.0
+        }
+    }
+
+    pub fn update_ev(&mut self, ev: f32, dt: f32) {
+        if !self.enabled {
+            return;
+        }
+
+        let ev = ev.clamp(post_process_renderer::LUMINANCE_HISTOGRAM_MIN_LOG2 as f32, post_process_renderer::LUMINANCE_HISTOGRAM_MAX_LOG2 as f32);
+
+        let dt = dt * self.speed_log2.exp2(); // reverse operation
+
+        let t_fast = 1.0 - (-1.0 * dt).exp();
+        self.ev_fast = (ev - self.ev_fast) * t_fast + self.ev_fast;
+
+        let t_slow = 1.0 - (-0.25 * dt).exp();
+        self.ev_slow = (ev - self.ev_slow) * t_slow + self.ev_slow;
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct ExposureState {
+    pub pre_mult: f32,
+    pub post_mult: f32,
+
+    pub pre_mult_prev_frame: f32,
+    // pre_mult / pre_mult_prev_frame
+    pub pre_mult_delta: f32,
+}
+
+impl Default for ExposureState {
+    fn default() -> Self {
+        Self {
+            pre_mult: 1.0,
+            post_mult: 1.0,
+            pre_mult_prev_frame: 1.0,
+            pre_mult_delta: 1.0,
+        }
+    }
+}
 
 pub struct WorldRenderer {
     render_resolution: [u32; 2],
@@ -16,6 +87,10 @@ pub struct WorldRenderer {
     ibl_renderer: IblRenderer,
 
     mesh_renderer: MeshRenderer,
+
+    auto_exposure: AutoExposureAdjustment,
+    exposure_state: ExposureState,
+    post_process_renderer: PostProcessRenderer,
 }
 
 impl WorldRenderer {
@@ -26,6 +101,10 @@ impl WorldRenderer {
             sky_renderer: SkyRenderer::new(),
             ibl_renderer: IblRenderer::new(rhi),
             mesh_renderer: MeshRenderer::new(rhi, MeshRasterScheme::Deferred, render_res),
+
+            auto_exposure: AutoExposureAdjustment::new(),
+            exposure_state: Default::default(),
+            post_process_renderer: PostProcessRenderer::new(rhi),
         }
     }
 
@@ -46,8 +125,33 @@ impl WorldRenderer {
         self.mesh_renderer.add_mesh_instance(transform, handle)
     }
 
-    pub fn prepare_rg(&mut self, rg: &mut RenderGraphBuilder) -> RgHandle<Image> {
-        let main_img_desc: ImageDesc = ImageDesc::new_2d(self.render_resolution, vk::Format::R32G32B32A32_SFLOAT);
+    pub fn update_pre_exposure(&mut self, dt: f32) {
+        self.auto_exposure.update_ev(-self.post_process_renderer.image_log2_luminance(), dt);
+        
+        let ev_mult = (0.0 + self.auto_exposure.get_ev_smoothed()).exp2();
+
+        self.exposure_state.pre_mult_prev_frame = self.exposure_state.pre_mult;
+
+        // Smoothly blend the pre-exposure.
+        // TODO: Ensure we correctly use the previous frame's pre-mult in temporal shaders,
+        // and then nuke/speed-up this blending.
+        self.exposure_state.pre_mult = self.exposure_state.pre_mult * 0.9 + ev_mult * 0.1;
+
+        // Put the rest in post-exposure.
+        self.exposure_state.post_mult = ev_mult / self.exposure_state.pre_mult;
+
+        // update delta
+        self.exposure_state.pre_mult_delta = self.exposure_state.pre_mult / self.exposure_state.pre_mult_prev_frame;
+    }
+
+    pub fn current_exposure_state(&self) -> ExposureState {
+        self.exposure_state
+    }
+
+    pub fn prepare_rg(&mut self, rg: &mut RenderGraphBuilder, dt: f32) -> RgHandle<Image> {
+        self.update_pre_exposure(dt);
+
+        let main_img_desc: ImageDesc = ImageDesc::new_2d(self.render_resolution, vk::Format::R16G16B16A16_SFLOAT);
         let mut main_img = rg.new_resource(main_img_desc);
 
         {
@@ -140,13 +244,20 @@ impl WorldRenderer {
             }
         }
 
-        main_img
+        let post_img = self.post_process_renderer.prepare_rg(
+            rg, main_img,
+            self.exposure_state.post_mult, 1.0
+        );
+
+        post_img
     }
 
     pub fn clean(self, rhi: &Rhi) {
-        self.mesh_renderer.clean(rhi);
+        self.post_process_renderer.clean(rhi);
 
         self.ibl_renderer.clean(rhi);
         self.sky_renderer.clean(rhi);
+
+        self.mesh_renderer.clean(rhi);
     }
 }

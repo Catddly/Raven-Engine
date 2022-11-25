@@ -7,7 +7,7 @@ use turbosloth::*;
 use raven_core::concurrent::executor;
 
 use crate::{
-    backend::{RasterPipeline, ShaderBinary, RasterPipelineDesc, ComputePipelineDesc, ComputePipeline, PipelineShaderDesc, ShaderSource, ShaderBinaryStage, Device, pipeline},
+    backend::{RasterPipeline, ShaderBinary, RasterPipelineDesc, ComputePipelineDesc, ComputePipeline, PipelineShaderDesc, ShaderSource, ShaderBinaryStage, Device, pipeline::{self, CommonPipelinePtrs}, DEVICE_DRAW_FRAMES},
     shader_compiler::{CompileShader, CompileShaderStage}
 };
 
@@ -50,12 +50,14 @@ pub struct PipelineCache {
     raster_pipelines_entry: HashMap<RasterPipelineHandle, RasterPipelineEntry>,
     compute_pipelines_entry: HashMap<ComputePipelineHandle, ComputePipelineEntry>,
 
-    // for fast backward search
+    /// for fast backward search
     desc_to_raster_handle: HashMap<Vec<PipelineShaderDesc>, RasterPipelineHandle>,
     desc_to_compute_handle: HashMap<ComputePipelineDesc, ComputePipelineHandle>,
 
     raster_pipeline_spirv_cache: HashMap<RasterPipelineHandle, Arc<Vec<ShaderBinaryStage>>>,
     compute_pipeline_spirv_cache: HashMap<ComputePipelineHandle, Arc<ShaderBinary>>,
+
+    defer_release_pipelines: [Vec<CommonPipelinePtrs>; DEVICE_DRAW_FRAMES],
 }
 
 impl PipelineCache {
@@ -71,6 +73,8 @@ impl PipelineCache {
         
             raster_pipeline_spirv_cache: HashMap::new(),
             compute_pipeline_spirv_cache: HashMap::new(),
+
+            defer_release_pipelines: Default::default(),
         }
     }
 
@@ -169,14 +173,21 @@ impl PipelineCache {
     }
 
     fn discard_stale_pipelines(&mut self, device: &Device) {
-        // wipe out all the stale pipelines
+        let device_frame_idx = device.get_device_frame_index() as usize;
+
+        // destroy last frame's stale pipelines
+        for stale_pipelines in self.defer_release_pipelines[device_frame_idx].drain(..) {
+            pipeline::destroy_common_pipeline_ptrs(device, stale_pipelines);
+        }
+
+        // insert this frame's stale pipelines
         for (_, entry) in &mut self.raster_pipelines_entry {
             // if the shader binary is not up-to-date, the pipeline need to be reconstructed
             if !entry.lazy_binary.is_up_to_date() {
                 if let Some(pipe) = entry.pipeline.take() {
                     // make sure no one is still using this pipeline
                     let pipe = Arc::try_unwrap(pipe).expect("User holding a smart pointer to some stale raster pipeline!");
-                    pipeline::destroy_raster_pipeline(&device, pipe);
+                    self.defer_release_pipelines[device_frame_idx].push(pipe.pipeline.pipeline_ptrs);
 
                     entry.pipeline = None;
                 }
@@ -189,7 +200,7 @@ impl PipelineCache {
                 if let Some(pipe) = entry.pipeline.take() {
                     // make sure no one is still using this pipeline
                     let pipe = Arc::try_unwrap(pipe).expect("User holding a smart pointer to some stale compute pipeline!");
-                    pipeline::destroy_compute_pipeline(&device, pipe);
+                    self.defer_release_pipelines[device_frame_idx].push(pipe.pipeline.pipeline_ptrs);
 
                     entry.pipeline = None;
                 }

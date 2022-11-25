@@ -1,9 +1,18 @@
+use std::collections::HashSet;
+
 use anyhow::Ok;
 use fern::colors::{Color, ColoredLevelConfig};
 
 pub use log::LevelFilter as LevelFilter;
 
 use crate::filesystem;
+
+lazy_static::lazy_static! {
+    static ref GLOBAL_MUTE_MODULE_NAMES: HashSet<&'static str> = HashSet::from([
+        "hotwatch::util",
+        "gpu_allocator::vulkan"
+    ]);
+}
 
 /// Log configuration.
 #[derive(Copy)]
@@ -38,14 +47,18 @@ fn setup_logger(config: LogConfig) -> anyhow::Result<()> {
 
     // standard output dispatch, for trace, debug and info messages.
     let stdout = fern::Dispatch::new()
-        .filter(|metadata| {
-            metadata.level() >= log::Level::Info
+        .filter(|meta| {
+            meta.level() >= log::Level::Info &&
+            GLOBAL_MUTE_MODULE_NAMES.get(meta.target()).is_none()
         })
         .chain(std::io::stdout());
             
     // standard error dispatch, for warn and error messages.
     let stderr = fern::Dispatch::new()
         .level(LevelFilter::Warn)
+        .filter(|meta| {
+            GLOBAL_MUTE_MODULE_NAMES.get(meta.target()).is_none()
+        })
         .chain(std::io::stderr());
     
     // console output with the colors

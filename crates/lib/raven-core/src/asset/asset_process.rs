@@ -241,7 +241,7 @@ impl LazyWorker for RawTextureProcess {
 
         // generate mipmap bytes
         let lod_groups = if desc.use_mipmap {
-            let mipmap_level = math::max_mipmap_level(desc.extent[0], desc.extent[1]);
+            let mipmap_level = math::max_mipmap_level_2d(desc.extent[0], desc.extent[1]);
 
             let mut mips = Vec::new();
             // level 0

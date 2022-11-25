@@ -26,7 +26,7 @@ use raven_core::input::{InputManager, KeyCode, MouseButton};
 use raven_core::filesystem::{self, ProjectFolder};
 use raven_render::{WorldRenderer};
 use raven_rhi::{RHIConfig, Rhi, backend};
-use raven_rg::{Executor, IntoPipelineDescriptorBindings, RenderGraphPassBindable, DrawFrameContext};
+use raven_rg::{Executor, IntoPipelineDescriptorBindings, RenderGraphPassBindable, FrameConstants};
 
 use raven_core::system::OnceQueue;
 
@@ -233,7 +233,7 @@ pub fn main_loop(engine_context: &mut EngineContext<impl user::App>) {
         };
 
         // tick logic begin
-        let draw_frame_context = {
+        let mut frame_constants = {
             // system messages
             event_loop.run_return(|event, _, control_flow| {
                 control_flow.set_poll();
@@ -289,10 +289,14 @@ pub fn main_loop(engine_context: &mut EngineContext<impl user::App>) {
 
             static_events.clear();
 
-            DrawFrameContext {
+            FrameConstants {
                 cam_matrices,
 
                 display_sh_cubemap : if display_sh_cubemap { 1 } else { 0 },
+                // TODO: this should be delayed
+                pre_exposure_mult: 1.0,
+                pre_exposure_prev_frame_mult: 1.0,
+                pre_exposure_delta: 1.0,
             }
         };
         // tick render end
@@ -301,7 +305,12 @@ pub fn main_loop(engine_context: &mut EngineContext<impl user::App>) {
         {
             // prepare and compile render graph
             let prepare_result = rg_executor.prepare(|rg| {
-                let main_img = renderer.prepare_rg(rg);
+                let main_img = renderer.prepare_rg(rg, dt);
+                let exposure_state = renderer.current_exposure_state();
+
+                frame_constants.pre_exposure_mult = exposure_state.pre_mult;
+                frame_constants.pre_exposure_prev_frame_mult = exposure_state.pre_mult_prev_frame;
+                frame_constants.pre_exposure_delta = exposure_state.pre_mult_delta;
     
                 // copy final image to swapchain
                 let mut swapchain_img = rg.get_swapchain(resolution);
@@ -332,7 +341,7 @@ pub fn main_loop(engine_context: &mut EngineContext<impl user::App>) {
             match prepare_result {
                 Ok(()) => {
                     rg_executor.draw(
-                        &draw_frame_context,
+                        &frame_constants,
                         &mut rhi.swapchain
                     );
                 },

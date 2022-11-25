@@ -1,6 +1,7 @@
 #include "gbuffer.hlsl"
 #include "../math/constants.hlsl"
 #include "../math/math.hlsl"
+#include "../color/color_space.hlsl"
 #include "../common/frame_constants.hlsl"
 #include "../common/float_precision.hlsl"
 #include "../common/uv.hlsl"
@@ -59,11 +60,6 @@ float3 get_ibl_irradiance(float3 normal)
 #include "../pbr/ibl/ibl_lighting.hlsl"
 #include "../pbr/brdf.hlsl"
 
-// https://knarkowicz.wordpress.com/2016/01/06/aces-filmic-tone-mapping-curve/
-float3 ACESFilm(float3 x){
-    return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
-}
-
 [numthreads(8, 8, 1)]
 void main(in uint2 px: SV_DispatchThreadID) {
     float2 resolution = float2(push_constants.render_res_width, push_constants.render_res_height);
@@ -81,7 +77,7 @@ void main(in uint2 px: SV_DispatchThreadID) {
         if (display == 0) 
         {
             float4 pixel = cube_map.SampleLevel(sampler_llce, direction, 0.0);
-            output_tex[px] = float4(pixel.rgb, 1.0);
+            output_tex[px] = float4(srgb_to_linear(pixel.rgb) * frame_constants_dyn.pre_exposure_mult, 1.0);
         }
         else
         {
@@ -125,18 +121,18 @@ void main(in uint2 px: SV_DispatchThreadID) {
     Brdf brdf = Brdf::from_gbuffer(gbuffer, wo.z);
     MultiScatterCompensate compensate = MultiScatterCompensate::compensate_for(wo, gbuffer.roughness, brdf.specular_brdf.F0);
 
-    float3 total_radiance = 0.0.xxx;
+    float3 total_radiance = 0.0.xxx; 
     // direct lighting
     {
         const float3 brdf_value = brdf.eval_ndotl_weighted_direction_light(wi, wo, compensate); // ndotl term is already in brdf
         const float3 light_radiance = float3(1.0, 1.0, 1.0);
-
+ 
         total_radiance += brdf_value * light_radiance;
     }
     
     // indirect lighting
     {
-        Ibl ibl = Ibl::from_brdf(brdf.specular_brdf);
+        Ibl ibl = Ibl::from_brdf(brdf.specular_brdf); 
         const float3 R = reflect(view_ray.Direction, gbuffer.normal);
 
         float3 irradiance = ibl.eval_gbuffer(gbuffer, wo, R, compensate, brdf.diffuse_brdf.reflectance);
@@ -144,11 +140,7 @@ void main(in uint2 px: SV_DispatchThreadID) {
         total_radiance += irradiance;
     }
 
-    // tone mapping
-    total_radiance = ACESFilm(total_radiance);
-
-    // gamma correction
-    total_radiance = pow(total_radiance, 1.0 / 2.2);
+    total_radiance = total_radiance * frame_constants_dyn.pre_exposure_mult;
 
     output_tex[px] = float4(total_radiance, 1.0);
 }

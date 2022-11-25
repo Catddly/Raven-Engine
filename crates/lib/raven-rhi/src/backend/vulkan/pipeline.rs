@@ -10,14 +10,41 @@ use super::descriptor::PipelineSetBindings;
 
 pub type PipelineSetLayoutInfo = BTreeMap<u32, vk::DescriptorType>;
 
-#[derive(Debug)]
-pub struct CommonPipeline {
+#[derive(Copy, Clone, Debug)]
+pub struct CommonPipelinePtrs {
     pub pipeline_layout: vk::PipelineLayout,
     pub pipeline: vk::Pipeline,
+}
+
+#[derive(Debug)]
+pub struct CommonPipelineInfo {
     pub set_layout_infos: Vec<PipelineSetLayoutInfo>,
     pub descriptor_pool_sizes: Vec<vk::DescriptorPoolSize>,
     pub descriptor_set_layouts: Vec<vk::DescriptorSetLayout>,
     pub pipeline_bind_point: vk::PipelineBindPoint,
+}
+
+#[derive(Debug)]
+pub struct CommonPipeline {
+    pub pipeline_ptrs: CommonPipelinePtrs,
+    pub pipeline_info: CommonPipelineInfo,
+}
+
+impl CommonPipeline {
+    #[inline]
+    pub fn pipeline(&self) -> vk::Pipeline {
+        self.pipeline_ptrs.pipeline
+    }
+
+    #[inline]
+    pub fn pipeline_layout(&self) -> vk::PipelineLayout {
+        self.pipeline_ptrs.pipeline_layout
+    }
+
+    #[inline]
+    pub fn pipeline_bind_point(&self) -> vk::PipelineBindPoint {
+        self.pipeline_info.pipeline_bind_point
+    }
 }
 
 // Raster Pipeline description
@@ -301,29 +328,36 @@ pub fn create_raster_pipeline(
 
     Ok(RasterPipeline {
         pipeline: CommonPipeline {
-            pipeline_layout,
-            pipeline,
-            set_layout_infos,
-            descriptor_pool_sizes,
-            descriptor_set_layouts: set_layout,
-            pipeline_bind_point: vk::PipelineBindPoint::GRAPHICS,
+            pipeline_ptrs: CommonPipelinePtrs { 
+                pipeline_layout,
+                pipeline 
+            },
+            pipeline_info: CommonPipelineInfo {
+                set_layout_infos,
+                descriptor_pool_sizes,
+                descriptor_set_layouts: set_layout,
+                pipeline_bind_point: vk::PipelineBindPoint::GRAPHICS,
+            }
         }
     })
 }
 
 pub fn destroy_raster_pipeline(device: &Device, pipeline: RasterPipeline) {
-    destroy_pipeline_common(device, pipeline.pipeline);
+    destroy_common_pipeline_ptrs(device, pipeline.pipeline.pipeline_ptrs);
 }
 
 pub fn destroy_compute_pipeline(device: &Device, pipeline: ComputePipeline) {
-    destroy_pipeline_common(device, pipeline.pipeline);
+    destroy_common_pipeline_ptrs(device, pipeline.pipeline.pipeline_ptrs);
 }
 
 #[inline]
-fn destroy_pipeline_common(device: &Device, pipeline: CommonPipeline) {
+pub(crate) fn destroy_common_pipeline_ptrs(device: &Device, pipeline_ptrs: CommonPipelinePtrs) {
     unsafe {
         device.raw
-            .destroy_pipeline(pipeline.pipeline, None);
+            .destroy_pipeline_layout(pipeline_ptrs.pipeline_layout, None);
+
+        device.raw
+            .destroy_pipeline(pipeline_ptrs.pipeline, None);
     }
 }
 
@@ -428,12 +462,16 @@ pub fn create_compute_pipeline(
 
     Ok(ComputePipeline {
         pipeline: CommonPipeline {
-            pipeline_layout,
-            pipeline,
-            set_layout_infos,
-            descriptor_pool_sizes,
-            descriptor_set_layouts: set_layout,
-            pipeline_bind_point: vk::PipelineBindPoint::COMPUTE,
+            pipeline_ptrs: CommonPipelinePtrs { 
+                pipeline_layout,
+                pipeline 
+            },
+            pipeline_info: CommonPipelineInfo {
+                set_layout_infos,
+                descriptor_pool_sizes,
+                descriptor_set_layouts: set_layout,
+                pipeline_bind_point: vk::PipelineBindPoint::COMPUTE,
+            }
         },
         dispatch_groups: [group_size.0, group_size.1, group_size.2],
     })

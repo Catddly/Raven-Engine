@@ -79,7 +79,7 @@ impl LazyWorker for CompileShader {
     type Output = anyhow::Result<ShaderBinary>;
     
     async fn run(self, ctx: RunContext) -> Self::Output {
-        glog::debug!("Run {:?} on thread: {:?}", self.source, std::thread::current().name());
+        //glog::debug!("Run {:?} on thread: {:?}", self.source, std::thread::current().name());
 
         let ext = self
             .source

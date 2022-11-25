@@ -70,6 +70,20 @@ impl RenderGraphPassBinding {
         }
     }
 
+    pub fn with_mipmap_level_count(&mut self, level_count: u32) {
+        match self {
+            RenderGraphPassBinding::Image(image) => {
+                image.view_desc.level_count = Some(level_count);
+            },
+            RenderGraphPassBinding::ImageArray(images) => {
+                for image in images {
+                    image.view_desc.level_count = Some(level_count);
+                }
+            },
+            _ => panic!("Try to add ImageAspectFlags to buffers!"),
+        }
+    }
+
     pub fn with_image_view(&mut self, view: vk::ImageViewType) {
         match self {
             RenderGraphPassBinding::Image(image) => {
@@ -231,10 +245,10 @@ impl<'context, 'exec, 'a> BoundComputePipeline<'context, 'exec, 'a> {
         unsafe {
             device.raw.cmd_dispatch(
                 self.context.cb.raw,
-                // divide floor
-                threads[0] / dispatch_groups[0],
-                threads[1] / dispatch_groups[1],
-                threads[2] / dispatch_groups[2]
+                // divide ceil
+                (threads[0] + dispatch_groups[0] - 1) / dispatch_groups[0],
+                (threads[1] + dispatch_groups[1] - 1) / dispatch_groups[1],
+                (threads[2] + dispatch_groups[2] - 1) / dispatch_groups[2]
             );
         }
     }
@@ -250,7 +264,7 @@ impl<'context, 'exec, 'a> BoundComputePipeline<'context, 'exec, 'a> {
         unsafe {
             device.raw.cmd_push_constants(
                 self.context.cb.raw, 
-                self.pipeline.pipeline.pipeline_layout,
+                self.pipeline.pipeline.pipeline_layout(),
                 stage_flags,
                 offset,
                 bytes
@@ -276,7 +290,7 @@ impl<'context, 'exec, 'a> BoundRasterPipeline<'context, 'exec, 'a> {
         unsafe {
             device.raw.cmd_push_constants(
                 self.context.cb.raw, 
-                self.pipeline.pipeline_layout, 
+                self.pipeline.pipeline_layout(), 
                 stage_flags, 
                 offset, 
                 bytes
@@ -496,20 +510,22 @@ impl<'exec, 'a> PassContext<'exec, 'a> {
         set_layout: &PipelineSetLayoutBindings,
         raw_sets: &HashMap<u32, vk::DescriptorSet>,
     ) -> anyhow::Result<(), RHIError> {
+        let pipeline_info = &pipeline.pipeline_info;
+
         // bind pipeline
         unsafe {
             device.raw
-                .cmd_bind_pipeline(self.cb.raw, pipeline.pipeline_bind_point, pipeline.pipeline);
+                .cmd_bind_pipeline(self.cb.raw, pipeline.pipeline_bind_point(), pipeline.pipeline());
         }
         
         // bind engine global frame constants
         // TODO: do we really need to bind it every time bound pipeline?
-        if pipeline.set_layout_infos.get(2).is_some() {
+        if pipeline_info.set_layout_infos.get(2).is_some() {
             unsafe {
                 device.raw.cmd_bind_descriptor_sets(
                     self.cb.raw, 
-                    pipeline.pipeline_bind_point, 
-                    pipeline.pipeline_layout,
+                    pipeline.pipeline_bind_point(), 
+                    pipeline.pipeline_layout(),
                     2,
                     &[self.context.execution_params.global_constants_set], 
                     &[
@@ -523,7 +539,7 @@ impl<'exec, 'a> PassContext<'exec, 'a> {
         // create and bind pipeline's descriptor sets
         for (set_idx, bindings) in set_layout.bindings.iter() {
             // trying to bind a resource that is not defined in pipeline's shader
-            if pipeline.set_layout_infos.get(*set_idx as usize).is_none() {
+            if pipeline_info.set_layout_infos.get(*set_idx as usize).is_none() {
                 continue;
             }
 
@@ -541,8 +557,8 @@ impl<'exec, 'a> PassContext<'exec, 'a> {
             unsafe {
                 device.raw.cmd_bind_descriptor_sets(
                     self.cb.raw, 
-                    pipeline.pipeline_bind_point, 
-                    pipeline.pipeline_layout,
+                    pipeline.pipeline_bind_point(), 
+                    pipeline.pipeline_layout(),
                     *set_idx, 
                     &[*set], 
                     &[]

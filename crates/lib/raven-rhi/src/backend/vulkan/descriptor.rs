@@ -332,11 +332,12 @@ pub fn bind_descriptor_set_in_place(
     bindings: &[DescriptorSetBinding],
 ) {
     let raw_device = &device.raw;
+    let pipeline_info = &pipeline.pipeline_info;
 
     let pool = {
         let descriptor_pool_ci = vk::DescriptorPoolCreateInfo::builder()
             .max_sets(1)
-            .pool_sizes(&pipeline.descriptor_pool_sizes);
+            .pool_sizes(&pipeline_info.descriptor_pool_sizes);
 
         unsafe { raw_device.create_descriptor_pool(&descriptor_pool_ci, None) }.unwrap()
     };
@@ -349,13 +350,13 @@ pub fn bind_descriptor_set_in_place(
         let allocate_info = vk::DescriptorSetAllocateInfo::builder()
             .descriptor_pool(pool)
             .set_layouts(std::slice::from_ref(
-                &pipeline.descriptor_set_layouts[set_idx as usize],
+                &pipeline_info.descriptor_set_layouts[set_idx as usize],
             ));
 
         unsafe { raw_device.allocate_descriptor_sets(&allocate_info) }.unwrap()[0]
     };
 
-    let set_layout_info = if let Some(set_layout_info) = pipeline.set_layout_infos.get(set_idx as usize) {
+    let set_layout_info = if let Some(set_layout_info) = pipeline_info.set_layout_infos.get(set_idx as usize) {
         set_layout_info
     } else {
         panic!("Expect set {} but not found in pipeline shader!", set_idx)
@@ -377,8 +378,8 @@ pub fn bind_descriptor_set_in_place(
 
         raw_device.cmd_bind_descriptor_sets(
             cmd.raw,
-            pipeline.pipeline_bind_point,
-            pipeline.pipeline_layout, 
+            pipeline.pipeline_bind_point(),
+            pipeline.pipeline_layout(), 
             set_idx, 
             &[descriptor_set], 
             dynamic_offsets.as_slice()

@@ -2,17 +2,16 @@ use std::sync::Arc;
 
 use ash::vk;
 
-use raven_core::{utility::as_byte_slice_values, math::{max_mipmap_level, SHBasis9}};
+use raven_core::{utility::as_byte_slice_values, math::{self, SHBasis9}};
 use raven_rg::{RenderGraphBuilder, RgHandle, RenderGraphPassBindable, IntoPipelineDescriptorBindings};
 use raven_rhi::{backend::{Image, AccessType, ImageDesc, Buffer, BufferDesc}, Rhi, copy_engine::CopyEngine};
 
-const CONVOLVED_CUBEMAP_RESOLUTION: usize = 64;
 const PREFILTER_CUBEMAP_RESOLUTION: usize = 512;
 
 pub struct IblRenderer {
     sh_buffer: Arc<Buffer>,
 
-    convolved_cubemap: Arc<Image>,
+    //convolved_cubemap: Arc<Image>,
     prefilter_cubemap: Arc<Image>,
     brdf_lut: Arc<Image>,
     need_convolve: bool,
@@ -20,13 +19,13 @@ pub struct IblRenderer {
 
 impl IblRenderer {
     pub fn new(rhi: &Rhi) -> Self {
-        let convolved = rhi.device.create_image(ImageDesc::new_cube(CONVOLVED_CUBEMAP_RESOLUTION as _, vk::Format::R16G16B16A16_SFLOAT)
-            .mipmap_level(max_mipmap_level(CONVOLVED_CUBEMAP_RESOLUTION as _, CONVOLVED_CUBEMAP_RESOLUTION as _))
-            .usage_flags(vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::STORAGE), None)
-            .expect("Failed to create convolved cubamap!");
+        // let convolved = rhi.device.create_image(ImageDesc::new_cube(CONVOLVED_CUBEMAP_RESOLUTION as _, vk::Format::R16G16B16A16_SFLOAT)
+        //     .mipmap_level(max_mipmap_level(CONVOLVED_CUBEMAP_RESOLUTION as _, CONVOLVED_CUBEMAP_RESOLUTION as _))
+        //     .usage_flags(vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::STORAGE), None)
+        //     .expect("Failed to create convolved cubamap!");
 
         let prefilter = rhi.device.create_image(ImageDesc::new_cube(PREFILTER_CUBEMAP_RESOLUTION as _, vk::Format::R16G16B16A16_SFLOAT)
-            .mipmap_level(max_mipmap_level(PREFILTER_CUBEMAP_RESOLUTION as _, PREFILTER_CUBEMAP_RESOLUTION as _))
+            .mipmap_level(math::max_mipmap_level_2d(PREFILTER_CUBEMAP_RESOLUTION as _, PREFILTER_CUBEMAP_RESOLUTION as _))
             .usage_flags(vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::STORAGE), None)
             .expect("Failed to create prefilter cubamap!");
 
@@ -43,7 +42,7 @@ impl IblRenderer {
         Self {
             sh_buffer: Arc::new(sh_buffer),
 
-            convolved_cubemap: Arc::new(convolved),
+            //convolved_cubemap: Arc::new(convolved),
             prefilter_cubemap: Arc::new(prefilter),
             brdf_lut: Arc::new(brdf),
             need_convolve: true,
@@ -88,34 +87,9 @@ impl IblRenderer {
                 let pipeline = pass.register_compute_pipeline("pbr/ibl/ibl_diffuse_sh.hlsl");
     
                 let cubemap_ref = pass.read(cubemap, AccessType::AnyShaderReadSampledImageOrUniformTexelBuffer);
-                //let convolve_cubemap_ref = pass.write(&mut sh_buffer, AccessType::ComputeShaderWrite);
                 let sh_buffer_ref = pass.write(&mut sh_buffer, AccessType::ComputeShaderWrite);
     
-                //let cubemap_extent = cubemap.desc().extent;
                 pass.render(move |ctx| {
-                    // let mip_level = max_mipmap_level(CONVOLVED_CUBEMAP_RESOLUTION as _, CONVOLVED_CUBEMAP_RESOLUTION as _);
-                    // let bound_pipeline = ctx.bind_compute_pipeline(pipeline.into_bindings())?;
-             
-                    // for level in 0..mip_level {
-                    //     let mut cubemap_binding = cubemap_ref.bind();
-                    //     cubemap_binding.with_image_view(vk::ImageViewType::TYPE_2D_ARRAY);
-
-                    //     let mut convolve_cubemap_binding = convolve_cubemap_ref.bind();
-                    //     convolve_cubemap_binding.with_image_view(vk::ImageViewType::TYPE_2D_ARRAY);
-                    //     convolve_cubemap_binding.with_base_mipmap_level(level);
-
-                    //     bound_pipeline.rebind(0, &[
-                    //         cubemap_binding, convolve_cubemap_binding
-                    //     ])?;
-
-                    //     let convolved_res = (CONVOLVED_CUBEMAP_RESOLUTION >> level).max(1) as u32;
-    
-                    //     let push_constants = [cubemap_extent[0], convolved_res];
-                    //     bound_pipeline.push_constants(vk::ShaderStageFlags::COMPUTE, 0, as_byte_slice_values(&push_constants));
-        
-                    //     bound_pipeline.dispatch([convolved_res.max(8), convolved_res.max(8), 6]);
-                    // }
-
                     let mut cubemap_binding = cubemap_ref.bind();
                     cubemap_binding.with_image_view(vk::ImageViewType::TYPE_2D_ARRAY);
 
@@ -140,7 +114,7 @@ impl IblRenderer {
                 let prefilter_cubemap_ref = pass.write(&mut prefilter_cubemap, AccessType::ComputeShaderWrite);
     
                 pass.render(move |ctx| {
-                    let mip_level = max_mipmap_level(PREFILTER_CUBEMAP_RESOLUTION as _, PREFILTER_CUBEMAP_RESOLUTION as _);
+                    let mip_level = math::max_mipmap_level_2d(PREFILTER_CUBEMAP_RESOLUTION as _, PREFILTER_CUBEMAP_RESOLUTION as _);
                     let bound_pipeline = ctx.bind_compute_pipeline(pipeline.into_bindings())?;
     
                     for level in 0..mip_level {
@@ -194,14 +168,17 @@ impl IblRenderer {
     }
 
     pub fn clean(self, rhi: &Rhi) {
-        let convolved_cubemap = Arc::try_unwrap(self.convolved_cubemap)
+        // let convolved_cubemap = Arc::try_unwrap(self.convolved_cubemap)
+        //     .unwrap_or_else(|_| panic!("Failed to release cubemap, someone is still using it!"));
+        let sh_buffer = Arc::try_unwrap(self.sh_buffer)
             .unwrap_or_else(|_| panic!("Failed to release cubemap, someone is still using it!"));
         let prefilter_cubemap = Arc::try_unwrap(self.prefilter_cubemap)
             .unwrap_or_else(|_| panic!("Failed to release cubemap, someone is still using it!"));
         let brdf_lut = Arc::try_unwrap(self.brdf_lut)
             .unwrap_or_else(|_| panic!("Failed to release cubemap, someone is still using it!"));
 
-        rhi.device.destroy_image(convolved_cubemap);
+        //rhi.device.destroy_image(convolved_cubemap);
+        rhi.device.destroy_buffer(sh_buffer);
         rhi.device.destroy_image(prefilter_cubemap);
         rhi.device.destroy_image(brdf_lut);
     }

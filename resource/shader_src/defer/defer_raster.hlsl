@@ -15,7 +15,7 @@ struct {
 [[vk::binding(0)]] StructuredBuffer<row_major float3x4> instance_transforms_dyn; // dynamic read-only storage buffer
 
 struct VsOut {
-	float4 position: SV_Position;
+	float4 out_position: SV_Position;
     [[vk::location(0)]] float4 color: TEXCOORD0;
     [[vk::location(1)]] float2 uv: TEXCOORD1;
     [[vk::location(2)]] float3 normal: TEXCOORD2;
@@ -48,7 +48,7 @@ VsOut vs_main(uint vid: SV_VertexID, uint iid: SV_InstanceID) {
     float4 vs_pos = mul(cam.world_to_view, float4(ws_pos, 1.0));
     float4 cs_pos = mul(cam.view_to_clip, vs_pos);
 
-    vsout.position = cs_pos;
+    vsout.out_position = cs_pos;
     vsout.color = color;
     vsout.uv = uv;
     vsout.normal = vertex.normal;
@@ -96,15 +96,8 @@ PsOut ps_main(PsIn ps) {
     GBuffer gbuffer = GBuffer::zero();
     gbuffer.albedo = base_color * ps.color.rgb;
     gbuffer.normal = normal_ws;
-
-    // hack calculate roughness and metalness from instance_index
-    // uint x = push_constants.instance_index / 5;
-    // uint y = push_constants.instance_index % 5;
-
     gbuffer.metalness = mat.metalness;
     gbuffer.roughness = mat.roughness;
-    // gbuffer.metalness = lerp(0.0, 1.0, x / 4.0);
-    // gbuffer.roughness = lerp(0.0, 1.0, y / 4.0);
 
     PsOut psout;
     psout.gbuffer = asfloat(gbuffer.pack().data);

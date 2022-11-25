@@ -7,13 +7,13 @@ use std::collections::{HashSet, HashMap};
 use parking_lot::Mutex;
 use ash::{vk, extensions::khr};
 
-use crate::backend::CommandBuffer;
+use crate::backend::{CommandBuffer, DEVICE_DRAW_FRAMES};
 use crate::backend::vulkan::allocator::{Allocator, AllocatorCreateDesc, AllocatorDebugSettings};
 use crate::backend::vulkan::buffer::BufferDesc;
 use crate::backend::vulkan::{Instance, PhysicalDevice};
 use crate::backend::vulkan::util::utility;
 use crate::backend::vulkan::constants;
-use crate::draw_frame::DrawFrame;
+use crate::draw_frame::{DrawFrame, DeferReleasableResource};
 
 use super::RHIError;
 use super::physical_device::QueueFamily;
@@ -49,7 +49,7 @@ pub struct Device {
     current_frame: Cell<u32>,
     // CPU frames.
     // Note: In CPU controller side, we only have 2 frames here. But in the swapchain we have 3 images.
-    draw_frames: [Mutex<Arc<DrawFrame>>; 2],
+    draw_frames: [Mutex<Arc<DrawFrame>>; DEVICE_DRAW_FRAMES],
 }
 
 impl Device {
@@ -63,12 +63,16 @@ impl Device {
         }
     }
 
-    pub fn defer_release(&self, pool: vk::DescriptorPool) {
+    pub fn defer_release(&self, resource: impl DeferReleasableResource) {
         let current_frame = self.current_frame.get() as usize;
         let draw_frame = self.draw_frames[current_frame].lock();
         let mut defer_release_resources = draw_frame.defer_release_resources.lock();
+        
+        resource.enqueue(&mut defer_release_resources);
+    }
 
-        defer_release_resources.push(pool);
+    pub fn get_device_frame_index(&self) -> u32 {
+        self.current_frame.get()
     }
 
     pub fn begin_frame(&self) -> Arc<DrawFrame> {
@@ -92,7 +96,7 @@ impl Device {
         };
 
         // release previous frame's stale resources
-        draw_frame.release_stale_resources(&self.raw);
+        draw_frame.release_stale_render_resources(&self.raw);
         draw_frame.clone()
     }
 

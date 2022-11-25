@@ -42,10 +42,13 @@ pub struct ExecutionParams<'a> {
 
 #[repr(C, align(16))] // align to float4
 #[derive(Copy, Clone)]
-pub struct DrawFrameContext {
+pub struct FrameConstants {
     pub cam_matrices: CameraMatrices,
 
     pub display_sh_cubemap: u32,
+    pub pre_exposure_mult: f32,
+    pub pre_exposure_prev_frame_mult: f32,
+    pub pre_exposure_delta: f32,
 }
 
 #[derive(Copy, Clone)]
@@ -145,7 +148,7 @@ impl Executor {
         }
     }
 
-    pub fn draw(&mut self, draw_frame_context: &DrawFrameContext, swapchain: &mut Swapchain) {
+    pub fn draw(&mut self, draw_frame_context: &FrameConstants, swapchain: &mut Swapchain) {
         // begin drawing (record commands and submit)
         let compiled_rg = if let Some(rg) = self.compiled_rg.take() {
             rg

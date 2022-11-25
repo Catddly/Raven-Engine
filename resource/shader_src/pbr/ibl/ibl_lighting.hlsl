@@ -2,6 +2,7 @@
 #define _IBL_LIGHTING_HLSL_
 
 #include "../brdf.hlsl"
+//#include "../../common/frame_constants.hlsl"
 #include "../multi_scatter_compensate.hlsl"
 
 #define IBL_FORCE_ONLY_RADIANCE   0

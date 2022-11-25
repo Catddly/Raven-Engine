@@ -7,8 +7,18 @@ pub fn min_value_align_to(size: usize, alignment: usize) -> usize {
 }
 
 #[inline]
-pub fn max_mipmap_level(width: u32, height: u32) -> u16 {
-    (32 - width.leading_zeros()).max(32 - height.leading_zeros()) as u16
+pub fn max_mipmap_level_1d(res: u32) -> u16 {
+    (32 - res.leading_zeros()) as u16
+}
+
+#[inline]
+pub fn max_mipmap_level_2d(width: u32, height: u32) -> u16 {
+    max_mipmap_level_1d(width).max(max_mipmap_level_1d(height))
+}
+
+#[inline]
+pub fn max_mipmap_level_3d(width: u32, height: u32, depth: u32) -> u16 {
+    max_mipmap_level_1d(width).max(max_mipmap_level_1d(height)).max(max_mipmap_level_1d(depth))
 }
 
 #[inline]
