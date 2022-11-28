@@ -3,6 +3,7 @@
 
 #include "../math/constants.hlsl"
 #include "../math/math.hlsl"
+#include "../math/coordinate.hlsl"
 #include "../defer/gbuffer.hlsl"
 #include "../common/roughness_adjust.hlsl"
 
@@ -16,6 +17,9 @@
 #define USE_GGX_HEIGHT_CORRELATED_G_TERM 1
 
 #define MIN_DIELECTRICS_REFLECTIVITY 0.04
+
+#define BRDF_FORCE_DIFFUSE_SAMPLE_ONLY 0
+#define BRDF_FORCE_SPECULAR_SAMPLE_ONLY 0
 
 // G in DFG
 // Describes the self-shadowing property of the microfacets. 
@@ -33,61 +37,40 @@ struct ShadowMaskTermSmith
         const float denom = sqrt(term_sqrt) + ndots;
         return numerator / denom;
     }
-
-    // Smith G1 term (masking function) further optimized for GGX distribution (by substituting G_a into G1_GGX)
-    static float smith_ggx_split_Ga(float alpha2, float ndots2) {
-        return 2.0f / (sqrt(((alpha2 * (1.0f - ndots2)) + ndots2) / ndots2) + 1.0f);
-    }
-
+    
     static float smith_ggx_height_correlated(float ndotv, float ndotl, float alpha2)
     {
         const float lambda_1 = ndotv * sqrt(alpha2 + ndotl * (ndotl - alpha2 * ndotl));
         const float lambda_2 = ndotl * sqrt(alpha2 + ndotv * (ndotv - alpha2 * ndotv));
-        return 0.5 / (lambda_1 + lambda_2);
-    }
-
-    static float smith_ggx_height_correlated_over_g1(float ndotv, float ndotl, float alpha2)
-    {
-        float g1_v = smith_ggx_split_Ga(alpha2, ndotv * ndotv);
-        float g1_l = smith_ggx_split_Ga(alpha2, ndotl * ndotl);
-        return g1_l / (g1_v + g1_l - g1_v * g1_l);
+        return 2.0 * ndotl * ndotv / (lambda_1 + lambda_2);
     }
 
     static ShadowMaskTermSmith eval(float ndotv, float ndotl, float alpha2) {
         ShadowMaskTermSmith result;
     #if USE_GGX_HEIGHT_CORRELATED_G_TERM
         result.g2 = smith_ggx_height_correlated(ndotv, ndotl, alpha2);
-        result.g2_over_g1_wo = smith_ggx_height_correlated_over_g1(ndotv, ndotl, alpha2);
+        result.g2_over_g1_wo = result.g2 / smith_ggx_split(ndotv, alpha2);
     #else
-        result.g2 = smith_ggx_split(ndotl, a2) * smith_ggx_split(ndotv, a2);
-        result.g2_over_g1_wo = smith_ggx_split(ndotl, a2);
+        result.g2 = smith_ggx_split(ndotl, alpha2) * smith_ggx_split(ndotv, alpha2);
+        result.g2_over_g1_wo = smith_ggx_split(ndotl, alpha2);
     #endif
         return result;
     }
 };
 
-// See: "An efficient and Physically Plausible Real-Time Shading Model" in ShaderX7 by Schuler
-// Attenuates F90 for very low F0 values
-float3 get_F90(float3 F0)
-{
-    const float t = (1.0f / MIN_DIELECTRICS_REFLECTIVITY);
-	return min(1.0f, t * rgb_color_to_luminance(F0));
-}
-
 // F in DFG
 // The Fresnel equation describes the ratio of surface reflection at different surface angles.
 // This equation implicitly contain ks term.
 // cos_theta is the dot product of half vector and view vector, F0 is the lerped value by metallic (a constants, albedo)
-float3 fresnel_schlick(float3 F0, float3 F90, float ndots)
+float3 eval_fresnel_schlick(float3 f0, float3 f90, float ndots)
 {
-    return F0 + (F90 - F0) * pow(1.0f - ndots, 5.0f);
+    return lerp(f0, f90, pow(max(0.0, 1.0 - ndots), 5.0));
 }
 
 struct SpecularBrdf
 {
     // this albedo is adjusted (i.e. only have meaning in specular part)
     float3 F0;
-    // TODO: improve this (add alpha and alpha2 here)
     float  roughness;
 
     static SpecularBrdf zero()
@@ -107,6 +90,14 @@ struct SpecularBrdf
     {
         const float denom = (ndoth * ndoth * (alpha2 - 1.0)) + 1.0;
         return alpha2 / (PI * denom * denom);
+    }
+
+    static float pdf_ggx_vn(float3 wo, float3 half_vec, float alpha2)
+    {
+        const float ndotv = wo.z;
+        float g1 = ShadowMaskTermSmith::smith_ggx_split(wo.z, alpha2);
+        float d = ndf_ggx(alpha2, half_vec.z);
+        return g1 * d * max(0.0, dot(wo, half_vec)) / wo.z;
     }
 
     // Sample a microfacet normal for the GGX normal distribution using VNDF method. (visible NDF)
@@ -144,31 +135,25 @@ struct SpecularBrdf
     // PDF of sampling a reflection vector L using 'sample'.
     // Note that PDF of sampling given microfacet normal is (G1 * D) when vectors are in local space (in the hemisphere around shading normal). 
     // Remaining terms (1.0f / (4.0f * NdotV)) are specific for reflection case, and come from multiplying PDF by jacobian of reflection operator
-    float pdf(float ndoth, float ndotv)
+    float pdf(float3 wi, float3 wo, float3 m)
     {
-        const float alpha = roughness * roughness;
-        const float alpha2 = alpha * alpha;
+        const float alpha2 = roughness * roughness;
 
-        ndoth = max(0.00001, ndoth);
-	    ndotv = max(0.00001, ndotv);
-	    return (ndf_ggx(max(0.00001, alpha2), ndoth) * ShadowMaskTermSmith::smith_ggx_split_Ga(alpha2, ndotv * ndotv)) / (4.0 * ndotv);
+        const float jacobian = 1.0 / (4.0 * dot(wi, m));
+        const float pdf_half_vec = pdf_ggx_vn(wo, m, alpha2);
+
+	    return pdf_half_vec * jacobian / wi.z;
     }
 
     BrdfSample sample(float3 wo, float2 urand)
     {
-        const float alpha = perceptual_roughness_to_roughness(roughness); 
+        const float alpha = roughness;
+        const float alpha2 = alpha * alpha;
 
         // sample a microfacet normal (H) in local space (Gm)
-        float3 h;
-        if (alpha == 0.0f) {
-            // fast path for zero roughness (perfect reflection), also prevents NaNs appearing due to divisions by zeroes
-            h = float3(0.0f, 0.0f, 1.0f);
-        } else {
-            // for non-zero roughness, this calls VNDF sampling for GG-X distribution or Walter's sampling for Beckmann distribution
-            h = sample_ggx_vndf(wo, alpha, urand);
-        }
+        float3 h = sample_ggx_vndf(wo, alpha, urand);
 
-        // Reflect view direction to obtain light vector
+        // reflect view direction to obtain light vector
 	    const float3 wi = reflect(-wo, h);
 
         // invalid sample direction
@@ -177,19 +162,27 @@ struct SpecularBrdf
 		}
 
         BrdfSample result;
-        // note: hdotl is same as hdotl here
-        // clamp dot products here to small value to prevent numerical instability. Assume that rays incident from below the hemisphere have been filtered
-        float hdotl = max(0.00001, min(1.0, dot(h, wi)));
-        float3 f = fresnel_schlick(F0, get_F90(F0), hdotl);
+        const float d = ndf_ggx(alpha2, h.z);
+        // note: hdotl is the same as hdotv here
+        // clamp dot products here to small value to prevent numerical instability.
+        // Assume that rays incident from below the hemisphere have been filtered.
+        float3 f = eval_fresnel_schlick(F0, 1.0, max(0.00001, min(1.0, dot(h, wi))));
 
         // Calculate weight of the sample specific for selected sampling method
         // (this is microfacet BRDF divided by PDF of sampling method - notice how most terms cancel out)
-        result.weight = f * ShadowMaskTermSmith::smith_ggx_height_correlated_over_g1(wo.z, wi.z, alpha * alpha);
+        ShadowMaskTermSmith g_term = ShadowMaskTermSmith::eval(wo.z, wi.z, alpha2);
+        const float g = g_term.g2;
+
+        result.pdf = pdf(wi, wo, h);
+        result.value_over_pdf = f * g_term.g2_over_g1_wo;
+        result.value = d * f * g / (4.0 * wi.z *wo.z);
+        result.transmission_ratio = 1.0.xxx - f;
+        //result.weight = f * g_term.g2_over_g1_wo;
         result.wi = wi;
         return result;
     }
 
-    BrdfResult eval_ndotl_weighted(float3 wi, float3 wo)
+    BrdfResult eval(float3 wi, float3 wo)
     {
         if (wi.z < 0.0 || wo.z < 0.0)
         {
@@ -201,20 +194,19 @@ struct SpecularBrdf
         // you can call it m or h whatever. They use m in shadowing-masking for half vector.
         const float3 m = normalize(wi + wo);
         const float ndoth = m.z;
-        const float alpha = perceptual_roughness_to_roughness(roughness);
-        const float alpha2 = alpha * alpha;
+        const float alpha2 = roughness * roughness;
 
         // ks is in the f term
         ShadowMaskTermSmith smith = ShadowMaskTermSmith::eval(wo.z, wi.z, alpha2);
 
-        const float  d = ndf_ggx(max(0.00001, alpha2), ndoth);
+        const float  d = ndf_ggx(alpha2, ndoth);
         const float  g = smith.g2;
-        const float3 f = fresnel_schlick(F0, get_F90(F0), saturate(dot(wi, m)));
+        const float3 f = eval_fresnel_schlick(F0, 1.0, dot(m, wi));
 
+        result.pdf = pdf(wi, wo, m);
         result.value_over_pdf = f * smith.g2_over_g1_wo;
-        result.value = f * (d * g * wi.z);
-        result.refraction_ratio = 1.0.xxx - f;
-        result.pdf = (d * ShadowMaskTermSmith::smith_ggx_split_Ga(alpha2, wo.z * wo.z)) / (4.0 * wo.z);
+        result.value = d * f * g / (4.0 * wi.z *wo.z);
+        result.transmission_ratio = 1.0.xxx - f;
         return result;
     }
 };
@@ -248,27 +240,24 @@ struct DiffuseBrdf
         return result;
     }
 
-    // return a cosine-term wrighted pdf
-    float pdf(float3 wi)
+    float pdf()
     {
-        if (wi.z < 0.0)
-        {
-            return 0.0;
-        }
-
-        return PI_RECIP_ONE * wi.z;
+        return PI_RECIP_ONE;
     }
 
-    BrdfSample sample(float3 wo, float3 wi, float2 urand)
+    BrdfSample sample(float3 wo, float2 urand)
     {
         BrdfSample result;
-        // result.pdf = PI_RECIP_ONE * wi.z; // cosine-weighted pdf
-        // result.value_over_pdf = reflectance;
-        // result.value = result.value_over_pdf * result.pdf;
-        // result.refraction_ratio = 0.0.xxx; // no meaning, ks is already in fresnel term.
-
+#if 0
 		// sample diffuse ray using cosine-weighted hemisphere sampling 
         float3 sample_dir = sample_hemisphere(urand);
+#else
+        float phi = urand.x * TWO_PI;
+        float cos_theta = sqrt(max(0.0, 1.0 - urand.y));
+        float sin_theta = sqrt(max(0.0, 1.0 - cos_theta * cos_theta));
+
+        float3 sample_dir = float3(cos(phi) * sin_theta, sin(phi) * sin_theta, cos_theta);
+#endif
 
 		// function 'diffuseTerm' is predivided by PDF of sampling the cosine weighted hemisphere
         // this value is BrdfResult.value_over_pdf
@@ -282,13 +271,16 @@ struct DiffuseBrdf
 		float vdoth = max(0.00001, min(1.0, dot(wo, ndf_sample.normal)));
 		sample_weight *= (1.0.xxx - evalFresnel(data.specularF0, shadowedF90(data.specularF0), VdotH));
 #endif
-
+        result.pdf = pdf();
+        result.value_over_pdf = reflectance;
+        result.value = result.value_over_pdf * result.pdf;
+        result.transmission_ratio = 0.0.xxx; // no meaning, ks is already in fresnel term.
+        //result.weight = sample_weight;
         result.wi = sample_dir;
-        result.weight = sample_weight;
         return result;
     }
 
-    BrdfResult eval_ndotl_weighted(float3 wi)
+    BrdfResult eval(float3 wi)
     {
         if (wi.z <= 0.0)
         {
@@ -296,10 +288,10 @@ struct DiffuseBrdf
         }
 
         BrdfResult result;
-        result.pdf = PI_RECIP_ONE * wi.z; // cosine-weighted pdf
+        result.pdf = pdf();
         result.value_over_pdf = reflectance;
         result.value = result.value_over_pdf * result.pdf;
-        result.refraction_ratio = 0.0.xxx; // no meaning, ks is already in fresnel term.
+        result.transmission_ratio = 0.0.xxx; // no meaning, ks is already in fresnel term.
         return result;
     }
 };
@@ -331,7 +323,7 @@ struct Brdf
         return spec;
     }
 
-    static Brdf from_gbuffer(GBuffer gbuffer, float ndotv)
+    static Brdf from_gbuffer(GBuffer gbuffer)
     {
         Brdf result;
 
@@ -345,30 +337,86 @@ struct Brdf
         return result;
     }
 
-    float3 eval_ndotl_weighted(float3 wi, float3 wo, in MultiScatterCompensate compensate)
+    BrdfSample sample(float3 wo, float3 urand, in MultiScatterCompensate compensate)
+    {
+#if BRDF_FORCE_DIFFUSE_SAMPLE_ONLY
+        return diffuse_brdf.sample(wo, urand.xy);
+#endif
+
+#if BRDF_FORCE_SPECULAR_SAMPLE_ONLY
+        return specular_brdf.sample(wo, urand.xy);
+#endif
+        BrdfSample result;
+
+        // In the layered material model, each surface is very thin and will transmit or reflect light.
+        // The accumulated fresnel term determines the ratio of the energy that is transmit to the next surface. 
+        // We should transmit with throughput equal to `BrdfResult.transmission_ratio`,
+        // and reflect with the complement of that. 
+        // However since we use a single ray, we toss a coin, and choose between reflection and transmission.
+        // The result should be accumulate over frame.
+
+        const float specular = rgb_color_to_luminance(compensate.preintegrated_reflection);
+        const float diffuse = rgb_color_to_luminance(compensate.preintegrated_transmission_fraction * diffuse_brdf.reflectance);
+
+        const float transmission_faction = diffuse / (diffuse + specular);
+
+        const float lobe_xi = urand.z;
+        if (lobe_xi < transmission_faction)
+        {
+            // transmission wins! Now sample the bottom layer (diffuse layer)
+            result = diffuse_brdf.sample(wo, urand.xy);
+            const float lobe_pdf = transmission_faction;
+
+            // adjust pdf
+            result.pdf *= lobe_pdf;
+            result.value_over_pdf /= lobe_pdf;
+
+            // account for the masking that the top level (specular) exerts on the bottom (diffuse).
+            result.value_over_pdf *= compensate.preintegrated_transmission_fraction;
+            result.value *= compensate.preintegrated_transmission_fraction;
+        }
+        else 
+        {
+            // reflection wins! we will not meet the diffuse layer.
+            result = specular_brdf.sample(wo, urand.xy);
+            const float lobe_pdf = (1.0 - transmission_faction);
+
+            // adjust pdf
+            result.value_over_pdf /= lobe_pdf;
+            result.pdf *= lobe_pdf;
+
+            // apply approximate multi-scatter energy preservation
+            result.value_over_pdf *= compensate.preintegrated_reflection_multiplier;
+            result.value *= compensate.preintegrated_reflection_multiplier;
+        }
+
+        return result;
+    }
+
+    float3 eval(float3 wi, float3 wo, in MultiScatterCompensate compensate)
     {
         if (wi.z <= 0 || wo.z <= 0)
         {
             return 0.0.xxx;
         }
 
-        BrdfResult diff = diffuse_brdf.eval_ndotl_weighted(wi);
-        BrdfResult spec = specular_brdf.eval_ndotl_weighted(wi, wo);
+        BrdfResult diff = diffuse_brdf.eval(wi);
+        BrdfResult spec = specular_brdf.eval(wi, wo);
 
         return compensate.compensate_brdf(diff, spec, wo);
     }
 
-    float3 eval_ndotl_weighted_direction_light(float3 wi, float3 wo, in MultiScatterCompensate compensate)
+    float3 eval_directional_light(float3 wi, float3 wo, in MultiScatterCompensate compensate)
     {
         if (wi.z <= 0 || wo.z <= 0)
         {
             return 0.0.xxx;
         }
 
-        BrdfResult diff = diffuse_brdf.eval_ndotl_weighted(wi);
-        BrdfResult spec = specular_brdf.eval_ndotl_weighted(wi, wo);
+        BrdfResult diff = diffuse_brdf.eval(wi);
+        BrdfResult spec = specular_brdf.eval(wi, wo);
 
-        return compensate.compensate_brdf_direction_light(diff, spec, wi, wo);
+        return compensate.compensate_brdf_directional_light(diff, spec, wi, wo);
     }
 };
 

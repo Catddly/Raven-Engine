@@ -36,8 +36,6 @@ float3 sample_hemisphere(float2 urand)
 		a * sin(b),
 		sqrt(1.0f - urand.x));
 
-	//pdf = result.z * ONE_OVER_PI;
-
 	return result;
 }
 

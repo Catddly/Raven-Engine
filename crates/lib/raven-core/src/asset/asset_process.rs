@@ -213,7 +213,17 @@ impl LazyWorker for RawTextureProcess {
         let bytes = match self.raw.source {
             TextureSource::Empty => unreachable!(),
             TextureSource::Placeholder(pc) => {
-                Bytes::copy_from_slice(&pc)
+                let bytes = vec![Bytes::copy_from_slice(&pc).to_vec()];
+
+                let storage = Box::new(Texture::Storage {
+                    extent: [1, 1, 1],
+                    lod_groups: bytes,
+                });
+        
+                let asset_registry = super::asset_registry::get_runtime_asset_registry();
+                asset_registry.write().update_asset(&mut self.handle, storage);
+
+                return Ok(self.handle);
             }
             TextureSource::Bytes(bytes) => {
                 bytes
@@ -221,18 +231,10 @@ impl LazyWorker for RawTextureProcess {
         };
 
         let desc = &self.raw.desc;
+        let image = image::load_from_memory(&bytes)?;
+        let extent = [image.width(), image.height(), 1];
 
-        // TODO: other color bits
-        let image = image::DynamicImage::ImageRgba8(
-            image::RgbaImage::from_raw(
-                desc.extent[0], 
-                desc.extent[1], 
-                bytes.to_vec()
-            )
-            .unwrap()
-        );
-
-        let down_sample = |image: &DynamicImage| {
+        let down_sample_func = |image: &DynamicImage| {
             let width = image.width() >> 1;
             let height = image.height() >> 1;
 
@@ -241,18 +243,18 @@ impl LazyWorker for RawTextureProcess {
 
         // generate mipmap bytes
         let lod_groups = if desc.use_mipmap {
-            let mipmap_level = math::max_mipmap_level_2d(desc.extent[0], desc.extent[1]);
+            let mipmap_level = math::max_mipmap_level_2d(extent[0], extent[1]);
 
             let mut mips = Vec::new();
             // level 0
             let mut image = {
-                let mip = down_sample(&image);
+                let mip = down_sample_func(&image);
                 mips.push(image.into_rgba8().into_raw());
                 mip
             };
 
             for _ in 1..mipmap_level {
-                let next = down_sample(&image);
+                let next = down_sample_func(&image);
                 let mip = std::mem::replace(&mut image, next);
                 mips.push(mip.into_rgba8().into_raw());
             }
@@ -263,7 +265,7 @@ impl LazyWorker for RawTextureProcess {
         };
 
         let storage = Box::new(Texture::Storage {
-            extent: desc.extent, 
+            extent,
             lod_groups,
         });
 

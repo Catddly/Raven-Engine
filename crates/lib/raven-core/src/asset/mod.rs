@@ -23,7 +23,27 @@ use crate::asset::asset_registry::{DiskAssetRef, AssetRef};
 use pack_unpack::*;
 
 use self::asset_registry::AssetHandle;
-use self::loader::extract_asset_type;
+use self::loader::{extract_asset_type, LoadAssetType};
+
+fn get_uri_bake_stem(uri: &PathBuf) -> PathBuf {
+    let asset_ty = extract_asset_type(uri);
+
+    let baked_uri = match asset_ty {
+        LoadAssetType::Mesh(_) => {
+            uri.strip_prefix("mesh/")
+                .expect(format!("Incorrect mesh uri: {:?}", uri).as_str())
+                .to_owned()
+        }
+        LoadAssetType::Texture(_) => {
+            uri.strip_prefix("texture/")
+                .expect(format!("Incorrect texture uri: {:?}", &uri).as_str())
+                .to_owned()
+        }
+        _ => unimplemented!()
+    }.to_string_lossy().to_string();
+
+    PathBuf::from(baked_uri.replace("/", "=!"))
+}
 
 pub enum AssetType {
     Vacant,
@@ -151,6 +171,7 @@ impl BakedAsset {
         match ty {
             loader::LoadAssetType::Mesh(_) => AssetType::Mesh,
             loader::LoadAssetType::Texture(_) => AssetType::Texture,
+            loader::LoadAssetType::Material(_) => AssetType::Material,
             _ => unimplemented!()
         }
     }
@@ -519,7 +540,7 @@ pub enum TextureGammaSpace {
 
 #[derive(Clone, Hash, Debug)]
 pub struct TextureDesc {
-    extent: [u32; 3],
+    //extent: [u32; 3],
     //ty: LoadAssetTextureType,
     gamma_space: TextureGammaSpace,
     use_mipmap: bool,
@@ -528,7 +549,7 @@ pub struct TextureDesc {
 impl Default for TextureDesc {
     fn default() -> Self {
         Self {
-            extent: [1, 1, 1],
+            //extent: [1, 1, 1],
             //ty: LoadAssetTextureType::Unknown,
             gamma_space: TextureGammaSpace::Linear,
             use_mipmap: false,

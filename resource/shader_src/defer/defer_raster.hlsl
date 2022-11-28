@@ -2,8 +2,11 @@
 #include "../common/bindless_resources.hlsl"
 #include "../common/material.hlsl"
 #include "../common/immutable_sampler.hlsl"
+#include "../color/color_space.hlsl"
 
 #include "gbuffer.hlsl"
+
+#define FORCE_NO_TEX_GRAY_MODEL 0
 
 // TODO: maybe use some batch buffer
 [[vk::push_constant]]
@@ -82,9 +85,37 @@ PsOut ps_main(PsIn ps) {
     const Mesh mesh = meshes[push_constants.mesh_index];
 
     Material mat = draw_datas.Load<Material>(ps.material_id * sizeof(Material) + mesh.mat_data_offset);
+    
+    // TODO: apply uv transform (using Material.texture_transform)
+
+    // Sample albedo map
+    Texture2D albedo_map = bindless_textures[NonUniformResourceIndex(mat.albedo_map)];
+    float4 albedo_texel = albedo_map.Sample(sampler_llr, ps.uv);
+    if (albedo_texel.a < 0.5) {
+        discard;
+    }
     float3 base_color = float4(mat.base_color).rgb;
 
-    float3 normal_ws = normalize(mul(instance_transforms_dyn[push_constants.instance_index], float4(ps.normal, 0.0)));
+    // Sample Metallic Rougheness
+    Texture2D specular_map = bindless_textures[NonUniformResourceIndex(mat.specular_map)];
+    float4 specular_texel = specular_map.Sample(sampler_llr, ps.uv);
+    float metalness = mat.metalness * specular_texel.z;
+    float peceptual_roughness = mat.roughness * specular_texel.y;
+    float roughness = clamp(perceptual_roughness_to_roughness(peceptual_roughness), 1e-3, 1.0); // In reality, no object is purely smooth
+
+    // TODO: vertex normal switch between normal map normal
+    // Sample normal
+    //float3 normal_ws = normalize(mul(instance_transforms_dyn[push_constants.instance_index], float4(ps.normal, 0.0)));
+
+    Texture2D normal_map = bindless_textures[NonUniformResourceIndex(mat.normal_map)];
+    float4 normal_texel = normal_map.Sample(sampler_llr, ps.uv);
+    float3 normal_ts = float3(normal_texel.xy * 2.0 - 1.0, 0.0); // remap from [0, 1] to [-1, 1]
+    normal_ts.z = sqrt(max(0.001, 1.0 - dot(normal_ts.xy, normal_ts.xy))); // normal in normal map is already normalizeds
+
+    float3x3 tbn_matrix = float3x3(ps.tangent, ps.bitangent, ps.normal);
+    float3 normal_os = mul(normal_ts, tbn_matrix);
+
+    float3 normal_ws = normalize(mul(instance_transforms_dyn[push_constants.instance_index], float4(normal_os, 0.0)));
 
     // derive geometric normal from view space pos
     // TODO: why not derive it using world space pos?
@@ -93,11 +124,34 @@ PsOut ps_main(PsIn ps) {
     // in right hand coordinate system, cross(ddy, ddx), not (ddx, ddy)
     float3 geometric_normal_vs = normalize(cross(dy, dx));
 
+    CameraMatrices cam = frame_constants_dyn.camera_matrices;
+    float3 geometric_normal_ws = mul(cam.view_to_world, float4(geometric_normal_vs, 0.0)).rgb;
+
+    // geometric normal and shading normal is pointing the opposite direction, fix it.
+    if (dot(geometric_normal_ws, normal_ws) < 0)
+    {
+        normal_ws *= -1; // simply flipping opposite
+    }
+
+    // Texture2D emissive_map = bindless_textures[NonUniformResourceIndex(mat.emissive_map)];
+    // float4 emissive_texel = emissive_map.Sample(sampler_llr, ps.uv);
+
     GBuffer gbuffer = GBuffer::zero();
-    gbuffer.albedo = base_color * ps.color.rgb;
+    // TODO: do correction in image format (i.e. use XX_XX_SRGB)
+#if FORCE_NO_TEX_GRAY_MODEL
+    gbuffer.albedo = 0.5.xxx;
+#else
+    gbuffer.albedo = base_color * ps.color.rgb * srgb_to_linear(albedo_texel.rgb);
+#endif
     gbuffer.normal = normal_ws;
-    gbuffer.metalness = mat.metalness;
-    gbuffer.roughness = mat.roughness;
+
+#if FORCE_NO_TEX_GRAY_MODEL
+    gbuffer.metalness = 0.0;
+    gbuffer.roughness = 0.5;
+#else
+    gbuffer.metalness = metalness;
+    gbuffer.roughness = roughness;
+#endif
 
     PsOut psout;
     psout.gbuffer = asfloat(gbuffer.pack().data);

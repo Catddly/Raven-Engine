@@ -17,7 +17,7 @@ void main(uint2 px: SV_DispatchThreadID)
     float3 input_color = input_tex.SampleLevel(sampler_lnce, uv, 0.0).rgb;
     float lum = rgb_color_to_luminance(input_color);
 
-    if (lum > (lum_threshold + 0.1))
+    if (lum > lum_threshold)
     {
         output_tex[px] = input_color;
     }

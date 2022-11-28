@@ -10,8 +10,6 @@
 #include "../ray_tracing/ray.hlsl"
 #include "../ray_tracing/camera_ray.hlsl"
 
-#include "../math/spherical_harmonics.hlsl"
-
 [[vk::push_constant]]
 struct {
     uint render_res_width;
@@ -29,7 +27,6 @@ struct SHBuffer
 [[vk::binding(1)]] Texture2D<float> depth_tex;
 [[vk::binding(2)]] RWTexture2D<float4> output_tex;
 [[vk::binding(3)]] TextureCube cube_map;
-//[[vk::binding(4)]] TextureCube convolved_cube_map;
 [[vk::binding(4)]] StructuredBuffer<SHBuffer> sh_buffer;
 [[vk::binding(5)]] TextureCube prefilter_cube_map;
 [[vk::binding(6)]] Texture2D<float2> brdf_lut;
@@ -37,24 +34,7 @@ struct SHBuffer
 #define CONVOLVED_CUBEMAP convolved_cube_map
 #define PREFILTERED_CUBEMAP prefilter_cube_map
 #define BRDF_LUT brdf_lut
-
-float3 get_ibl_irradiance(float3 normal)
-{
-    normal.y *= -1;
-    normal.z *= -1;
-
-    SphericalHarmonicsBasis red_basis = load_sh(sh_buffer[0].red_coeffs);
-    SphericalHarmonicsBasis green_basis = load_sh(sh_buffer[0].green_coeffs);
-    SphericalHarmonicsBasis blue_basis = load_sh(sh_buffer[0].blue_coeffs);
-
-    SphericalHarmonicsBasis dir_basis = SphericalHarmonicsBasis::from_direction(normal);
-
-    float r = dir_basis.dot(red_basis);
-    float g = dir_basis.dot(green_basis);
-    float b = dir_basis.dot(blue_basis);
-
-    return float3(r, g, b);
-}
+#define SH_BUFFER sh_buffer
 
 #include "../pbr/multi_scatter_compensate.hlsl"
 #include "../pbr/ibl/ibl_lighting.hlsl"
@@ -118,13 +98,13 @@ void main(in uint2 px: SV_DispatchThreadID) {
     //     wo = normalize(wo);
     // }
 
-    Brdf brdf = Brdf::from_gbuffer(gbuffer, wo.z);
+    Brdf brdf = Brdf::from_gbuffer(gbuffer);
     MultiScatterCompensate compensate = MultiScatterCompensate::compensate_for(wo, gbuffer.roughness, brdf.specular_brdf.F0);
 
     float3 total_radiance = 0.0.xxx; 
     // direct lighting
     {
-        const float3 brdf_value = brdf.eval_ndotl_weighted_direction_light(wi, wo, compensate); // ndotl term is already in brdf
+        const float3 brdf_value = brdf.eval_directional_light(wi, wo, compensate) * max(0.0, wi.z);
         const float3 light_radiance = float3(1.0, 1.0, 1.0);
  
         total_radiance += brdf_value * light_radiance;

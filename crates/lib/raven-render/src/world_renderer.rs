@@ -7,7 +7,7 @@ use raven_core::{utility::as_byte_slice_values, asset::asset_registry::AssetHand
 use raven_rg::{RenderGraphBuilder, RgHandle, IntoPipelineDescriptorBindings, RenderGraphPassBindable};
 use raven_rhi::{Rhi, backend::{ImageDesc, Image, AccessType}};
 
-use crate::{MeshRenderer, IblRenderer, SkyRenderer, MeshRasterScheme, MeshShadingContext, renderer::{mesh_renderer::{MeshHandle, InstanceHandle}, post_process_renderer::{PostProcessRenderer, self}}};
+use crate::{MeshRenderer, IblRenderer, SkyRenderer, MeshRasterScheme, MeshShadingContext, renderer::{mesh_renderer::{MeshHandle, MeshInstanceHandle}, post_process_renderer::{PostProcessRenderer, self}}};
 
 pub struct AutoExposureAdjustment {
     pub speed_log2: f32,
@@ -121,7 +121,7 @@ impl WorldRenderer {
         self.mesh_renderer.add_asset_mesh(asset_handle)
     }
 
-    pub fn add_mesh_instance(&mut self, transform: Affine3A, handle: MeshHandle) -> InstanceHandle {
+    pub fn add_mesh_instance(&mut self, transform: Affine3A, handle: MeshHandle) -> MeshInstanceHandle {
         self.mesh_renderer.add_mesh_instance(transform, handle)
     }
 

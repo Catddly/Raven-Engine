@@ -7,12 +7,13 @@ use memmap2::{Mmap, MmapOptions};
 
 use crate::{concurrent::executor, filesystem::{self, ProjectFolder}};
 
-
 use super::error::AssetPipelineError;
+use super::get_uri_bake_stem;
+use super::loader::extract_asset_type;
 use super::{
     loader::{
         LoadAssetType, extract_mesh_type, extract_texture_type, 
-        AssetLoader, LoadAssetMeshType, mesh_loader::GltfMeshLoader, LoadAssetTextureType, texture_loader::JpgTextureLoader, extract_asset_type
+        AssetLoader, LoadAssetMeshType, mesh_loader::GltfMeshLoader, LoadAssetTextureType, texture_loader::JpgTextureLoader
     }, 
     RawAsset, asset_registry::{AssetHandle, get_runtime_asset_registry}, asset_process::AssetProcessor, asset_baker::AssetBaker, BakedAsset, BakedRawAsset
 };
@@ -74,6 +75,8 @@ impl AssetLoadDesc {
 
 impl AssetManager {
     pub fn new() -> Self {
+        filesystem::exist_or_create(ProjectFolder::Baked).expect("Failed to create Baked asset folder!");
+        
         Self {
             loaders: Mutex::new(Vec::new()),
             //loader_groups: Mutex::new(Vec::new()),
@@ -84,28 +87,38 @@ impl AssetManager {
 
     pub fn load_asset(&self, load_desc: AssetLoadDesc) -> anyhow::Result<()> {
         let is_baked = self.is_baked(&load_desc.uri);
-        if let Some(baked) = is_baked {
-            let file = std::fs::File::open(baked.clone()).expect("Failed to open the baked file path!");
-            let mmap = unsafe {
-                MmapOptions::new().map(&file).map_err(|err| AssetPipelineError::LoadFailure { err })
-            }?;
 
-            // use origin uri here
-            ASSETS_MMAP.lock().entry(load_desc.uri.clone()).or_insert_with(|| mmap);
+        if let Some(baked) = is_baked {
+            Self::mmap_baked_asset(&baked, &load_desc.uri)?;
 
             let mut registry = get_runtime_asset_registry().write();
-            // use origin uri here
+            // add the baked asset immediately
             let handle = registry.register_asset(Box::new(BakedAsset { uri: load_desc.uri.clone() }));
+            let bake_folder = filesystem::get_project_folder_path_absolute(ProjectFolder::Baked)?;
+            
+            if let Some(mat_refs) = registry.get_asset_relative_materials(&handle) {
+                for mat_ref in mat_refs {
+                    let uri = PathBuf::from(format!("{:8.8x}.mat", mat_ref.uuid()));
+                    let baked = bake_folder.join(uri.clone());
+    
+                    Self::mmap_baked_asset(&baked, &uri)?;
+                }
+            }
+
+            if let Some(tex_refs) = registry.get_asset_relative_textures(&handle) {
+                for tex_ref in tex_refs {
+                    let uri = PathBuf::from(format!("{:8.8x}.tex", tex_ref.uuid()));
+                    let baked = bake_folder.join(uri.clone());
+    
+                    Self::mmap_baked_asset(&baked, &uri)?;
+                }
+            }
 
             let mut loaders = self.loaders.lock();
             let AssetLoadDesc { uri, load_ty: _ } = load_desc;
 
-            // use origin uri here
+            // push a dummy task, it actually do nothing but just return the existed AssetHandle
             loaders.push(Arc::new(BakedAssetLoader { handle, uri }));
-
-            // let mut loader_groups = self.loader_groups.lock();
-            // let _handle = LoadGroupHandle(loader_groups.len());
-            // loader_groups.push(LoadGroup::Single(offset));
 
             return Ok(());
         }
@@ -144,9 +157,6 @@ impl AssetManager {
         let mut loaders = self.loaders.lock();
         let load_tasks = loaders.drain(..);
           
-        //let mut load_groups = self.loader_groups.lock();
-        //let load_groups = load_groups.drain(..);
-
         let tasks_iter = load_tasks.into_iter()
             .map(|worker| { 
                 let load_asset = LoadRawAsset { worker };
@@ -179,21 +189,31 @@ impl AssetManager {
         Ok(tasks)
     }
 
+    fn mmap_baked_asset(baked_path: &PathBuf, uri: &PathBuf) -> anyhow::Result<(), AssetPipelineError> {
+        let file = std::fs::File::open(baked_path.clone()).expect("Failed to open the baked file path!");
+        let mmap = unsafe {
+            MmapOptions::new().map(&file).map_err(|err| AssetPipelineError::LoadFailure { err })
+        }?;
+
+        // use origin uri here
+        ASSETS_MMAP.lock().entry(uri.clone()).or_insert_with(|| mmap);
+
+        Ok(())
+    }
+
     fn is_baked(&self, uri: &PathBuf) -> Option<PathBuf> {
-        let asset_ty = extract_asset_type(uri);
-        let baked_asset_name = match asset_ty {
+        let load_asset_type = extract_asset_type(uri);
+        let mut baked_asset_name = get_uri_bake_stem(uri);
+
+        match load_asset_type {
             LoadAssetType::Mesh(_) => {
-                let mut filename = PathBuf::from(uri.clone().file_name().unwrap());
-                filename.set_extension("mesh");
-                filename
+                baked_asset_name.set_extension("mesh");
             }
             LoadAssetType::Texture(_) => {
-                let mut filename = PathBuf::from(uri.clone().file_name().unwrap());
-                filename.set_extension("tex");
-                filename
-            }
+                baked_asset_name.set_extension("tex");
+            },
             _ => unimplemented!()
-        };
+        }
 
         if filesystem::exist(&baked_asset_name, ProjectFolder::Baked).unwrap() {
             let folder = filesystem::get_project_folder_path_absolute(ProjectFolder::Baked).unwrap();

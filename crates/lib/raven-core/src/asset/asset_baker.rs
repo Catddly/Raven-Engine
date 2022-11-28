@@ -6,7 +6,7 @@ use turbosloth::*;
 
 use crate::filesystem;
 
-use super::{asset_registry::{AssetHandle, self, RuntimeAssetRegistry}, error::AssetPipelineError, AssetType, Mesh, Material, Texture};
+use super::{asset_registry::{AssetHandle, self, RuntimeAssetRegistry}, error::AssetPipelineError, AssetType, Mesh, Material, Texture, get_uri_bake_stem};
 
 #[derive(Clone, Hash)]
 pub struct AssetBaker {
@@ -48,7 +48,7 @@ impl LazyWorker for AssetBaker {
             filesystem::exist_or_create(filesystem::ProjectFolder::Baked)?;
 
             let path = filesystem::get_project_folder_path_absolute(filesystem::ProjectFolder::Baked)?;
-            let filename = PathBuf::from(&self.origin_res_path.file_name().unwrap());
+            let filename = get_uri_bake_stem(&self.origin_res_path);
             let mut path = path.join(filename);
 
             match ty {

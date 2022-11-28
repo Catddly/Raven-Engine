@@ -2,11 +2,31 @@
 #define _IBL_LIGHTING_HLSL_
 
 #include "../brdf.hlsl"
-//#include "../../common/frame_constants.hlsl"
 #include "../multi_scatter_compensate.hlsl"
+
+#include "../../math/spherical_harmonics.hlsl"
 
 #define IBL_FORCE_ONLY_RADIANCE   0
 #define IBL_FORCE_ONLY_IRRADIANCE 0
+
+float3 get_ibl_irradiance(float3 normal_ws)
+{
+    // to NDC
+    normal_ws.y *= -1;
+    normal_ws.z *= -1;
+
+    SphericalHarmonicsBasis red_basis = load_sh(SH_BUFFER[0].red_coeffs);
+    SphericalHarmonicsBasis green_basis = load_sh(SH_BUFFER[0].green_coeffs);
+    SphericalHarmonicsBasis blue_basis = load_sh(SH_BUFFER[0].blue_coeffs);
+
+    SphericalHarmonicsBasis dir_basis = SphericalHarmonicsBasis::from_direction(normal_ws);
+
+    float r = dir_basis.dot(red_basis);
+    float g = dir_basis.dot(green_basis);
+    float b = dir_basis.dot(blue_basis);
+
+    return float3(r, g, b);
+}
 
 struct Ibl 
 {
@@ -21,7 +41,6 @@ struct Ibl
 
     static float3 sample_irradiance(float3 normal)
     {
-        //return CONVOLVED_CUBEMAP.SampleLevel(sampler_llce, normal, 0).rgb;
         return get_ibl_irradiance(normal);
     }
 

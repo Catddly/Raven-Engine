@@ -35,6 +35,7 @@ pub fn image_type_to_view_type(image_type: ImageType) -> vk::ImageViewType {
     }
 }
 
+#[derive(Debug)]
 pub struct Image {
     pub raw: vk::Image,
     // TODO: shared memory images
@@ -99,7 +100,7 @@ impl Image {
 pub struct ImageSubresource<'a> {
     pub data: &'a [u8],
     pub row_pitch_in_bytes: u32,
-    pub layer: u32,
+    pub base_layer: u32,
 }
 
 // implement image associated function for device
@@ -195,7 +196,7 @@ impl Device {
                             .image_subresource(
                                 vk::ImageSubresourceLayers::builder()
                                     .aspect_mask(vk::ImageAspectFlags::COLOR)
-                                    .base_array_layer(sub.layer)
+                                    .base_array_layer(sub.base_layer)
                                     .layer_count(1)
                                     .mip_level(level as _)
                                     .build(),

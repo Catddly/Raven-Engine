@@ -41,17 +41,10 @@ impl AssetLoader for JpgTextureLoader {
         let mut bytes = Vec::new();
         file.read_to_end(&mut bytes)?;
 
-        let image = image::load_from_memory(bytes.as_slice())?;
-        let width = image.width();
-        let height = image.height();
-
-        assert!(width.is_power_of_two());
-        assert!(height.is_power_of_two());
-
         Ok(Arc::new(Texture::Raw {
-            source: TextureSource::Bytes(Bytes::from(image.into_rgba8().into_raw())),
+            source: TextureSource::Bytes(Bytes::from(bytes)),
             desc: TextureDesc {
-                extent: [width, height, 1],
+                //extent: [width, height, 1],
                 //ty: LoadAssetTextureType::Jpg,
                 gamma_space: TextureGammaSpace::Linear,
                 use_mipmap: self.need_gen_mipmap,

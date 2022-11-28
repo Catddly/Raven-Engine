@@ -10,6 +10,7 @@ pub enum LoadAssetTextureType {
     Png,
     Dds,
     Jpg,
+    Tex, // Baked Engine Texture Type
 }
 
 #[derive(Debug, Clone, Hash)]
@@ -25,10 +26,16 @@ pub enum LoadAssetSceneType {
 }
 
 #[derive(Debug, Clone, Hash)]
+pub enum LoadAssetMaterialType {
+    Mat, // Baked Engine Material Type
+}
+
+#[derive(Debug, Clone, Hash)]
 pub enum LoadAssetType {
     Texture(LoadAssetTextureType),
     Mesh(LoadAssetMeshType),
-    Scene(LoadAssetSceneType)
+    Scene(LoadAssetSceneType),
+    Material(LoadAssetMaterialType),
 }
 
 #[derive(Debug, Error)]
@@ -45,12 +52,28 @@ pub(crate) fn extract_asset_type(name: &PathBuf) -> LoadAssetType {
     if try_mesh.is_err() {
         let try_tex = extract_texture_type(name);
         if try_tex.is_err() {
-            panic!("Unsupported asset type!");
+            let try_mat = extract_material_type(name);
+            if try_mat.is_err() {
+                panic!("Unsupported asset type!");
+            } else {
+                LoadAssetType::Material(try_mat.unwrap())
+            }
         } else {
             LoadAssetType::Texture(try_tex.unwrap())
         }
     } else {
         LoadAssetType::Mesh(try_mesh.unwrap())
+    }
+}
+
+pub(crate) fn extract_material_type(name: &PathBuf) -> anyhow::Result<LoadAssetMaterialType, AssetLoaderError> {
+    let ext = name.extension()
+        .ok_or(AssetLoaderError::InvalidExtension { path: name.clone() } )?;
+    let ext = ext.to_str().unwrap();
+
+    match ext {
+        "mat" => Ok(LoadAssetMaterialType::Mat),
+        _ => Err(AssetLoaderError::UnsupportedMeshType { path: name.clone() })
     }
 }
 
@@ -75,6 +98,7 @@ pub(crate) fn extract_texture_type(name: &PathBuf) -> anyhow::Result<LoadAssetTe
         "jpg" | "jpeg" => Ok(LoadAssetTextureType::Jpg),
         "png" => Ok(LoadAssetTextureType::Png),
         "dds" => Ok(LoadAssetTextureType::Dds),
+        "tex" => Ok(LoadAssetTextureType::Tex),
         _ => Err(AssetLoaderError::UnsupportedMeshType { path: name.clone() })
     }
 }

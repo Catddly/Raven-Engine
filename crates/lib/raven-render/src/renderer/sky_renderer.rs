@@ -73,7 +73,7 @@ impl SkyRenderer {
                                 data: mip.as_slice(),
                                 // TODO: no hardcode
                                 row_pitch_in_bytes: extent[0] * 4,
-                                layer: face,
+                                base_layer: face,
                             })
                             .collect::<Vec<_>>();
                         upload_faces[face as usize] = uploads;
@@ -103,7 +103,7 @@ impl SkyRenderer {
                                             data: mip,
                                             // TODO: no hardcode
                                             row_pitch_in_bytes: extent[0] * 4,
-                                            layer: face,
+                                            base_layer: face,
                                         }
                                     })
                                     .collect::<Vec<_>>();

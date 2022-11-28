@@ -17,20 +17,13 @@ float2 integrate_brdf(float ndotv, float roughness) {
     float scale = 0.0;
     float bias = 0.0;
 
-    const float alpha = roughness * roughness;
+    const float alpha = roughness;
 
     static const uint num_samples = 1024;
     for (uint i = 0; i < num_samples; ++i) {
         float2 urand = hammersley(i, num_samples);
 
-        float3 Gm;
-        if (alpha == 0.0f) {
-            // fast path for zero roughness (perfect reflection), also prevents NaNs appearing due to divisions by zeroes
-            Gm = float3(0.0f, 0.0f, 1.0f);
-        } else {
-            // for non-zero roughness, this calls VNDF sampling for GG-X distribution or Walter's sampling for Beckmann distribution
-            Gm = SpecularBrdf::sample_ggx_vndf(wo, alpha, urand);
-        }
+        float3 Gm = SpecularBrdf::sample_ggx_vndf(wo, alpha, urand);
 
         // Reflect view direction to obtain light vectors
 	    const float3 wi = reflect(-wo, Gm);
@@ -44,10 +37,10 @@ float2 integrate_brdf(float ndotv, float roughness) {
         if (is_valid)
         {
             // Fresnel term is always 1.0
-            float a = ShadowMaskTermSmith::smith_ggx_height_correlated_over_g1(wo.z, wi.z, alpha * alpha) * 1.0;
+            float a = ShadowMaskTermSmith::eval(wo.z, wi.z, alpha * alpha).g2_over_g1_wo * 1.0;
             // multiply by a Fc term in https://learnopengl.com/PBR/IBL/Specular-IBL
             float Fc = pow(1.0 - dot(Gm, wi), 5.0);
-            float b = ShadowMaskTermSmith::smith_ggx_height_correlated_over_g1(wo.z, wi.z, alpha * alpha) * Fc;
+            float b = ShadowMaskTermSmith::eval(wo.z, wi.z, alpha * alpha).g2_over_g1_wo * Fc;
 
             scale += a - b;
             bias  += b;

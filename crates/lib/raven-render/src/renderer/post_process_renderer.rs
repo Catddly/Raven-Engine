@@ -327,14 +327,16 @@ impl PostProcessRenderer {
 
         let mut output = rg.new_resource(output_desc);
 
-        let input_extent = input_img.desc().extent;
+        let temp_output_desc = output_desc.mipmap_level(1);
+        let mut temp_output = rg.new_resource(temp_output_desc);
+
         let extent = output_desc.extent;
         {
             let mut pass = rg.add_pass("bloom extract bright spot");
             let pipeline = pass.register_compute_pipeline("post_processing/bloom/extract_bright_spot.hlsl");
 
             let input_ref = pass.read(&input_img, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer);
-            let output_ref = pass.write(&mut output, AccessType::ComputeShaderWrite);
+            let output_ref = pass.write(&mut temp_output, AccessType::ComputeShaderWrite);
 
             let push_values = (extent[0], extent[1], threshold);
 
@@ -346,6 +348,27 @@ impl PostProcessRenderer {
                         input_ref.bind(),
                         output_ref.bind(),
                         RenderGraphPassBinding::DynamicBuffer(offset)
+                    ])
+                )?;
+
+                bound_pipeline.dispatch(extent);
+
+                Ok(())
+            });
+        }
+
+        {
+            let mut pass = rg.add_pass("bloom erosion");
+            let pipeline = pass.register_compute_pipeline("post_processing/bloom/erosion.hlsl");
+
+            let input_ref = pass.read(&temp_output, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer);
+            let output_ref = pass.write(&mut output, AccessType::ComputeShaderWrite);
+
+            pass.render(move |ctx| {
+                let bound_pipeline = ctx.bind_compute_pipeline(pipeline.into_bindings()
+                    .descriptor_set(0, &[
+                        input_ref.bind(),
+                        output_ref.bind(),
                     ])
                 )?;
 
@@ -406,7 +429,7 @@ impl PostProcessRenderer {
     ) -> RgHandle<Image> {
         let mut output = rg.new_resource(input_image.desc().format(vk::Format::B10G11R11_UFLOAT_PACK32));
 
-        let bloom_output = self.bloom(rg, &input_image, 0.85);
+        let bloom_output = self.bloom(rg, &input_image, 0.92);
         let bloom_mip_level = bloom_output.desc().mip_levels as u32;
 
         let input_extent = input_image.desc().extent;

@@ -153,7 +153,7 @@ pub fn main_loop(engine_context: &mut EngineContext<impl user::App>) {
         app,
     } = engine_context;
 
-    asset_manager.load_asset(AssetLoadDesc::load_mesh("mesh/sphere.gltf")).unwrap();
+    asset_manager.load_asset(AssetLoadDesc::load_mesh("mesh/cerberus_gun/scene.gltf")).unwrap();
     asset_manager.load_asset(AssetLoadDesc::load_texture("texture/skybox/right.jpg")).unwrap();
     asset_manager.load_asset(AssetLoadDesc::load_texture("texture/skybox/left.jpg")).unwrap();
     asset_manager.load_asset(AssetLoadDesc::load_texture("texture/skybox/top.jpg")).unwrap();
@@ -168,8 +168,8 @@ pub fn main_loop(engine_context: &mut EngineContext<impl user::App>) {
     let mesh_handle = renderer.add_mesh(&handles[0]);
 
     let xform = Affine3A::from_scale_rotation_translation(
-        Vec3::splat(1.5),
-        Quat::from_rotation_y(-90.0_f32.to_radians()), 
+        Vec3::splat(0.05),
+        Quat::from_rotation_y(90_f32.to_radians()),
         Vec3::splat(0.0)
     );
     let _instance = renderer.add_mesh_instance(xform, mesh_handle);

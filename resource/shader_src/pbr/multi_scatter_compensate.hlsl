@@ -19,6 +19,11 @@ struct MultiScatterCompensate
 {
     // Also be written in the paper as FssEss
     float3 single_scatter;
+    // It is the energy of the single scatter, in order to compensate the lost energy,
+    // multiply it by a multiplier.
+    float3 preintegrated_reflection;
+    float3 preintegrated_reflection_multiplier;
+    float3 preintegrated_transmission_fraction;
     float2 env_brdf;
     float3 F0;
 
@@ -34,8 +39,17 @@ struct MultiScatterCompensate
         float3 ks = fresnel_schlick_roughness(wo.z, F0, roughness);
         float2 env_brdf = sample_env_brdf(wo, roughness);
 
+        // See https://blog.selfshadow.com/publications/turquin/ms_comp_final.pdf
+        float  e_ss = env_brdf.x + env_brdf.y;
+        float3 f_ss = lerp(F0, 1.0, pow(max(0.0, 1.0 - wo.z), 5));
+        float3 multiplier = 1.0 + f_ss * (1.0 - e_ss) / e_ss;
+
         MultiScatterCompensate compensate;
         compensate.single_scatter = ks * env_brdf.x + env_brdf.y;
+        compensate.preintegrated_reflection = compensate.single_scatter * multiplier;
+        compensate.preintegrated_reflection_multiplier = multiplier;
+        // this is just the remaining part of the refleced energy
+        compensate.preintegrated_transmission_fraction = 1.0 - compensate.preintegrated_reflection;
         compensate.env_brdf = env_brdf;
         compensate.F0 = F0;
         return compensate;
@@ -57,30 +71,21 @@ struct MultiScatterCompensate
 
     float3 compensate_brdf(in BrdfResult diffuse_brdf, in BrdfResult specular_brdf, float3 wo)
     {
-        // See https://blog.selfshadow.com/publications/turquin/ms_comp_final.pdf
-        float  e_ss = env_brdf.x + env_brdf.y;
-        float3 f_ss = lerp(F0, 1.0, pow(max(0.0, 1.0 - wo.z), 5));
-        float3 multiplier = 1.0 + f_ss * (1.0 - e_ss) / e_ss;
-
-        return diffuse_brdf.value * specular_brdf.refraction_ratio + specular_brdf.value * multiplier;
+        return diffuse_brdf.value * specular_brdf.transmission_ratio + specular_brdf.value * preintegrated_reflection_multiplier;
     }
 
-    float3 compensate_brdf_direction_light(in BrdfResult diffuse_brdf, in BrdfResult specular_brdf, float3 wi, float3 wo)
+    float3 compensate_brdf_directional_light(in BrdfResult diffuse_brdf, in BrdfResult specular_brdf, float3 wi, float3 wo)
     {
-        // See https://blog.selfshadow.com/publications/turquin/ms_comp_final.pdf
-        float  e_ss = env_brdf.x + env_brdf.y;
-        float3 f_ss = lerp(F0, 1.0, pow(max(0.0, 1.0 - wo.z), 5));
-        float3 multiplier = 1.0 + f_ss * (1.0 - e_ss) / e_ss;
-
         // from kajiya.
+
         // TODO: multi-scattering on the interface can bend secondary lobes away from
         // the evaluated direction, which is particularly apparent for directional lights.
         // In the latter case, the following term works better.
         // On the other hand, this will result in energy loss for non-directional lights
         // since the lobes are just redirected, and not lost.
-        const float3 mult_directional = lerp(1.0, multiplier, sqrt(abs(wi.z)));
+        const float3 mult_directional = lerp(1.0, preintegrated_reflection_multiplier, sqrt(abs(wi.z)));
 
-        return diffuse_brdf.value * specular_brdf.refraction_ratio + specular_brdf.value * mult_directional;
+        return diffuse_brdf.value * specular_brdf.transmission_ratio + specular_brdf.value * mult_directional;
     }
 };
 

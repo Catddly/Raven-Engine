@@ -1,11 +1,14 @@
+use std::collections::HashMap;
+use std::path::PathBuf;
 use std::{sync::Arc};
 use std::marker::PhantomData;
 
 use once_cell::sync::Lazy;
 use parking_lot::RwLock;
 
+
 use super::asset_manager::ASSETS_MMAP;
-use super::{Asset, VacantAsset, BakedAsset, Mesh, Texture};
+use super::{Asset, VacantAsset, BakedAsset, Mesh, Texture, Material, AssetType, VecArrayQueryParam};
 
 type RegisterBoxAssetType = Box<dyn Asset + Send + Sync>;
 
@@ -97,6 +100,9 @@ pub struct RuntimeAssetRegistry {
     id_free_list: Vec<u64>,
 
     assets: Vec<RegisterBoxAssetType>,
+
+    mesh_relative_mats: HashMap<AssetHandle, Vec<AssetRef<Material::Packed>>>,
+    mesh_relative_texs: HashMap<AssetHandle, Vec<AssetRef<Texture::Packed>>>,
 }
 
 impl RuntimeAssetRegistry {
@@ -106,18 +112,24 @@ impl RuntimeAssetRegistry {
             id_free_list: Default::default(),
 
             assets: Default::default(),
+
+            mesh_relative_mats: Default::default(),
+            mesh_relative_texs: Default::default(),
         }
     }
 
     pub fn register_asset(&mut self, asset: RegisterBoxAssetType) -> AssetHandle {
         let id = self.alloc_asset_id();
-    
         self.assets[id as usize] = asset;
 
-        AssetHandle {
+        let handle = AssetHandle {
             id,
             version: 0,
-        }
+        };
+
+        self.update_asset_refs(&handle);
+
+        handle
     }
 
     #[inline]
@@ -132,13 +144,21 @@ impl RuntimeAssetRegistry {
 
     pub fn update_asset(&mut self, handle: &mut AssetHandle, asset: RegisterBoxAssetType) {
         self.assets[handle.id as usize] = asset;
-
         handle.version += 1;
+
+        self.update_asset_refs(&handle);
     }
 
-    #[inline]
     pub fn get_asset(&self, handle: &AssetHandle) -> Option<&RegisterBoxAssetType> {
         self.assets.get(handle.id as usize)
+    }
+
+    pub fn get_asset_relative_materials(&self, handle: &AssetHandle) -> Option<&Vec<AssetRef<Material::Packed>>> {
+        self.mesh_relative_mats.get(handle)
+    }
+
+    pub fn get_asset_relative_textures(&self, handle: &AssetHandle) -> Option<&Vec<AssetRef<Texture::Packed>>> {
+        self.mesh_relative_texs.get(handle)
     }
 
     #[inline]
@@ -156,8 +176,67 @@ impl RuntimeAssetRegistry {
     }
 
     #[inline]
+    pub fn get_baked_material_asset(&self, baked_asset: &BakedAsset) -> Material::FieldReader {
+        let asset_mmap = ASSETS_MMAP.lock();
+        let bytes: &[u8] = asset_mmap.get(&baked_asset.uri).unwrap();
+        Material::get_field_reader(bytes)
+    }
+
+    #[inline]
     pub fn is_valid(&self, handle: AssetHandle) -> bool {
         handle.id != INVALID_ASSET_ID
+    }
+
+    fn update_asset_refs(&mut self, handle: &AssetHandle) {
+        let asset = self.get_asset(&handle).unwrap();
+        
+        match asset.asset_type() {
+            AssetType::Baked => {
+                let baked_asset = asset.as_baked().unwrap();
+                let baked_asset_type = baked_asset.origin_asset_type();
+
+                if let AssetType::Mesh = baked_asset_type {
+                    let mesh_field_reader = self.get_baked_mesh_asset(baked_asset);
+ 
+                    let mat_len = mesh_field_reader.materials(VecArrayQueryParam::length()).length();
+                    let mut mat_refs = Vec::with_capacity(mat_len);
+
+                    for idx in 0..mat_len {
+                        let material_ref = mesh_field_reader.materials(VecArrayQueryParam::Index(idx)).value();
+                        // this is a relative uri
+                        let mat_uri = PathBuf::from(format!("{:8.8x}.mat", material_ref.uuid()));
+                        
+                        let mat_handle = self.register_asset(Box::new(BakedAsset { uri: mat_uri }));
+                        
+                        mat_refs.push(AssetRef {
+                            handle: Arc::new(mat_handle),
+                            uuid: material_ref.uuid(),
+                            _marker: PhantomData,
+                        });
+                    }
+                    self.mesh_relative_mats.entry(*handle).or_insert(mat_refs);
+
+                    let tex_len = mesh_field_reader.material_textures(VecArrayQueryParam::length()).length();
+                    let mut tex_refs = Vec::with_capacity(tex_len);
+
+                    for idx in 0..tex_len {
+                        let texture_ref = mesh_field_reader.material_textures(VecArrayQueryParam::Index(idx)).value();
+                        // this is a relative uri
+                        let tex_uri = PathBuf::from(format!("{:8.8x}.tex", texture_ref.uuid()));
+
+                        let tex_handle = self.register_asset(Box::new(BakedAsset { uri: tex_uri }));
+
+                        tex_refs.push(AssetRef {
+                            handle: Arc::new(tex_handle),
+                            uuid: texture_ref.uuid(),
+                            _marker: PhantomData,
+                        });
+                    }
+                    self.mesh_relative_texs.entry(*handle).or_insert(tex_refs);
+                }
+            }
+            _ => {}
+        }
     }
 
     fn alloc_asset_id(&mut self) -> u64 {
