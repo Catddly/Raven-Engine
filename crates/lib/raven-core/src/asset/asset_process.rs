@@ -13,7 +13,7 @@ use crate::math;
 
 use super::asset_registry::{AssetHandle, AssetRef};
 use super::error::AssetPipelineError;
-use super::{RawAsset, Texture, AssetType, Mesh, PackedVertex, Material, TextureSource, BakedRawAsset};
+use super::{RawAsset, Texture, AssetType, Mesh, PackedVertex, Material, TextureSource, BakedRawAsset, TextureDesc, TextureGammaSpace};
 
 /// Consume a raw asset and turn it into a AssetHandle which reference a storage asset.
 #[derive(Clone)]
@@ -218,6 +218,10 @@ impl LazyWorker for RawTextureProcess {
                 let storage = Box::new(Texture::Storage {
                     extent: [1, 1, 1],
                     lod_groups: bytes,
+                    desc: TextureDesc {
+                        gamma_space: TextureGammaSpace::Linear,
+                        use_mipmap: false,
+                    }
                 });
         
                 let asset_registry = super::asset_registry::get_runtime_asset_registry();
@@ -230,7 +234,7 @@ impl LazyWorker for RawTextureProcess {
             },
         };
 
-        let desc = &self.raw.desc;
+        let tex_desc = &self.raw.desc;
         let image = image::load_from_memory(&bytes)?;
         let extent = [image.width(), image.height(), 1];
 
@@ -242,7 +246,7 @@ impl LazyWorker for RawTextureProcess {
         };
 
         // generate mipmap bytes
-        let lod_groups = if desc.use_mipmap {
+        let lod_groups = if tex_desc.use_mipmap {
             let mipmap_level = math::max_mipmap_level_2d(extent[0], extent[1]);
 
             let mut mips = Vec::new();
@@ -267,6 +271,7 @@ impl LazyWorker for RawTextureProcess {
         let storage = Box::new(Texture::Storage {
             extent,
             lod_groups,
+            desc: tex_desc.clone(),
         });
 
         let asset_registry = super::asset_registry::get_runtime_asset_registry();

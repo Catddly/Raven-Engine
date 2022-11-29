@@ -137,11 +137,11 @@ PsOut ps_main(PsIn ps) {
     // float4 emissive_texel = emissive_map.Sample(sampler_llr, ps.uv);
 
     GBuffer gbuffer = GBuffer::zero();
-    // TODO: do correction in image format (i.e. use XX_XX_SRGB)
+    
 #if FORCE_NO_TEX_GRAY_MODEL
     gbuffer.albedo = 0.5.xxx;
 #else
-    gbuffer.albedo = base_color * ps.color.rgb * srgb_to_linear(albedo_texel.rgb);
+    gbuffer.albedo = base_color * ps.color.rgb * albedo_texel.rgb;
 #endif
     gbuffer.normal = normal_ws;
 

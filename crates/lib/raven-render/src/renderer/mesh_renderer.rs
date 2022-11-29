@@ -1,8 +1,10 @@
 use std::{sync::Arc};
+use std::collections::BTreeSet;
 
 use ash::vk;
 
 use glam::{Affine3A};
+use raven_core::asset::TextureGammaSpace;
 use raven_core::{asset::{asset_registry::{AssetHandle, get_runtime_asset_registry}, PackedVertex, VecArrayQueryParam}, utility};
 use raven_rg::{RenderGraphBuilder, RgHandle, IntoPipelineDescriptorBindings, RenderGraphPassBinding, image_clear, create_engine_global_bindless_descriptor_set};
 use raven_rhi::{backend::{Device, ImageDesc, Image, BufferDesc, Buffer, renderpass, RenderPass, descriptor::update_descriptor_set_buffer, RasterPipelineDesc, PipelineShaderDesc, PipelineShaderStage, AccessType, ImageViewDesc, ImageSubresource}, Rhi, copy_engine::CopyEngine};
@@ -19,7 +21,7 @@ pub enum MeshRasterScheme {
     ForwardPlus,
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct MeshHandle {
     id: u32,
 }
@@ -51,6 +53,31 @@ pub struct MeshInstance {
     handle: MeshHandle,
 }
 
+impl std::hash::Hash for MeshInstance {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.handle.hash(state)
+    }
+}
+
+impl PartialEq for MeshInstance {
+    fn eq(&self, other: &Self) -> bool {
+        self.handle.eq(&other.handle)
+    }
+}
+impl Eq for MeshInstance {}
+
+impl PartialOrd for MeshInstance {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.handle.partial_cmp(&other.handle)
+    }
+}
+
+impl Ord for MeshInstance {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.handle.cmp(&other.handle)
+    }
+}
+
 #[derive(Copy, Clone)]
 pub struct MeshInstanceHandle(u32);
 
@@ -64,7 +91,7 @@ pub struct MeshRenderer {
     resolution: [u32; 2],
 
     meshes: Vec<UploadedMesh>, // mesh data used for CPU-side to submit draw call
-    mesh_instances: Vec<MeshInstance>,
+    mesh_instances: BTreeSet<MeshInstance>, // BTree in Rust have better cache coherency (i.e. less cache miss), and it is sorted
 
     current_draw_data_offset: u64,
     draw_data_buffer: Arc<Buffer>,
@@ -170,8 +197,6 @@ impl MeshRenderer {
             vk::DescriptorType::STORAGE_BUFFER, 
             &bindless_tex_sizes_buffer);
 
-        let mesh_instances = Vec::new();
-
         Self {
             renderpass,
             bindless_descriptor,
@@ -180,7 +205,7 @@ impl MeshRenderer {
             resolution,
 
             meshes: Default::default(),
-            mesh_instances,
+            mesh_instances: Default::default(),
 
             current_draw_data_offset: 0,
             draw_data_buffer,
@@ -201,7 +226,7 @@ impl MeshRenderer {
             let read_guard = registry.read();
             
             if let Some(asset) = read_guard.get_asset(&handle) {
-                let (extent, img_subresources) = if let Some(tex_asset) = asset.as_texture() {
+                let (extent, img_subresources, gamma_space) = if let Some(tex_asset) = asset.as_texture() {
                     // TODO: identify image type
                     let uploads = tex_asset.lod_groups.iter()
                         .map(|mip| ImageSubresource {
@@ -211,9 +236,10 @@ impl MeshRenderer {
                         })
                         .collect::<Vec<_>>();
 
-                    (tex_asset.extent, uploads)
+                    (tex_asset.extent, uploads, tex_asset.desc.gamma_space)
                 } else if let Some(baked_tex) = asset.as_baked() {
                     let tex_field_reader = read_guard.get_baked_texture_asset(baked_tex);
+                    let desc = tex_field_reader.desc();
                     let extent = tex_field_reader.extent();
 
                     let lod_length = tex_field_reader.lod_groups(VecArrayQueryParam::length()).length();
@@ -230,7 +256,7 @@ impl MeshRenderer {
                         });
                     }
 
-                    (extent, uploads)
+                    (extent, uploads, desc.gamma_space)
                 } else {
                     panic!("Expect texture asset handle!");
                 };
@@ -240,8 +266,13 @@ impl MeshRenderer {
                     (extent[0] as f32).recip(), (extent[1] as f32).recip()
                 ];
 
+                let img_format = match gamma_space {
+                    TextureGammaSpace::Linear => vk::Format::R8G8B8A8_UNORM,
+                    TextureGammaSpace::Srgb => vk::Format::R8G8B8A8_SRGB,
+                };
+
                 // create gpu image
-                let image_desc = ImageDesc::new_2d([extent[0], extent[1]], vk::Format::R8G8B8A8_UNORM)
+                let image_desc = ImageDesc::new_2d([extent[0], extent[1]], img_format)
                     .mipmap_level(img_subresources.len() as _)
                     .usage_flags(vk::ImageUsageFlags::SAMPLED);
                 let image = Arc::new(self.device.create_image(image_desc, Some(img_subresources)).unwrap());
@@ -323,6 +354,10 @@ impl MeshRenderer {
                         upload_materials.push(upload);
                     }
 
+                    for tex_ref in mesh_asset.material_textures.iter() {
+                        let _bindless_texture = self.add_bindless_texture(tex_ref.handle());
+                    }
+
                     return self.upload_gpu_mesh_data(packed, colors, uvs, tangents, indices, mat_ids, &upload_materials);
                 } else if let Some(baked) = asset.as_baked() {
                     let field_reader = read_guard.get_baked_mesh_asset(baked);
@@ -374,7 +409,7 @@ impl MeshRenderer {
 
     pub fn add_mesh_instance(&mut self, transform: Affine3A, handle: MeshHandle) -> MeshInstanceHandle {
         let instance_handle = MeshInstanceHandle(self.mesh_instances.len() as _);
-        self.mesh_instances.push(MeshInstance {
+        self.mesh_instances.insert(MeshInstance {
             transform,
             handle,
         });

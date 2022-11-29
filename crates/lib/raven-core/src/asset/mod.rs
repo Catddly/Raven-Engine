@@ -532,18 +532,16 @@ impl Default for TextureSource {
 }
 
 
-#[derive(Clone, Hash, Debug)]
+#[derive(Copy, Clone, Hash, Debug)]
 pub enum TextureGammaSpace {
     Srgb,
     Linear,
 }
 
-#[derive(Clone, Hash, Debug)]
+#[derive(Copy, Clone, Hash, Debug)]
 pub struct TextureDesc {
-    //extent: [u32; 3],
-    //ty: LoadAssetTextureType,
-    gamma_space: TextureGammaSpace,
-    use_mipmap: bool,
+    pub gamma_space: TextureGammaSpace,
+    pub use_mipmap: bool,
 }
 
 impl Default for TextureDesc {
@@ -569,6 +567,7 @@ define_asset!{
     {
         extent     { [u32; 3] }
         lod_groups { Vec(Vec(u8)) }
+        desc       { TextureDesc }
     }
     Texture
 }
@@ -613,6 +612,10 @@ fn test_vec_array_pack_unpack() {
             vec![3, 1],
             vec![5]
         ],
+        desc: TextureDesc {
+            gamma_space: TextureGammaSpace::Linear,
+            use_mipmap: false,
+        }
     };
 
     let mut file = std::fs::File::create("vec.bin").unwrap();
