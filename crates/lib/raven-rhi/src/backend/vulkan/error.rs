@@ -1,7 +1,7 @@
 use raven_core::thiserror::Error;
 
 #[derive(Debug, Error)]
-pub enum RHIError {
+pub enum RhiError {
     #[error("Allocation failed for {name:?}: {error:?}")]
     AllocationFailure {
         name: String,
@@ -21,7 +21,7 @@ pub enum RHIError {
     AcquiredImageFailed { err: ash::vk::Result },
 }
 
-impl From<ash::vk::Result> for RHIError {
+impl From<ash::vk::Result> for RhiError {
     fn from(err: ash::vk::Result) -> Self {
         Self::Vulkan {
             err,

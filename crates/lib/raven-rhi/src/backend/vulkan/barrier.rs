@@ -38,8 +38,14 @@ pub fn is_read_only_access(access: &AccessType) -> bool {
         AnyShaderReadUniformBufferOrVertexBuffer |
         AnyShaderReadSampledImageOrUniformTexelBuffer |
         AnyShaderReadOther |
+		RayTracingShaderReadSampledImageOrUniformTexelBuffer |
+		RayTracingShaderReadColorInputAttachment |
+		RayTracingShaderReadDepthStencilInputAttachment |
+		RayTracingShaderReadAccelerationStructure |
+		RayTracingShaderReadOther |
         TransferRead |
         HostRead |
+
         Present => true,
         _ => false
     }

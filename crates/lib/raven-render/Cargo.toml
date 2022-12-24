@@ -3,6 +3,9 @@ name = "raven-render"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+gpu_ray_tracing = []
+
 [dependencies]
 raven-core =  { path = "../../lib/raven-core/" }
 raven-rg   =  { path = "../../lib/raven-rg/" }

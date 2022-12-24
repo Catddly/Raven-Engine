@@ -3,5 +3,5 @@
 
 [numthreads(8, 8, 1)]
 void main(in uint2 px: SV_DispatchThreadID) {
-    dst_tex[px] = src_tex[px];
+    dst_tex[px] = float4(src_tex[px].rgb, 1.0);
 }

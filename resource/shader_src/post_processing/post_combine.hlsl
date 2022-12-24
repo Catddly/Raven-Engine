@@ -30,23 +30,23 @@ void main(uint2 px: SV_DispatchThreadID)
         color += bloom_pyramid.SampleLevel(sampler_lnce, uv, float(i));
     }
 
-    if (enable_auto_exposure >= 1)
-    {
-        const float GLARE_AMOUNT = 0.1;
+    // if (enable_auto_exposure >= 1)
+    // {
+    //     const float GLARE_AMOUNT = 0.1;
 
-        float2 uv = pixel_to_uv(float2(px), float2(output_tex_size.xy));
+    //     float2 uv = pixel_to_uv(float2(px), float2(output_tex_size.xy));
 
-        float3 glare = rev_blur_pyramid_tex.SampleLevel(sampler_lnce, uv, 0.0);
+    //     float3 glare = rev_blur_pyramid_tex.SampleLevel(sampler_lnce, uv, 0.0);
 
-        color = lerp(color, glare, GLARE_AMOUNT);
-        color = max(color, 0.0);
-    }
+    //     color = lerp(color, glare, GLARE_AMOUNT);
+    //     color = max(color, 0.0);
+    // }
 
     color *= post_exposure_mult; // exposure adjustment
 
     color = pow(color, contrast);
 
-    // tone mappinga
+    // tone mapping
     color = aces_film(color);
  
     // gamma correction

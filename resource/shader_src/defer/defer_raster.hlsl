@@ -15,6 +15,13 @@ struct {
     uint instance_index;
 } push_constants;
 
+// float3x4 float4x4 matrix is column major matrix in hlsl by default.
+// But in CPU-side we pass the affine matrix data by row major organization.
+// Why use row major matrix here?
+// Because in assembly implementation of mul() function in hlsl, when the matrix is right-multiply (i.e. the matrix is column matrix)
+// In order to access the memory more efficient, hlsl will have transpose operation on the matrix, then do the multiplication row by row.
+// But when the matrix is left-multiply (i.e. the matrix is row matrix), hlsl wil not do the transpose operation.
+// So put the matrix in the left side of the mul() function will save some instrctions for us.
 [[vk::binding(0)]] StructuredBuffer<row_major float3x4> instance_transforms_dyn; // dynamic read-only storage buffer
 
 struct VsOut {
@@ -29,7 +36,8 @@ struct VsOut {
     [[vk::location(6)]] float3 pos_vs: TEXCOORD6;
 };
 
-VsOut vs_main(uint vid: SV_VertexID, uint iid: SV_InstanceID) {
+VsOut vs_main(uint vid: SV_VertexID, uint iid: SV_InstanceID)
+{
     VsOut vsout;
 
     CameraMatrices cam = frame_constants_dyn.camera_matrices;
@@ -81,7 +89,8 @@ struct PsOut {
     float3 geometric_normal: SV_TARGET1;
 };
 
-PsOut ps_main(PsIn ps) {
+PsOut ps_main(PsIn ps)
+{
     const Mesh mesh = meshes[push_constants.mesh_index];
 
     Material mat = draw_datas.Load<Material>(ps.material_id * sizeof(Material) + mesh.mat_data_offset);
@@ -110,7 +119,7 @@ PsOut ps_main(PsIn ps) {
     Texture2D normal_map = bindless_textures[NonUniformResourceIndex(mat.normal_map)];
     float4 normal_texel = normal_map.Sample(sampler_llr, ps.uv);
     float3 normal_ts = float3(normal_texel.xy * 2.0 - 1.0, 0.0); // remap from [0, 1] to [-1, 1]
-    normal_ts.z = sqrt(max(0.001, 1.0 - dot(normal_ts.xy, normal_ts.xy))); // normal in normal map is already normalizeds
+    normal_ts.z = sqrt(max(0.001, 1.0 - dot(normal_ts.xy, normal_ts.xy))); // normal in normal map is already normalized
 
     float3x3 tbn_matrix = float3x3(ps.tangent, ps.bitangent, ps.normal);
     float3 normal_os = mul(normal_ts, tbn_matrix);

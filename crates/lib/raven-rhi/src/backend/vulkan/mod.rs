@@ -18,6 +18,9 @@ pub mod descriptor;
 pub mod pipeline;
 pub mod renderpass;
 
+#[cfg(feature = "gpu_ray_tracing")]
+mod ray_tracing;
+
 pub mod barrier;
 mod command;
 mod error;
@@ -33,12 +36,22 @@ pub use sampler::{SamplerDesc};
 
 pub use shader::{ShaderSource, ShaderBinary, ShaderBinaryStage, PipelineShaderStage, PipelineShaderDesc};
 pub use pipeline::{RasterPipelineDesc, ComputePipelineDesc, RasterPipeline, ComputePipeline};
+#[cfg(feature = "gpu_ray_tracing")]
+pub use pipeline::{RayTracingPipelineDesc, RayTracingPipeline};
 pub use renderpass::{RenderPass, RenderPassDesc, RenderPassAttachmentDesc};
 
 pub use barrier::{AccessType, ImageBarrier, BufferBarrier};
 
+#[cfg(feature = "gpu_ray_tracing")]
+pub use ray_tracing::{
+    RayTracingAccelerationStructure, RayTracingAccelerationScratchBuffer, 
+    RayTracingBlasBuildDesc, RayTracingTlasBuildDesc,
+    RayTracingGeometry, RayTracingGeometryType, RayTracingSubGeometry,
+    RayTracingBlasInstance,
+};
+
 pub use command::CommandBuffer;
-pub use error::RHIError;
+pub use error::RhiError;
 
 pub use util::debug;
 pub use util::platform;

@@ -1,9 +1,9 @@
 use parking_lot::Mutex;
 use ash::vk;
 
-use crate::backend::{CommandBuffer, physical_device::QueueFamily};
+use crate::backend::{CommandBuffer, physical_device::QueueFamily, Buffer, Device};
 
-pub trait DeferReleasableResource: Copy {
+pub trait DeferReleasableResource {
     fn enqueue(self, queue: &mut DeferReleaseQueue);
 }
 
@@ -13,14 +13,22 @@ impl DeferReleasableResource for vk::DescriptorPool {
     }
 }
 
+impl DeferReleasableResource for Buffer {
+    fn enqueue(self, queue: &mut DeferReleaseQueue) {
+        queue.buffers.push(self);
+    }
+}
+
 pub struct DeferReleaseQueue {
     descriptor_pools: Vec<vk::DescriptorPool>,
+    buffers: Vec<Buffer>,
 }
 
 impl DeferReleaseQueue {
     fn new() -> Self {
         Self {
             descriptor_pools: Default::default(),
+            buffers: Default::default(),
         }
     }
 }
@@ -60,11 +68,15 @@ impl DrawFrame {
         }
     }
 
-    pub fn release_stale_render_resources(&self, device: &ash::Device) {
+    pub fn release_stale_render_resources(&self, device: &Device) {
         let mut defer_release_resources = self.defer_release_resources.lock();
 
         for pool in defer_release_resources.descriptor_pools.drain(..) {
-            unsafe { device.destroy_descriptor_pool(pool, None); }
+            unsafe { device.raw.destroy_descriptor_pool(pool, None); }
+        }
+
+        for buffer in defer_release_resources.buffers.drain(..) {
+            device.destroy_buffer(buffer);
         }
     }
 }

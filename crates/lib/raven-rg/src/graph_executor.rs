@@ -3,13 +3,13 @@ use std::sync::Arc;
 use ash::vk;
 
 use raven_core::render::camera::CameraMatrices;
-use raven_rhi::{Rhi, backend::{Device, barrier::{self, ImageBarrier}, Swapchain}, pipeline_cache::PipelineCache, dynamic_buffer::DynamicBuffer};
+use raven_rhi::{Rhi, backend::{Device, barrier::{self, ImageBarrier}, Swapchain}, pipeline_cache::PipelineCache, dynamic_buffer::DynamicBuffer, global_constants_descriptor};
 
-use crate::{compiled_graph::CompiledRenderGraph, transient_resource_cache::TransientResourceCache, global_constants_descriptor::create_engine_global_constants_descriptor_set};
-use crate::graph_builder::{RenderGraphBuilder, TemporaryResourceRegistry, ExportedTemporalResources, TemporaryResourceState};
+use crate::{compiled_graph::CompiledRenderGraph, transient_resource_cache::TransientResourceCache};
+use crate::graph_builder::{RenderGraphBuilder, TemporalResourceRegistry, ExportedTemporalResources, TemporalResourceState};
 
 enum RenderGraphTemporalResources {
-    Inert(TemporaryResourceRegistry),
+    Inert(TemporalResourceRegistry),
     Exported(ExportedTemporalResources),
 }
 
@@ -20,7 +20,7 @@ impl Default for RenderGraphTemporalResources {
 }
 
 /// Render graph executor to build and run a render graph with RHI.
-pub struct Executor {
+pub struct GraphExecutor {
     device: Arc<Device>,
 
     compiled_rg: Option<CompiledRenderGraph>,
@@ -45,7 +45,7 @@ pub struct ExecutionParams<'a> {
 pub struct FrameConstants {
     pub cam_matrices: CameraMatrices,
 
-    pub display_sh_cubemap: u32,
+    pub frame_index: u32,
     pub pre_exposure_mult: f32,
     pub pre_exposure_prev_frame_mult: f32,
     pub pre_exposure_delta: f32,
@@ -56,10 +56,10 @@ pub struct DrawFrameContextLayout {
     pub frame_constants_offset: u32,
 }
 
-impl Executor {
+impl GraphExecutor {
     pub fn new(rhi: &Rhi) -> anyhow::Result<Self> {
         let global_dynamic_buffer = DynamicBuffer::new(rhi);
-        let global_dynamic_constants_set = create_engine_global_constants_descriptor_set(rhi, &global_dynamic_buffer);
+        let global_dynamic_constants_set = global_constants_descriptor::create_engine_global_constants_descriptor_set(rhi, &global_dynamic_buffer);
 
         Ok(Self {
             device: rhi.device.clone(),
@@ -94,10 +94,11 @@ impl Executor {
         );
 
         // user-side callback to build the render graph with custom passes
+        // temporal resources only used when preparing the render graph
         prepare_func(&mut rg_builder);
 
         // now the render graph is ready to compile and run
-        let (rg, exported_temp_resources) = rg_builder.build();
+        let (rg, exported_temporal_resources) = rg_builder.build();
 
         // analyzed all passes and register pipelines to pipeline cache
         self.compiled_rg = Some(rg.compile(&mut self.pipeline_cache));
@@ -106,9 +107,9 @@ impl Executor {
         match self.pipeline_cache.prepare(&self.device) {
             Ok(()) => {
                 // If this frame is successfully prepared, we get all the resources ready to be drawn
-                self.temporal_resources = RenderGraphTemporalResources::Exported(exported_temp_resources);
+                self.temporal_resources = RenderGraphTemporalResources::Exported(exported_temporal_resources);
 
-                // create new pipelines
+                // create new pipelines and destroy stale pipelines
                 self.pipeline_cache.update_pipelines(&self.device);
 
                 Ok(())
@@ -124,15 +125,15 @@ impl Executor {
                     RenderGraphTemporalResources::Exported(_) => unreachable!(),
                 };
 
-                for (k, v) in exported_temp_resources.0.0 {
+                for (k, v) in exported_temporal_resources.0.0 {
                     // this is a new resource of this frame
                     #[allow(clippy::map_entry)]
                     if !temporal_resources.0.contains_key(&k) {
                         let resource = match v {
-                            res @ TemporaryResourceState::Inert { .. } => res,
-                            TemporaryResourceState::Imported { resource, .. }
-                            | TemporaryResourceState::Exported { resource, .. } => {
-                                TemporaryResourceState::Inert {
+                            res @ TemporalResourceState::Inert { .. } => res,
+                            TemporalResourceState::Imported { resource, .. }
+                            | TemporalResourceState::Exported { resource, .. } => {
+                                TemporalResourceState::Inert {
                                     resource,
                                     access: vk_sync::AccessType::Nothing,
                                 }

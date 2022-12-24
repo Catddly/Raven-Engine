@@ -2,7 +2,7 @@ use std::{sync::Arc, ops::{Deref, DerefMut}};
 
 use ash::vk;
 
-use super::{Surface, Device, Image, ImageDesc, RHIError};
+use super::{Surface, Device, Image, ImageDesc, RhiError};
 
 pub struct SwapchainImage {
     pub image: Arc<Image>,
@@ -51,7 +51,7 @@ impl Swapchain {
         Default::default()
     }
 
-    pub fn acquire_next_image(&mut self) -> anyhow::Result<SwapchainImage, RHIError> {
+    pub fn acquire_next_image(&mut self) -> anyhow::Result<SwapchainImage, RhiError> {
         let current_frame = &mut self.current_frame;
         let acquire_semaphore = self.acquire_semaphores[*current_frame as usize];
 
@@ -70,10 +70,10 @@ impl Swapchain {
                 },
                 Err(err) if err == vk::Result::ERROR_OUT_OF_DATE_KHR ||
                     err == vk::Result::SUBOPTIMAL_KHR => {
-                    Err(RHIError::FramebufferInvalid)
+                    Err(RhiError::FramebufferInvalid)
                 }
                 Err(err) => {
-                    Err(RHIError::AcquiredImageFailed { err })
+                    Err(RhiError::AcquiredImageFailed { err })
                 }
             }
         }

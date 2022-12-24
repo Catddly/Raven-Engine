@@ -12,7 +12,7 @@ struct CameraMatrices {
 struct FrameConstants {
     CameraMatrices camera_matrices;
 
-    uint display_sh_cubemap;
+    uint  frame_index;
     float pre_exposure_mult;
     float pre_exposure_prev_frame_mult;
     float pre_exposure_delta;

@@ -6,6 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-raven-engine = { path = "../../lib/raven-engine/" }
+# raven-engine = { path = "../../lib/raven-engine/" }
+raven-engine = { path = "../../lib/raven-engine/", features = ["gpu_ray_tracing"] }
 log = "0.4"       # logging lib
 anyhow = "1.0.0"  # error lib

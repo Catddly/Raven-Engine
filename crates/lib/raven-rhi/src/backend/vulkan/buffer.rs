@@ -1,10 +1,12 @@
 use std::hash::Hash;
 
-use ash::vk;
+use ash::vk::{self};
+
+use crate::copy_engine::CopyDataSource;
 
 use super::allocator::{Allocator, MemoryLocation, AllocationCreateDesc, Allocation, self};
 use super::{Device, error};
-use super::RHIError;
+use super::RhiError;
 
 #[derive(Debug)]
 pub struct Buffer {
@@ -59,6 +61,16 @@ impl BufferDesc {
             alignment: None,
         }
     }
+
+    pub fn alignment(mut self, alignment: usize) -> Self {
+        self.alignment = Some(alignment);
+        self
+    }
+
+    pub fn usage_flags(mut self, usage: vk::BufferUsageFlags) -> Self {
+        self.usage = usage;
+        self
+    }
 }
 
 // implement buffer associated function for device
@@ -67,8 +79,49 @@ impl Device {
         &self,
         desc: BufferDesc,
         name: &str,
-    ) -> anyhow::Result<Buffer, RHIError> {
+    ) -> anyhow::Result<Buffer, RhiError> {
         let buffer = Self::create_buffer_internal(&self.raw, &mut self.global_allocator.lock(), desc, &name)?;
+
+        Ok(buffer)
+    }
+
+    pub fn create_buffer_init(
+        &self,
+        desc: BufferDesc,
+        name: &str,
+        data: &impl CopyDataSource
+    ) -> anyhow::Result<Buffer, RhiError> {
+        let buffer = Self::create_buffer_internal(
+            &self.raw, &mut self.global_allocator.lock(),
+            desc.usage_flags(desc.usage | vk::BufferUsageFlags::TRANSFER_DST), &name
+        )?;
+
+        if !data.is_empty() {
+            let mut staging_buffer = Self::create_buffer_internal(
+                &self.raw, &mut self.global_allocator.lock(),
+                BufferDesc::new_cpu_to_gpu(desc.size, vk::BufferUsageFlags::TRANSFER_SRC), "temp staging buffer"
+            )?;
+    
+            staging_buffer.allocation.mapped_slice_mut().unwrap()[0..desc.size]
+                .copy_from_slice(data.as_bytes());
+    
+            self.with_setup_commands(|cb| {
+                unsafe {
+                    self.raw.cmd_copy_buffer(
+                        cb, staging_buffer.raw, buffer.raw,
+                        &[
+                            vk::BufferCopy::builder()
+                                .src_offset(0)
+                                .dst_offset(0)
+                                .size(desc.size as u64)
+                                .build()
+                        ]
+                    );
+                }
+            })?;
+    
+            self.destroy_buffer(staging_buffer);
+        }
 
         Ok(buffer)
     }
@@ -91,7 +144,7 @@ impl Device {
         allocator: &mut Allocator,
         desc: BufferDesc,
         name: &str // name in here is just for debug purpose
-    ) -> anyhow::Result<Buffer, error::RHIError> {
+    ) -> anyhow::Result<Buffer, error::RhiError> {
         let create_info = vk::BufferCreateInfo {
             size: desc.size as u64,
             usage: desc.usage,
@@ -115,7 +168,7 @@ impl Device {
                 location: allocator::to_inner_memory_location(&desc.memory_location),
                 linear: true, // buffer is always consecutive in memory
             })
-            .map_err(move |err| RHIError::AllocationFailure { 
+            .map_err(move |err| RhiError::AllocationFailure { 
                 name: name.to_owned(), 
                 error: err 
             })?;

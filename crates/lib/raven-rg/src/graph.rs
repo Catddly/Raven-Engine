@@ -5,6 +5,8 @@ use std::sync::{Arc};
 use ash::vk;
 
 use raven_rhi::backend::{ImageDesc, Image, Buffer, barrier, ImageType, AccessType};
+#[cfg(feature = "gpu_ray_tracing")]
+use raven_rhi::backend::RayTracingAccelerationStructure;
 use raven_rhi::pipeline_cache::{PipelineCache};
 
 use crate::graph_resource::{
@@ -13,7 +15,11 @@ use crate::graph_resource::{
     ExportedHandle, 
     GraphResourceCreatedData, GraphResourceDesc, GraphResourceImportedData, RenderGraphRasterPipeline, RenderGraphComputePipeline
 };
+#[cfg(feature = "gpu_ray_tracing")]
+use crate::graph_resource::RenderGraphRayTracingPipeline;
 use crate::resource::{Resource, ResourceDesc, TypeEqualTo};
+#[cfg(feature = "gpu_ray_tracing")]
+use crate::resource::RayTracingAccelStructDesc;
 
 use super::pass::{Pass, PassBuilder};
 use super::graph_resource::Handle;
@@ -104,6 +110,37 @@ impl RenderGraphImportExportResource for Image {
     }
 }
 
+#[cfg(feature = "gpu_ray_tracing")]
+impl RenderGraphImportExportResource for RayTracingAccelerationStructure {
+    fn import(
+        self: Arc<Self>, // imported resource must be outside resources. (i.e. Arc<>)
+        render_graph: &mut RenderGraph,
+        access: AccessType,
+    ) -> Handle<Self> {
+        let handle = GraphResourceHandle {
+            id: render_graph.resources.len() as u32,
+            generation: 0,
+        };
+        render_graph.resources.push(GraphResource::import_ray_tracing_accel_struct(self.clone(), access));
+        
+        let desc = RayTracingAccelStructDesc;
+
+        Handle {
+            handle,
+            desc,
+            _marker: PhantomData,
+        }
+    }
+
+    fn export(
+        _handle: Handle<Self>,
+        _render_graph: &mut RenderGraph,
+        _access: AccessType,
+    ) -> ExportedHandle<Self> {
+        unimplemented!()
+    }
+}
+
 /// Render graph.
 pub struct RenderGraph {
     /// TODO: maybe add parallel ability to this. Vec is linear and not suitable for doing parallel dispatching.
@@ -113,6 +150,8 @@ pub struct RenderGraph {
 
     pub(crate) raster_pipelines: Vec<RenderGraphRasterPipeline>,
     pub(crate) compute_pipelines: Vec<RenderGraphComputePipeline>,
+    #[cfg(feature = "gpu_ray_tracing")]
+    pub(crate) ray_tracing_pipelines: Vec<RenderGraphRayTracingPipeline>,
 }
 
 impl RenderGraph {
@@ -124,6 +163,8 @@ impl RenderGraph {
 
             raster_pipelines: Vec::new(),
             compute_pipelines: Vec::new(),
+            #[cfg(feature = "gpu_ray_tracing")]
+            ray_tracing_pipelines: Vec::new(),
         }
     }
 
@@ -234,6 +275,10 @@ pub(crate) enum ResourceUsage {
     Empty,
     Image(vk::ImageUsageFlags),
     Buffer(vk::BufferUsageFlags),
+
+    #[cfg(feature = "gpu_ray_tracing")]
+    #[allow(dead_code)]
+    RayTracingAccelStruct,
 }
 
 impl Default for ResourceUsage {
@@ -284,6 +329,10 @@ impl RenderGraph {
                 }) => {
                     resource_usages[idx] = ResourceUsage::Buffer(desc.usage);
                 },
+                #[cfg(feature = "gpu_ray_tracing")]
+                GraphResource::Created(GraphResourceCreatedData {
+                    desc: GraphResourceDesc::RayTracingAccelStruct(_),
+                }) => unimplemented!(),
                 GraphResource::Imported(GraphResourceImportedData::SwapchainImage) => {
                     resource_usages[idx] = ResourceUsage::Image(vk::ImageUsageFlags::default());
                 },
@@ -345,6 +394,14 @@ impl RenderGraph {
                         buffer_usage |= raw.desc.usage;
                         resource_usages[resource_index] = ResourceUsage::Buffer(buffer_usage);
                     }
+
+                    // ray tracing usage flags are ignored for now
+                    #[cfg(feature = "gpu_ray_tracing")]
+                    GraphResource::Created(GraphResourceCreatedData {
+                        desc: GraphResourceDesc::RayTracingAccelStruct(_),
+                    }) => {}
+                    #[cfg(feature = "gpu_ray_tracing")]
+                    GraphResource::Imported(GraphResourceImportedData::RayTracingAccelStruct { .. }) => {}
                 };
             }
         }
@@ -374,6 +431,10 @@ impl RenderGraph {
                             panic!("Expect {} to be buffer resource!", resource_index);
                         }
                     }
+                    
+                    // ray tracing usage flags are ignored for now
+                    #[cfg(feature = "gpu_ray_tracing")]
+                    ExportableGraphResource::RayTracingAccelStruct(_) => {}
                 }
             }
         }
@@ -396,6 +457,11 @@ impl RenderGraph {
             .map(|rg_compute| pipeline_cache.register_compute_pipeline(&rg_compute.desc))
             .collect::<Vec<_>>();
 
+        #[cfg(feature = "gpu_ray_tracing")]
+        let ray_tracing_pipeline_handles = self.ray_tracing_pipelines.iter()
+            .map(|rg_rt| pipeline_cache.register_ray_tracing_pipeline(&rg_rt.stages, &rg_rt.desc))
+            .collect::<Vec<_>>();
+
         CompiledRenderGraph {
             render_graph: self,
             resource_infos,
@@ -403,6 +469,8 @@ impl RenderGraph {
             pipelines: RenderGraphPipelineHandles {
                 raster_pipeline_handles,
                 compute_pipeline_handles,
+                #[cfg(feature = "gpu_ray_tracing")]
+                ray_tracing_pipeline_handles,
             },
         }
     }

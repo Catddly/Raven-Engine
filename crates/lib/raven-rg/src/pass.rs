@@ -2,18 +2,23 @@ use std::marker::PhantomData;
 use std::path::PathBuf;
 
 use raven_rhi::backend::{
-    self, RHIError, ComputePipelineDesc, PipelineShaderDesc, RasterPipelineDesc, AccessType,
+    self, RhiError, ComputePipelineDesc, PipelineShaderDesc, RasterPipelineDesc, AccessType,
 };
+#[cfg(feature = "gpu_ray_tracing")]
+use raven_rhi::backend::RayTracingPipelineDesc;
+use raven_rhi::global_bindless_descriptor;
 
 use crate::pass_context::PassContext;
 use crate::graph_resource::{GraphComputePipelineHandle, RenderGraphComputePipeline, GraphRasterPipelineHandle, RenderGraphRasterPipeline};
+#[cfg(feature = "gpu_ray_tracing")]
+use crate::graph_resource::{RenderGraphRayTracingPipeline, GraphRayTracingPipelineHandle};
 use crate::resource::{ResourceView, ResourceDesc};
 
 use super::graph_resource::{GraphResourceHandle, Handle, GraphResourceRef};
 use super::graph::RenderGraph;
-use super::resource::{TypeEqualTo, Resource, SRV, UAV, RT};
+use super::resource::{TypeEqualTo, Resource, Srv, Uav, Rt};
 
-pub type RenderFunc = dyn FnOnce(&mut PassContext) -> anyhow::Result<(), RHIError>;
+pub type RenderFunc = dyn FnOnce(&mut PassContext) -> anyhow::Result<(), RhiError>;
 
 /// Pass resources access type.
 /// 
@@ -22,6 +27,8 @@ pub type RenderFunc = dyn FnOnce(&mut PassContext) -> anyhow::Result<(), RHIErro
 pub(crate) struct PassResourceAccessType {
     pub(crate) access_type: AccessType,
     pub(crate) skip_sync_if_same: bool,
+    #[cfg(debug_assertions)]
+    pub(crate) debug_pass_name: String,
 }
 
 /// Resource handle of the resource in the render graph and the access type.
@@ -96,7 +103,7 @@ impl<'rg> PassBuilder<'rg> {
         &mut self, 
         handle: &Handle<ResType>,
         access_type: AccessType,
-    ) -> GraphResourceRef<ResType, SRV> {
+    ) -> GraphResourceRef<ResType, Srv> {
         assert!(backend::barrier::is_read_only_access(&access_type), "Invalid read access type: {:?}", &access_type);
 
         self.read_impl(handle, access_type)
@@ -109,7 +116,7 @@ impl<'rg> PassBuilder<'rg> {
         &mut self, 
         handle: &mut Handle<ResType>,
         access_type: AccessType,
-    ) -> GraphResourceRef<ResType, UAV> {
+    ) -> GraphResourceRef<ResType, Uav> {
         assert!(backend::barrier::is_write_only_access(&access_type), "Invalid write access type: {:?}", &access_type);
 
         self.write_impl(handle, access_type)
@@ -122,7 +129,7 @@ impl<'rg> PassBuilder<'rg> {
         &mut self,
         handle: &Handle<ResType>,
         access_type: AccessType,
-    ) -> GraphResourceRef<ResType, SRV> {
+    ) -> GraphResourceRef<ResType, Srv> {
         assert!(backend::barrier::is_read_only_raster_access(&access_type), "Invalid raster read access type: {:?}", &access_type);
 
         self.read_impl(handle, access_type)
@@ -135,7 +142,7 @@ impl<'rg> PassBuilder<'rg> {
         &mut self,
         handle: &mut Handle<ResType>,
         access_type: AccessType,
-    ) -> GraphResourceRef<ResType, RT> {
+    ) -> GraphResourceRef<ResType, Rt> {
         assert!(backend::barrier::is_write_only_raster_access(&access_type), "Invalid raster write access type: {:?}", &access_type);
 
         self.write_impl(handle, access_type)
@@ -144,7 +151,7 @@ impl<'rg> PassBuilder<'rg> {
     /// Add render function to this pass.
     pub fn render(
         mut self,
-        func: impl (FnOnce(&mut PassContext) -> anyhow::Result<(), RHIError>) + 'static,    
+        func: impl (FnOnce(&mut PassContext) -> anyhow::Result<(), RhiError>) + 'static,    
     ) {
         let pass = self.pass.as_mut().unwrap();
         
@@ -165,6 +172,8 @@ impl<'rg> PassBuilder<'rg> {
             access: PassResourceAccessType {
                 access_type,
                 skip_sync_if_same: false,
+                #[cfg(debug_assertions)]
+                debug_pass_name: pass.name.clone(),
             },
         });
 
@@ -187,6 +196,8 @@ impl<'rg> PassBuilder<'rg> {
             access: PassResourceAccessType {
                 access_type,
                 skip_sync_if_same: true,
+                #[cfg(debug_assertions)]
+                debug_pass_name: pass.name.clone(),
             },
         });
 
@@ -200,11 +211,31 @@ impl<'rg> PassBuilder<'rg> {
 
 // Pipeline relative
 impl<'rg> PassBuilder<'rg> {
+    pub fn register_raster_pipeline(&mut self, shaders: &[PipelineShaderDesc], desc: RasterPipelineDesc) -> GraphRasterPipelineHandle {
+        let idx = self.rg.raster_pipelines.len();
+
+        let mut desc = desc;
+        // force inserting the set #1 layout (global bindless descriptor set)
+        // TODO: it this a clone inefficient?
+        desc.custom_set_layout_overwrites[1] = Some(global_bindless_descriptor::get_engine_global_bindless_descriptor_layout().clone());
+
+        self.rg.raster_pipelines.push(RenderGraphRasterPipeline {
+            desc,
+            stages: shaders.to_vec(),
+        });
+
+        GraphRasterPipelineHandle { idx }
+    }
+
     pub fn register_compute_pipeline(&mut self, path: impl Into<PathBuf>) -> GraphComputePipelineHandle {
-        let desc = ComputePipelineDesc::builder()
+        let mut desc = ComputePipelineDesc::builder()
             .source(path.into())
             .build()
             .unwrap();
+
+        // force inserting the set #1 layout (global bindless descriptor set)
+        // TODO: it this a clone inefficient?
+        desc.custom_set_layout_overwrites[1] = Some(global_bindless_descriptor::get_engine_global_bindless_descriptor_layout().clone());
 
         self.register_compute_pipeline_with_desc(desc)
     }
@@ -217,19 +248,21 @@ impl<'rg> PassBuilder<'rg> {
         GraphComputePipelineHandle { idx }
     }
 
-    pub fn register_raster_pipeline(&mut self, shaders: &[PipelineShaderDesc], desc: RasterPipelineDesc) -> GraphRasterPipelineHandle {
-        let idx = self.rg.raster_pipelines.len();
+    #[cfg(feature = "gpu_ray_tracing")]
+    pub fn register_ray_tracing_pipeline(&mut self, shaders: &[PipelineShaderDesc], desc: RayTracingPipelineDesc) -> GraphRayTracingPipelineHandle {
+
+        let idx = self.rg.ray_tracing_pipelines.len();
 
         let mut desc = desc;
         // force inserting the set #1 layout (global bindless descriptor set)
         // TODO: it this a clone inefficient?
-        desc.custom_set_layout_overwrites[1] = Some(super::global_bindless_descriptor::get_engine_global_bindless_descriptor_layout().clone());
+        desc.custom_set_layout_overwrites[1] = Some(global_bindless_descriptor::get_engine_global_bindless_descriptor_layout().clone());
 
-        self.rg.raster_pipelines.push(RenderGraphRasterPipeline {
+        self.rg.ray_tracing_pipelines.push(RenderGraphRayTracingPipeline {
             desc,
             stages: shaders.to_vec(),
         });
 
-        GraphRasterPipelineHandle { idx }
+        GraphRayTracingPipelineHandle { idx }
     }
 }

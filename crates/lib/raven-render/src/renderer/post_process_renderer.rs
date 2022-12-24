@@ -389,10 +389,6 @@ impl PostProcessRenderer {
             let extent = output.desc().divide_up_extent(downsample_amount).extent;
 
             pass.render(move |ctx| {
-
-                //let push_values = (extent[0], extent[1]);
-                //let offset = ctx.global_dynamic_buffer().push(&push_values);
-
                 let mut input_binding = input_ref.bind();
                 input_binding.with_base_mipmap_level(target_mip - 1);
 
@@ -403,7 +399,6 @@ impl PostProcessRenderer {
                     .descriptor_set(0, &[
                         input_binding,
                         output_binding,
-                        //RenderGraphPassBinding::DynamicBuffer(offset)
                     ])
                 )?;
 

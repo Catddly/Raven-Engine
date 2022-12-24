@@ -204,13 +204,20 @@ impl CompileShaderStagesBuilder {
     pub fn add_stage(mut self, stage: PipelineShaderStage, source: PathBuf, entry: String, force_recompile: bool) -> Self {
         self.shaders.push((stage,
             CompileShader {
-            source,
-            profile: match stage {
-                PipelineShaderStage::Vertex => "vs",
-                PipelineShaderStage::Pixel => "ps",
-            }.to_owned(),
-            entry,
-            force_recompile,
+                source,
+                profile: match stage {
+                    PipelineShaderStage::Vertex => "vs",
+                    PipelineShaderStage::Pixel => "ps",
+                    // See https://learn.microsoft.com/en-us/windows/win32/direct3d12/direct3d-12-raytracing-hlsl-shaders
+                    #[cfg(feature = "gpu_ray_tracing")]
+                    PipelineShaderStage::RayGen |
+                    PipelineShaderStage::RayMiss |
+                    PipelineShaderStage::RayClosestHit |
+                    PipelineShaderStage::RayAnyHit |
+                    PipelineShaderStage::RayCallable => "lib",
+                }.to_owned(),
+                entry,
+                force_recompile,
         }));
 
         self
@@ -225,13 +232,20 @@ impl CompileShaderStagesBuilder {
 
             self.shaders.push((shader.stage,
                 CompileShader {
-                source,
-                profile: match shader.stage {
-                    PipelineShaderStage::Vertex => "vs",
-                    PipelineShaderStage::Pixel => "ps",
-                }.to_owned(),
-                entry: shader.entry.clone(),
-                ..Default::default()
+                    source,
+                    profile: match shader.stage {
+                        PipelineShaderStage::Vertex => "vs",
+                        PipelineShaderStage::Pixel => "ps",
+                        // See https://learn.microsoft.com/en-us/windows/win32/direct3d12/direct3d-12-raytracing-hlsl-shaders
+                        #[cfg(feature = "gpu_ray_tracing")]
+                        PipelineShaderStage::RayGen |
+                        PipelineShaderStage::RayMiss |
+                        PipelineShaderStage::RayClosestHit |
+                        PipelineShaderStage::RayAnyHit |
+                        PipelineShaderStage::RayCallable => "lib",
+                    }.to_owned(),
+                    entry: shader.entry.clone(),
+                    ..Default::default()
             }))
         }
 
@@ -276,7 +290,11 @@ fn compile_shader_hlsl(
     )
     .map_err(|err| anyhow::anyhow!("{}", err))?;
 
-    glog::info!("DX Compiler compile {} {} with {:?}", name, entry, t.elapsed());
+    if entry.is_empty() {
+        glog::info!("DX Compiler compile {} % with {:?}", name, t.elapsed());
+    } else {
+        glog::info!("DX Compiler compile {} {} with {:?}", name, entry, t.elapsed());
+    }
 
     Ok(spirv.into())
 }

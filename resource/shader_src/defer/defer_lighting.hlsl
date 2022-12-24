@@ -6,6 +6,7 @@
 #include "../common/float_precision.hlsl"
 #include "../common/uv.hlsl"
 #include "../common/immutable_sampler.hlsl"
+#include "../common/bindless_resources.hlsl"
 
 #include "../ray_tracing/ray.hlsl"
 #include "../ray_tracing/camera_ray.hlsl"
@@ -29,16 +30,14 @@ struct SHBuffer
 [[vk::binding(3)]] TextureCube cube_map;
 [[vk::binding(4)]] StructuredBuffer<SHBuffer> sh_buffer;
 [[vk::binding(5)]] TextureCube prefilter_cube_map;
-[[vk::binding(6)]] Texture2D<float2> brdf_lut;
 
 #define CONVOLVED_CUBEMAP convolved_cube_map
 #define PREFILTERED_CUBEMAP prefilter_cube_map
-#define BRDF_LUT brdf_lut
 #define SH_BUFFER sh_buffer
 
-#include "../pbr/multi_scatter_compensate.hlsl"
 #include "../pbr/ibl/ibl_lighting.hlsl"
 #include "../pbr/brdf.hlsl"
+#include "../pbr/multi_scatter_compensate.hlsl"
 
 [numthreads(8, 8, 1)]
 void main(in uint2 px: SV_DispatchThreadID) {
@@ -52,18 +51,9 @@ void main(in uint2 px: SV_DispatchThreadID) {
     if (depth - 0.0 < FLOAT_EPSILON)
     {
         float3 direction = cam_ctx.get_direction_ws();
-        uint display = frame_constants_dyn.display_sh_cubemap;
 
-        if (display == 0) 
-        {
-            float4 pixel = cube_map.SampleLevel(sampler_llce, direction, 0.0);
-            output_tex[px] = float4(srgb_to_linear(pixel.rgb) * frame_constants_dyn.pre_exposure_mult, 1.0);
-        }
-        else
-        {
-            float3 irradiance = get_ibl_irradiance(direction);
-            output_tex[px] = float4(irradiance, 1.0);
-        }
+        float4 pixel = cube_map.SampleLevel(sampler_llce, direction, 0.0);
+        output_tex[px] = float4(srgb_to_linear(pixel.rgb) * frame_constants_dyn.pre_exposure_mult, 1.0);
         return;
     }
 
@@ -87,11 +77,11 @@ void main(in uint2 px: SV_DispatchThreadID) {
     const float3x3 tangent_to_world = build_orthonormal_basis(gbuffer.normal);
     // incoming light solid angle in tangent space
     // because we store the normal in the z column of the matrix, so wi.z is the dot product of normal and light.
-    const float3 wi = normalize(mul(SUN_DIRECTION, tangent_to_world));
+    const float3 wi = mul(SUN_DIRECTION, tangent_to_world);
     // outcoming light solid angle in tangent space
     // Ibid.
     // wo.z is the dot product of normal and view.
-    float3 wo = normalize(mul(-view_ray.Direction, tangent_to_world));
+    float3 wo = mul(-view_ray.Direction, tangent_to_world);
 
     // if (wo.z < 0.0) {
     //     wo.z *= -0.25;
@@ -104,10 +94,10 @@ void main(in uint2 px: SV_DispatchThreadID) {
     float3 total_radiance = 0.0.xxx; 
     // direct lighting
     {
-        const float3 brdf_value = brdf.eval_directional_light(wi, wo, compensate) * max(0.0, wi.z);
+        const float3 brdf_value = brdf.eval_directional_light(wi, wo, compensate);
         const float3 light_radiance = float3(1.0, 1.0, 1.0);
  
-        total_radiance += brdf_value * light_radiance;
+        total_radiance += brdf_value * light_radiance * max(0.0, wi.z);
     }
     
     // indirect lighting

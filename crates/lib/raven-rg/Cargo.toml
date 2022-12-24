@@ -3,6 +3,9 @@ name = "raven-rg"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+gpu_ray_tracing = []
+
 [dependencies]
 raven-core = { path = "../../lib/raven-core/" }
 raven-rhi  = { path = "../../lib/raven-rhi/" }
@@ -14,7 +17,7 @@ arrayvec = "0.7.0"
 # May write our own on-demand computing library
 turbosloth = { git = "https://github.com/h3r2tic/turbosloth.git", rev = "540964c" }
 
-once_cell = "1.15.0"
+# once_cell = "1.15.0"
 
 # Strictly speaking, this should not be here, this should only be in RHI layer!
 ash = "0.33.0"

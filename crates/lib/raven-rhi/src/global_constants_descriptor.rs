@@ -2,7 +2,7 @@ use ash::vk;
 use rspirv_reflect::{DescriptorInfo, DescriptorType, BindingCount};
 use once_cell::sync::Lazy;
 
-use raven_rhi::{Rhi, backend::{descriptor::{self, PipelineSetBindings}}, dynamic_buffer::DynamicBuffer};
+use crate::{Rhi, backend::{descriptor::{self, PipelineSetBindings}}, dynamic_buffer::DynamicBuffer};
 
 // to be used in set 2
 fn get_engine_global_constant_descriptor_layout() -> &'static PipelineSetBindings {

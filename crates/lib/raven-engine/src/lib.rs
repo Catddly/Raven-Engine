@@ -1,7 +1,7 @@
 mod user;
 pub mod prelude;
 
-use std::{collections::VecDeque};
+use std::{collections::VecDeque, sync::Arc};
 
 use glam::{Vec3, Quat, Affine3A};
 
@@ -12,8 +12,8 @@ use raven_core::{
         window::{Window, WindowBuilder},
         event::{WindowEvent, Event, VirtualKeyCode, ElementState}, 
         platform::run_return::EventLoopExtRunReturn
-    }, asset::{AssetManager, AssetLoadDesc}, 
-    render::camera::{self}, 
+    }, asset::{AssetManager, AssetLoadDesc, asset_registry::AssetHandle}, 
+    render::{camera::{self}, persistence::{PersistStates, IsStatesChanged}}, 
     input::InputBinding, 
 };
 
@@ -26,7 +26,7 @@ use raven_core::input::{InputManager, KeyCode, MouseButton};
 use raven_core::filesystem::{self, ProjectFolder};
 use raven_render::{WorldRenderer};
 use raven_rhi::{RHIConfig, Rhi, backend};
-use raven_rg::{Executor, IntoPipelineDescriptorBindings, RenderGraphPassBindable, FrameConstants};
+use raven_rg::{GraphExecutor, IntoPipelineDescriptorBindings, RenderGraphPassBindable, FrameConstants};
 
 use raven_core::system::OnceQueue;
 
@@ -38,7 +38,7 @@ pub struct EngineContext<App> {
     input_manager: InputManager,
 
     rhi: Rhi,
-    rg_executor: Executor,
+    rg_executor: GraphExecutor,
     renderer: WorldRenderer,
 
     asset_manager: AssetManager,
@@ -115,7 +115,7 @@ pub fn init(app: impl user::App) -> anyhow::Result<EngineContext<impl user::App>
     };
     let rhi = Rhi::new(rhi_config, &main_window)?;
 
-    let rg_executor = Executor::new(&rhi)?;
+    let rg_executor = GraphExecutor::new(&rhi)?;
     let renderer = WorldRenderer::new(&rhi, render_resolution);
 
     let mut app = app;
@@ -162,7 +162,7 @@ pub fn main_loop(engine_context: &mut EngineContext<impl user::App>) {
     asset_manager.load_asset(AssetLoadDesc::load_texture("texture/skybox/back.jpg")).unwrap();
 
     let handles = asset_manager.dispatch_load_tasks().unwrap();
-    let tex_handles = handles.split_at(1).1;
+    let tex_handles: &[Arc<AssetHandle>; 6] = handles.split_at(1).1.try_into().unwrap();
 
     renderer.add_cubemap_split(&rhi, tex_handles);
     let mesh_handle = renderer.add_mesh(&handles[0]);
@@ -211,8 +211,8 @@ pub fn main_loop(engine_context: &mut EngineContext<impl user::App>) {
     const FILTER_FRAME_COUNT: usize = 10;
     let mut dt_filter_queue = VecDeque::with_capacity(FILTER_FRAME_COUNT);
 
-    // Temp
-    let mut display_sh_cubemap = false;
+    let mut frame_index: u32 = 0;
+    let mut persist_states = PersistStates::new();
 
     let mut running = true;
     while running { // main loop start
@@ -234,6 +234,8 @@ pub fn main_loop(engine_context: &mut EngineContext<impl user::App>) {
 
         // tick logic begin
         let mut frame_constants = {
+            let old_persist_states = persist_states.clone();
+
             // system messages
             event_loop.run_return(|event, _, control_flow| {
                 control_flow.set_poll();
@@ -280,19 +282,26 @@ pub fn main_loop(engine_context: &mut EngineContext<impl user::App>) {
             );
             let cam_matrices = camera.camera_matrices();
 
-            if input_manager.is_mouse_just_pressed(MouseButton::RIGHT) {
-                display_sh_cubemap = !display_sh_cubemap;
-            }
+            persist_states.camera.position = camera.body.position;
+            persist_states.camera.rotation = camera.body.rotation;
+
+            // if input_manager.is_mouse_just_pressed(MouseButton::RIGHT) {
+            //     display_sh_cubemap = !display_sh_cubemap;
+            // }
 
             // user-side app tick
             app.tick(dt);
 
             static_events.clear();
 
+            if persist_states.is_states_changed(&old_persist_states) {
+                renderer.reset_path_tracing_accumulation();
+            }
+
             FrameConstants {
                 cam_matrices,
 
-                display_sh_cubemap : if display_sh_cubemap { 1 } else { 0 },
+                frame_index,
                 // TODO: this should be delayed
                 pre_exposure_mult: 1.0,
                 pre_exposure_prev_frame_mult: 1.0,
@@ -344,6 +353,8 @@ pub fn main_loop(engine_context: &mut EngineContext<impl user::App>) {
                         &frame_constants,
                         &mut rhi.swapchain
                     );
+
+                    frame_index = frame_index.wrapping_add(1);
                 },
                 Err(err) => {
                     panic!("Failed to prepare render graph with {:?}", err);

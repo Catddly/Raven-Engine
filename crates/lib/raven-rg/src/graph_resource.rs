@@ -2,10 +2,17 @@ use std::{marker::PhantomData, sync::Arc};
 
 use vk_sync::AccessType;
 
-use raven_rhi::backend::{Image, ImageDesc, Buffer, BufferDesc, RasterPipelineDesc, ComputePipelineDesc, PipelineShaderDesc};
+use raven_rhi::backend::{
+    Image, ImageDesc,
+    Buffer, BufferDesc, 
+    RasterPipelineDesc, ComputePipelineDesc, PipelineShaderDesc
+};
+#[cfg(feature = "gpu_ray_tracing")]
+use raven_rhi::backend::{RayTracingAccelerationStructure, RayTracingPipelineDesc};
 
-use crate::resource::ResourceDesc;
-use super::resource::{Resource, ResourceView};
+use crate::resource::{ResourceDesc, Resource, ResourceView};
+#[cfg(feature = "gpu_ray_tracing")]
+use crate::resource::{RayTracingAccelStructDesc};
 
 /// Description for render graph resource.
 /// 
@@ -16,6 +23,8 @@ use super::resource::{Resource, ResourceView};
 pub enum GraphResourceDesc {
     Image(ImageDesc),
     Buffer(BufferDesc),
+    #[cfg(feature = "gpu_ray_tracing")]
+    RayTracingAccelStruct(RayTracingAccelStructDesc),
 }
 
 /// Resource which will be created and hold by render graph.
@@ -35,8 +44,13 @@ pub(crate) enum GraphResourceImportedData {
         raw: Arc<Image>,
         access: AccessType,
     },
-    Buffer{
+    Buffer {
         raw: Arc<Buffer>,
+        access: AccessType,
+    },
+    #[cfg(feature = "gpu_ray_tracing")]
+    RayTracingAccelStruct {
+        raw: Arc<RayTracingAccelerationStructure>,
         access: AccessType,
     },
     SwapchainImage,
@@ -55,6 +69,9 @@ pub(crate) enum GraphResource {
 pub(crate) enum ExportableGraphResource {
     Image(Handle<Image>),
     Buffer(Handle<Buffer>),
+    #[cfg(feature = "gpu_ray_tracing")]
+    #[allow(dead_code)] // reason = "We will not going to implement get_or_create_temporal() for RayTracingAccelerationStructure"
+    RayTracingAccelStruct(Handle<RayTracingAccelerationStructure>),
 }
 
 impl ExportableGraphResource {
@@ -62,6 +79,8 @@ impl ExportableGraphResource {
         match self {
             ExportableGraphResource::Image(handle) => handle.handle,
             ExportableGraphResource::Buffer(handle) => handle.handle,
+            #[cfg(feature = "gpu_ray_tracing")]
+            ExportableGraphResource::RayTracingAccelStruct(handle) => handle.handle,
         }
     }
 }
@@ -69,6 +88,8 @@ impl ExportableGraphResource {
 pub(crate) enum ExportedResourceHandle {
     Image(ExportedHandle<Image>),
     Buffer(ExportedHandle<Buffer>),
+    #[cfg(feature = "gpu_ray_tracing")]
+    RayTracingAccelStruct(ExportedHandle<RayTracingAccelerationStructure>),
 }
 
 impl GraphResource {
@@ -82,6 +103,11 @@ impl GraphResource {
 
     pub(crate) fn import_buffer(resource: Arc<Buffer>, access: AccessType) -> GraphResource {
         GraphResource::Imported(GraphResourceImportedData::Buffer{ raw: resource, access })
+    }
+
+    #[cfg(feature = "gpu_ray_tracing")]
+    pub(crate) fn import_ray_tracing_accel_struct(resource: Arc<RayTracingAccelerationStructure>, access: AccessType) -> GraphResource {
+        GraphResource::Imported(GraphResourceImportedData::RayTracingAccelStruct { raw: resource, access })
     }
 }
 
@@ -182,5 +208,17 @@ pub(crate) struct RenderGraphComputePipeline {
 
 #[derive(Clone, Copy)]
 pub struct GraphComputePipelineHandle {
+    pub(crate) idx: usize,
+}
+
+#[cfg(feature = "gpu_ray_tracing")]
+pub(crate) struct RenderGraphRayTracingPipeline {
+    pub(crate) desc: RayTracingPipelineDesc,
+    pub(crate) stages: Vec<PipelineShaderDesc>,
+}
+
+#[cfg(feature = "gpu_ray_tracing")]
+#[derive(Clone, Copy)]
+pub struct GraphRayTracingPipelineHandle {
     pub(crate) idx: usize,
 }

@@ -35,7 +35,14 @@ impl RetiredRenderGraph {
                 GraphPreparedResource::CreatedBuffer(buffer) => {
                     cache.store_buffer(buffer);
                 }
-                GraphPreparedResource::ImportedImage(_) | GraphPreparedResource::ImportedBuffer(_) => {},
+                #[cfg(feature = "gpu_ray_tracing")]
+                GraphPreparedResource::ImportedRayTracingAccelStruct(_) | 
+                GraphPreparedResource::ImportedImage(_) |
+                GraphPreparedResource::ImportedBuffer(_) => {}
+                #[cfg(not(feature = "gpu_ray_tracing"))]
+                GraphPreparedResource::ImportedImage(_) |
+                GraphPreparedResource::ImportedBuffer(_) => {}
+
                 GraphPreparedResource::Delayed(_) => panic!("Try to finish render graph while still some resources is in GraphPreparedResource::Delayed state."),
             }
         }

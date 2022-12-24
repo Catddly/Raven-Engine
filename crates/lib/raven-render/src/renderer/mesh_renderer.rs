@@ -6,8 +6,11 @@ use ash::vk;
 use glam::{Affine3A};
 use raven_core::asset::TextureGammaSpace;
 use raven_core::{asset::{asset_registry::{AssetHandle, get_runtime_asset_registry}, PackedVertex, VecArrayQueryParam}, utility};
-use raven_rg::{RenderGraphBuilder, RgHandle, IntoPipelineDescriptorBindings, RenderGraphPassBinding, image_clear, create_engine_global_bindless_descriptor_set};
+use raven_rg::{RenderGraphBuilder, RgHandle, IntoPipelineDescriptorBindings, RenderGraphPassBinding, image_clear};
+use raven_rhi::global_bindless_descriptor;
 use raven_rhi::{backend::{Device, ImageDesc, Image, BufferDesc, Buffer, renderpass, RenderPass, descriptor::update_descriptor_set_buffer, RasterPipelineDesc, PipelineShaderDesc, PipelineShaderStage, AccessType, ImageViewDesc, ImageSubresource}, Rhi, copy_engine::CopyEngine};
+
+use super::image_lut::ImageLut;
 
 const GBUFFER_PACK_FORMAT: vk::Format = vk::Format::R32G32B32A32_SFLOAT;
 const GBUFFER_DEPTH_FORMAT: vk::Format = vk::Format::D32_SFLOAT;
@@ -23,10 +26,18 @@ pub enum MeshRasterScheme {
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct MeshHandle {
-    id: u32,
+    pub(crate) id: u32,
 }
 
-pub struct BindlessTexHandle(u32);
+impl MeshHandle {
+    pub const INVALID_HANDLE: MeshHandle = MeshHandle { id: u32::MAX };
+
+    pub fn is_valid(handle: MeshHandle) -> bool {
+        handle != Self::INVALID_HANDLE
+    }
+}
+
+pub struct BindlessTexHandle(pub(crate) u32);
 
 #[repr(C)]
 #[derive(Copy, Clone)]
@@ -42,15 +53,23 @@ struct GpuMesh {
 }
 
 #[derive(Clone)]
-pub struct UploadedMesh {
-    index_buffer_offset: u32,
-    index_count: u32,
+pub(crate) struct UploadedMesh {
+    pub(crate) index_buffer_offset: u32,
+    pub(crate) index_count: u32,
+
+    // data necessary for building blas
+    #[cfg(feature = "gpu_ray_tracing")]
+    pub(crate) vertex_packed_address: u64,
+    #[cfg(feature = "gpu_ray_tracing")]
+    pub(crate) index_buffer_address: u64,
+    #[cfg(feature = "gpu_ray_tracing")]
+    pub(crate) max_vertex: u32,
 }
 
 #[derive(Clone)]
 pub struct MeshInstance {
-    transform: Affine3A,
-    handle: MeshHandle,
+    pub(crate) transform: Affine3A,
+    pub(crate) handle: MeshHandle,
 }
 
 impl std::hash::Hash for MeshInstance {
@@ -98,6 +117,7 @@ pub struct MeshRenderer {
     mesh_buffer: Arc<Buffer>,
     bindless_tex_sizes_buffer: Buffer,
 
+    image_luts: Vec<ImageLut>,
     bindless_images: Vec<Arc<Image>>,
     next_bindless_texture_idx: u32,
 
@@ -131,6 +151,11 @@ struct UploadMaterial {
 }
 
 impl MeshRenderer {
+    // TODO: temp
+    pub fn bindless_descriptor_set(&self) -> vk::DescriptorSet {
+        self.bindless_descriptor
+    }
+
     pub fn new(rhi: &Rhi, scheme: MeshRasterScheme, resolution: [u32; 2]) -> Self {
         let renderpass = renderpass::create_render_pass(&rhi.device, 
             renderpass::RenderPassDesc {
@@ -177,7 +202,7 @@ impl MeshRenderer {
             .create_buffer(texture_sizes_buffer_desc, "bindless textures sizes")
             .unwrap();
 
-        let bindless_descriptor = create_engine_global_bindless_descriptor_set(rhi);
+        let bindless_descriptor = global_bindless_descriptor::create_engine_global_bindless_descriptor_set(rhi);
 
         update_descriptor_set_buffer(&rhi.device, 
             0, 
@@ -212,6 +237,7 @@ impl MeshRenderer {
             mesh_buffer,
             bindless_tex_sizes_buffer,
 
+            image_luts: Vec::new(),
             bindless_images: Vec::new(),
             next_bindless_texture_idx: 0,
 
@@ -219,8 +245,40 @@ impl MeshRenderer {
         }
     }
 
-    // TODO: this function should not be here!
-    pub fn add_bindless_texture(&mut self, handle: &Arc<AssetHandle>) -> BindlessTexHandle {
+    pub fn add_bindless_image_lut(&mut self, lut: ImageLut) -> BindlessTexHandle {
+        self.image_luts.push(lut);
+
+        let new_lut = self.image_luts.last().unwrap();
+        let backing_image = new_lut.get_backing_image();
+
+        self.add_bindless_texture(backing_image.clone())
+    }
+
+    pub fn add_bindless_texture(&mut self, image: Arc<Image>) -> BindlessTexHandle {
+        let extent = image.desc.extent;
+        let extent_inv_extent = [
+            extent[0] as f32, extent[1] as f32,
+            (extent[0] as f32).recip(), (extent[1] as f32).recip()
+        ];
+
+        let handle = self.add_bindless_image_view(
+            image.view(&self.device, &ImageViewDesc::default())
+                .unwrap(),
+        );
+
+        self.bindless_images.push(image);
+
+        bytemuck::checked::cast_slice_mut::<u8, [f32; 4]>(
+            self.bindless_tex_sizes_buffer
+                .allocation
+                .mapped_slice_mut()
+                .unwrap()
+        )[handle.0 as usize] = extent_inv_extent;
+
+        handle
+    }
+
+    pub fn add_asset_bindless_texture(&mut self, handle: &Arc<AssetHandle>) -> BindlessTexHandle {
         let registry = get_runtime_asset_registry();
         {
             let read_guard = registry.read();
@@ -296,7 +354,7 @@ impl MeshRenderer {
         BindlessTexHandle(u32::MAX)
     }
 
-    fn add_bindless_image_view(&mut self, view: vk::ImageView) -> BindlessTexHandle {
+    pub(crate) fn add_bindless_image_view(&mut self, view: vk::ImageView) -> BindlessTexHandle {
         let handle = BindlessTexHandle(self.next_bindless_texture_idx);
         self.next_bindless_texture_idx += 1;
 
@@ -324,7 +382,6 @@ impl MeshRenderer {
     }
 
     pub fn add_asset_mesh(&mut self, handle: &Arc<AssetHandle>) -> MeshHandle {
-        // TODO: load the texture asset from handle.
         let registry = get_runtime_asset_registry();
         {
             let read_guard = registry.read(); 
@@ -342,12 +399,17 @@ impl MeshRenderer {
                     for mat_ref in mesh_asset.materials.iter() {
                         let material = read_guard.get_asset(mat_ref.handle()).unwrap().as_material().unwrap();
 
+                        let mut texture_mapping: [u32; 4] = [0; 4];
+                        for i in 0..texture_mapping.len() {
+                            texture_mapping[i] = material.texture_mapping[i] + self.next_bindless_texture_idx;
+                        }
+
                         let upload = UploadMaterial {
                             metallic: material.metallic,
                             roughness: material.roughness,
                             base_color: material.base_color,
                             emissive: material.emissive,
-                            texture_mapping: material.texture_mapping,
+                            texture_mapping: texture_mapping,
                             texture_transform: material.texture_transform,
                         };
 
@@ -355,7 +417,7 @@ impl MeshRenderer {
                     }
 
                     for tex_ref in mesh_asset.material_textures.iter() {
-                        let _bindless_texture = self.add_bindless_texture(tex_ref.handle());
+                        let _bindless_texture = self.add_asset_bindless_texture(tex_ref.handle());
                     }
 
                     return self.upload_gpu_mesh_data(packed, colors, uvs, tangents, indices, mat_ids, &upload_materials);
@@ -378,12 +440,18 @@ impl MeshRenderer {
                         let baked_mat = mat_asset.as_baked().unwrap();
                         let mat_field_reader = read_guard.get_baked_material_asset(baked_mat);
 
+                        let mat_tex_mapping = mat_field_reader.texture_mapping();
+                        let mut texture_mapping: [u32; 4] = [0; 4];
+                        for i in 0..texture_mapping.len() {
+                            texture_mapping[i] = mat_tex_mapping[i] + self.next_bindless_texture_idx;
+                        }
+
                         let upload = UploadMaterial {
                             metallic: mat_field_reader.metallic(),
                             roughness: mat_field_reader.roughness(),
                             base_color: mat_field_reader.base_color(),
                             emissive: mat_field_reader.emissive(),
-                            texture_mapping: mat_field_reader.texture_mapping(),
+                            texture_mapping: texture_mapping,
                             texture_transform: mat_field_reader.texture_transform(),
                         };
 
@@ -394,7 +462,7 @@ impl MeshRenderer {
                         .expect(format!("Failed to get mesh relative textures: {:?}", handle).as_str());
 
                     for tex_ref in tex_refs.iter() {
-                        let _bindless_tex_handle = self.add_bindless_texture(tex_ref.handle());
+                        let _bindless_tex_handle = self.add_asset_bindless_texture(tex_ref.handle());
                     }
 
                     return self.upload_gpu_mesh_data(packed, colors, uvs, tangents, indices, mat_ids, &upload_materials);
@@ -404,7 +472,7 @@ impl MeshRenderer {
             }
         };
 
-        MeshHandle { id: u32::MAX }
+        MeshHandle::INVALID_HANDLE
     }
 
     pub fn add_mesh_instance(&mut self, transform: Affine3A, handle: MeshHandle) -> MeshInstanceHandle {
@@ -461,13 +529,47 @@ impl MeshRenderer {
             mat_data_offset,
         };
 
+        #[cfg(feature = "gpu_ray_tracing")]
+        let draw_data_base_addr = self.draw_data_buffer.device_address(&self.device);
+
+        #[cfg(feature = "gpu_ray_tracing")]
+        let vertex_packed_address = draw_data_base_addr + packed_offset as u64;
+        #[cfg(feature = "gpu_ray_tracing")]
+        let index_buffer_address = draw_data_base_addr + index_offset as u64;
+        #[cfg(feature = "gpu_ray_tracing")]
+        let max_vertex = indices.iter().copied().max().expect("Empty mesh is not allowed!");
+
         self.meshes.push(UploadedMesh {
             index_count: indices.len() as u32,
             index_buffer_offset: index_offset,
+
+            #[cfg(feature = "gpu_ray_tracing")]
+            vertex_packed_address,
+            #[cfg(feature = "gpu_ray_tracing")]
+            index_buffer_address,
+            #[cfg(feature = "gpu_ray_tracing")]
+            max_vertex
         });
 
         MeshHandle {
             id: mesh_id as _,
+        }
+    }
+
+    pub(crate) fn get_uploaded_mesh_data(&self, handle: MeshHandle) -> UploadedMesh {
+        assert!((handle.id as usize) < self.meshes.len() && MeshHandle::is_valid(handle), "Invalid mesh handle!");
+        let mesh_data = self.meshes[handle.id as usize].clone();
+        mesh_data
+    }
+
+    pub(crate) fn get_mesh_instances(&self) -> &BTreeSet<MeshInstance> {
+        &self.mesh_instances
+    }
+
+    // TODO: temp
+    pub fn compute_lut_if_needed(&mut self, rg: &mut RenderGraphBuilder) {
+        for image_lut in self.image_luts.iter_mut() {
+            image_lut.compute_if_needed(rg);
         }
     }
 
@@ -604,6 +706,8 @@ impl MeshRenderer {
     }
 
     pub fn clean(self, rhi: &Rhi) {
+        drop(self.image_luts);
+
         for img in self.bindless_images {
             let img = Arc::try_unwrap(img)
                 .expect("Failed to clean bindless images!");

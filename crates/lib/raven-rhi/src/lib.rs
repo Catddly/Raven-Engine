@@ -8,6 +8,9 @@ pub mod draw_frame;
 pub mod dynamic_buffer;
 pub mod copy_engine;
 
+pub mod global_bindless_descriptor;  // set 1
+pub mod global_constants_descriptor; // set 2
+
 use std::sync::Arc;
 use raven_core::winit::window::Window;
 

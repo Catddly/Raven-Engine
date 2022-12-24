@@ -5,18 +5,25 @@ use raven_rhi::{
     backend::{Image, Buffer, AccessType},
     pipeline_cache::{RasterPipelineHandle, ComputePipelineHandle}, dynamic_buffer::DynamicBuffer,
 };
+#[cfg(feature = "gpu_ray_tracing")]
+use raven_rhi::{
+    backend::RayTracingAccelerationStructure,
+    pipeline_cache::{RayTracingPipelineHandle}
+};
 
 use crate::{
     graph::{RenderGraph, AnalyzedResourceInfos, ResourceUsage},
     graph_resource::{GraphResource, GraphResourceDesc, GraphResourceImportedData},
     executing_graph::ExecutingRenderGraph,
-    transient_resource_cache::TransientResourceCache, executor::{ExecutionParams},
+    transient_resource_cache::TransientResourceCache, graph_executor::{ExecutionParams},
 };
 
 /// Pipeline handles to the pipeline cache.
 pub struct RenderGraphPipelineHandles {
     pub raster_pipeline_handles: Vec<RasterPipelineHandle>,
     pub compute_pipeline_handles: Vec<ComputePipelineHandle>,
+    #[cfg(feature = "gpu_ray_tracing")]
+    pub ray_tracing_pipeline_handles: Vec<RayTracingPipelineHandle>,
 }
 
 pub(crate) struct CompiledRenderGraph {
@@ -32,6 +39,9 @@ pub(crate) enum GraphPreparedResource {
     CreatedBuffer(Buffer),
     ImportedBuffer(Arc<Buffer>),
 
+    #[cfg(feature = "gpu_ray_tracing")]
+    ImportedRayTracingAccelStruct(Arc<RayTracingAccelerationStructure>),
+
     Delayed(GraphResource),
 }
 
@@ -44,6 +54,10 @@ impl GraphPreparedResource {
             GraphPreparedResource::CreatedBuffer(buffer) => GraphPreparedResourceRef::Buffer(buffer),
             GraphPreparedResource::ImportedBuffer(buffer) => GraphPreparedResourceRef::Buffer(&*buffer),
 
+            #[cfg(feature = "gpu_ray_tracing")]
+            GraphPreparedResource::ImportedRayTracingAccelStruct(accel_struct) => 
+                GraphPreparedResourceRef::RayTracingAccelStruct(&*accel_struct),
+
             GraphPreparedResource::Delayed(_) => panic!("Can not borrow GraphPreparedResource::Delayed resource, it doesn't exist!"),
         }
     }
@@ -53,6 +67,9 @@ impl GraphPreparedResource {
 pub(crate) enum GraphPreparedResourceRef<'a> {
     Image(&'a Image),
     Buffer(&'a Buffer),
+
+    #[cfg(feature = "gpu_ray_tracing")]
+    RayTracingAccelStruct(&'a RayTracingAccelerationStructure),
 }
 
 pub struct RegisteredResource {
@@ -107,7 +124,7 @@ impl CompiledRenderGraph {
                                     access: Cell::new(AccessType::Nothing),
                                     resource: GraphPreparedResource::CreatedImage(image),
                                 }
-                            },
+                            }
                             GraphResourceDesc::Buffer(mut desc) => {
                                 if let ResourceUsage::Buffer(usage) = self.resource_infos.resource_usages[idx] {
                                     desc.usage = usage;
@@ -127,6 +144,9 @@ impl CompiledRenderGraph {
                                     resource: GraphPreparedResource::CreatedBuffer(buffer),
                                 }
                             }
+                            // TODO: we only import ray tracing acceleration structure now!
+                            #[cfg(feature = "gpu_ray_tracing")]
+                            GraphResourceDesc::RayTracingAccelStruct(_) => unimplemented!()
                         }
                     },
                     GraphResource::Imported(imported) => {
@@ -136,13 +156,20 @@ impl CompiledRenderGraph {
                                     access: Cell::new(*access),
                                     resource: GraphPreparedResource::ImportedImage(raw.clone()),
                                 }
-                            },
+                            }
                             GraphResourceImportedData::Buffer{ raw, access } => {
                                 RegisteredResource {
                                     access: Cell::new(*access),
                                     resource: GraphPreparedResource::ImportedBuffer(raw.clone()),
                                 }
-                            },
+                            }
+                            #[cfg(feature = "gpu_ray_tracing")]
+                            GraphResourceImportedData::RayTracingAccelStruct{ raw, access } => {
+                                RegisteredResource {
+                                    access: Cell::new(*access),
+                                    resource: GraphPreparedResource::ImportedRayTracingAccelStruct(raw.clone()),
+                                }
+                            }
                             GraphResourceImportedData::SwapchainImage => {
                                 RegisteredResource {
                                     access: Cell::new(AccessType::ComputeShaderWrite),

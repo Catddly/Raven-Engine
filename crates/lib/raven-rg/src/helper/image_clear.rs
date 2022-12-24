@@ -11,8 +11,8 @@ pub fn clear_depth_stencil(rg: &mut RenderGraph, image: &mut Handle<Image>) {
     let cleared_img = pass.write(image, AccessType::TransferWrite);
 
     pass.render(move |ctx| {
-        let raw_device = &ctx.context.execution_params.device.raw;
-        let image = ctx.context.get_image(cleared_img.handle);
+        let raw_device = &ctx.registry.execution_params.device.raw;
+        let image = ctx.registry.get_image(cleared_img);
 
         unsafe {
             raw_device.cmd_clear_depth_stencil_image(
@@ -43,8 +43,8 @@ pub fn clear_color(rg: &mut RenderGraph, image: &mut Handle<Image>, clear_color:
     let cleared_img = pass.write(image, AccessType::TransferWrite);
 
     pass.render(move |ctx| {
-        let raw_device = &ctx.context.execution_params.device.raw;
-        let image = ctx.context.get_image(cleared_img.handle);
+        let raw_device = &ctx.registry.execution_params.device.raw;
+        let image = ctx.registry.get_image(cleared_img);
 
         unsafe {
             raw_device.cmd_clear_color_image(

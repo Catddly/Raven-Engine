@@ -3,7 +3,8 @@ name = "raven-rhi"
 version = "0.1.0"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[features]
+gpu_ray_tracing = []
 
 [dependencies]
 raven-core = { path = "../../lib/raven-core/" }
@@ -26,8 +27,13 @@ arrayvec = "0.7.0"
 byte-slice-cast = "1.2.0"
 derive_builder = "0.11.0"
 
+# math
+glam = { version = "0.21.0", features = ["glam-assert"] }
+
 # May write our own on-demand computing library
 turbosloth = { git = "https://github.com/h3r2tic/turbosloth.git", rev = "540964c" }
+
+once_cell = "1.15.0"
 
 # vulkan
 ash = "0.33"

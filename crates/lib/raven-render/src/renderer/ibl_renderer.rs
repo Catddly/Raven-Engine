@@ -13,8 +13,8 @@ pub struct IblRenderer {
 
     //convolved_cubemap: Arc<Image>,
     prefilter_cubemap: Arc<Image>,
-    brdf_lut: Arc<Image>,
-    need_convolve: bool,
+
+    ibl_resources_prepared: bool,
 }
 
 impl IblRenderer {
@@ -29,10 +29,6 @@ impl IblRenderer {
             .usage_flags(vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::STORAGE), None)
             .expect("Failed to create prefilter cubamap!");
 
-        let brdf = rhi.device.create_image(ImageDesc::new_2d([512, 512], vk::Format::R16G16_SFLOAT)
-            .usage_flags(vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::STORAGE), None)
-            .expect("Failed to create brdf lut!");
-
         let sh_buffer = rhi.device.create_buffer(
             BufferDesc::new_gpu_only(3 * 9 * std::mem::size_of::<f32>(),
              vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::UNIFORM_BUFFER | vk::BufferUsageFlags::TRANSFER_DST
@@ -42,46 +38,41 @@ impl IblRenderer {
         Self {
             sh_buffer: Arc::new(sh_buffer),
 
-            //convolved_cubemap: Arc::new(convolved),
             prefilter_cubemap: Arc::new(prefilter),
-            brdf_lut: Arc::new(brdf),
-            need_convolve: true,
+
+            ibl_resources_prepared: true,
         }
     }
 
     pub fn update_sh(&mut self, rhi: &Rhi, basis: [SHBasis9; 3]) {
-        let mut copy_engine = CopyEngine::new();
-
         let values = [
             basis[0].to_f32_array(),
             basis[1].to_f32_array(),
             basis[2].to_f32_array(),
         ];
         let values = values.concat();
-
+        
+        let mut copy_engine = CopyEngine::new();
         copy_engine.copy(&values);
-
         copy_engine.upload(&rhi.device, &self.sh_buffer, 0).expect("Failed to upload sh buffer data!");
     }
 
-    pub fn convolve_if_needed(&mut self, rg: &mut RenderGraphBuilder, cubemap: &RgHandle<Image>) -> (RgHandle<Buffer>, RgHandle<Image>, RgHandle<Image>) {
-        let (mut sh_buffer, mut prefilter_cubemap, mut brdf_lut) = if self.need_convolve {
+    pub fn prepare_ibl_if_needed(&mut self, rg: &mut RenderGraphBuilder, cubemap: &RgHandle<Image>) -> (RgHandle<Buffer>, RgHandle<Image>) {
+        let (mut sh_buffer, mut prefilter_cubemap) = if self.ibl_resources_prepared {
             (
                 //rg.import(self.convolved_cubemap.clone(), AccessType::Nothing),
                 rg.import(self.sh_buffer.clone(), AccessType::Nothing),
                 rg.import(self.prefilter_cubemap.clone(), AccessType::Nothing),
-                rg.import(self.brdf_lut.clone(), AccessType::Nothing),
             )
         } else {
             (
                 //rg.import(self.convolved_cubemap.clone(), AccessType::AnyShaderReadSampledImageOrUniformTexelBuffer),
                 rg.import(self.sh_buffer.clone(), AccessType::AnyShaderReadUniformBuffer),
                 rg.import(self.prefilter_cubemap.clone(), AccessType::AnyShaderReadSampledImageOrUniformTexelBuffer),
-                rg.import(self.brdf_lut.clone(), AccessType::AnyShaderReadSampledImageOrUniformTexelBuffer),
             )
         };
 
-        if self.need_convolve {
+        if self.ibl_resources_prepared {
             {
                 let mut pass = rg.add_pass("convolve cubemap");
                 let pipeline = pass.register_compute_pipeline("pbr/ibl/ibl_diffuse_sh.hlsl");
@@ -139,32 +130,10 @@ impl IblRenderer {
                 });
             }
 
-            {
-                let mut pass = rg.add_pass("brdf lut");
-                let pipeline = pass.register_compute_pipeline("pbr/ibl/ibl_specular_brdf.hlsl");
-    
-                let brdf_ref = pass.write(&mut brdf_lut, AccessType::ComputeShaderWrite);
-    
-                pass.render(move |ctx| {
-                    let bound_pipeline = ctx.bind_compute_pipeline(pipeline.into_bindings()
-                        .descriptor_set(0, &[
-                            brdf_ref.bind(),
-                        ])
-                    )?;
-    
-                    let push_constants = [512, 512];
-                    bound_pipeline.push_constants(vk::ShaderStageFlags::COMPUTE, 0, as_byte_slice_values(&push_constants));
-    
-                    bound_pipeline.dispatch([512, 512, 1]);
-    
-                    Ok(())
-                });
-            }
-
-            self.need_convolve = false;
+            self.ibl_resources_prepared = false;
         }
 
-        (sh_buffer, prefilter_cubemap, brdf_lut)
+        (sh_buffer, prefilter_cubemap)
     }
 
     pub fn clean(self, rhi: &Rhi) {
@@ -174,12 +143,9 @@ impl IblRenderer {
             .unwrap_or_else(|_| panic!("Failed to release cubemap, someone is still using it!"));
         let prefilter_cubemap = Arc::try_unwrap(self.prefilter_cubemap)
             .unwrap_or_else(|_| panic!("Failed to release cubemap, someone is still using it!"));
-        let brdf_lut = Arc::try_unwrap(self.brdf_lut)
-            .unwrap_or_else(|_| panic!("Failed to release cubemap, someone is still using it!"));
 
         //rhi.device.destroy_image(convolved_cubemap);
         rhi.device.destroy_buffer(sh_buffer);
         rhi.device.destroy_image(prefilter_cubemap);
-        rhi.device.destroy_image(brdf_lut);
     }
 }

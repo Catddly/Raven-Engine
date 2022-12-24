@@ -1,10 +1,12 @@
 use std::collections::{btree_map, BTreeMap};
+#[cfg(feature = "gpu_ray_tracing")]
+use std::cell::UnsafeCell;
 
 use raven_core::container::TempList;
 use rspirv_reflect::{DescriptorInfo, DescriptorType, BindingCount};
 use ash::vk;
 
-use crate::backend::{ImageViewDesc, SamplerDesc};
+use crate::{backend::{ImageViewDesc, SamplerDesc}};
 
 use super::{Device, Buffer, Image, pipeline::{CommonPipeline, PipelineSetLayoutInfo}, CommandBuffer};
 
@@ -13,6 +15,9 @@ pub enum DescriptorSetBinding {
     Image(vk::DescriptorImageInfo),
     ImageArray(Vec<vk::DescriptorImageInfo>),
     Buffer(vk::DescriptorBufferInfo),
+
+    #[cfg(feature = "gpu_ray_tracing")]
+    RayTracingAccelStruct(vk::AccelerationStructureKHR),
 
     DynamicBuffer {
         buffer_info: vk::DescriptorBufferInfo,
@@ -47,15 +52,15 @@ pub fn create_descriptor_set_layouts_with_unified_stage(
 
     // for all the set, create its descriptor set layout
     for set_index in 0..set_count {
-        // override set 0's stage flag
-        let stage_flag = if set_index == 2 {
+        // force overwrite stage flags
+        let stage_flag = if set_index == 1 || set_index == 2 {
             vk::ShaderStageFlags::ALL
         } else {
             stage_flag
         };
 
         if let Some(set_bindings) = set_layout_refl.get(&set_index) {
-            let (set_layout, set_layout_info) = 
+            let (set_layout, set_layout_info) =
                 create_descriptor_set_layout(&device, &set_bindings, stage_flag.clone())?;
     
             set_layouts.push(set_layout);
@@ -185,6 +190,16 @@ pub fn create_descriptor_set_layout(
                         .binding(binding_idx)
                         .immutable_samplers(std::slice::from_ref(temp_sampler_refs.add(sampler)))
                         .build()
+                );
+            }
+            #[cfg(feature = "gpu_ray_tracing")]
+            DescriptorType::ACCELERATION_STRUCTURE_KHR => {
+                bindings.push(vk::DescriptorSetLayoutBinding::builder()
+                    .binding(binding_idx)
+                    .descriptor_count(1)
+                    .descriptor_type(vk::DescriptorType::ACCELERATION_STRUCTURE_KHR)
+                    .stage_flags(stage_flag)
+                    .build()
                 );
             }
             _ => unimplemented!("Unimplemented descriptor type in {}", binding_idx)
@@ -364,13 +379,23 @@ pub fn bind_descriptor_set_in_place(
 
     let mut image_infos = TempList::new();
     let mut buffer_infos = TempList::new();
+    #[cfg(feature = "gpu_ray_tracing")]
+    let mut accel_infos = TempList::new();
     // TODO: use some memory arena to avoid frequently allocations and deallocations
     let mut dynamic_offsets: Vec<u32> = Vec::new();
 
     // update descriptor set and bind it
+    #[cfg(not(feature = "gpu_ray_tracing"))]
     let writes = write_descriptor_set_bindings(
         bindings, set_layout_info, descriptor_set,
         &mut image_infos, &mut buffer_infos, &mut dynamic_offsets
+    );
+
+    #[cfg(feature = "gpu_ray_tracing")]
+    let writes = write_descriptor_set_bindings(
+        bindings, set_layout_info, descriptor_set,
+        &mut image_infos, &mut buffer_infos, &mut accel_infos,
+        &mut dynamic_offsets
     );
 
     unsafe {
@@ -387,6 +412,7 @@ pub fn bind_descriptor_set_in_place(
     }
 }
 
+#[cfg(not(feature = "gpu_ray_tracing"))]
 pub fn write_descriptor_set_bindings(
     bindings: &[DescriptorSetBinding], 
     set_layout_info: &PipelineSetLayoutInfo,
@@ -428,7 +454,7 @@ pub fn write_descriptor_set_bindings(
                     })
                     .image_info(images.as_slice())
                     .build()
-                },
+                }
                 DescriptorSetBinding::Buffer(buffer) => write
                     // TODO: all is storage buffer??
                     .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
@@ -436,17 +462,97 @@ pub fn write_descriptor_set_bindings(
                     .build(),
                 DescriptorSetBinding::DynamicBuffer { buffer_info, offset } => {
                     dynamic_offsets.push(*offset);
-                    write
-                        .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC)
+                    write.descriptor_type(vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC)
                         .buffer_info(std::slice::from_ref(buffer_infos.add(*buffer_info)))
                         .build()
-                },
+                }
                 DescriptorSetBinding::DynamicStorageBuffer { buffer_info, offset } => {
                     dynamic_offsets.push(*offset);
-                    write
-                        .descriptor_type(vk::DescriptorType::STORAGE_BUFFER_DYNAMIC)
+                    write.descriptor_type(vk::DescriptorType::STORAGE_BUFFER_DYNAMIC)
                         .buffer_info(std::slice::from_ref(buffer_infos.add(*buffer_info)))
                         .build()
+                }
+            }
+        })
+        .collect::<Vec<_>>();
+
+    writes
+}
+
+#[cfg(feature = "gpu_ray_tracing")]
+pub fn write_descriptor_set_bindings(
+    bindings: &[DescriptorSetBinding], 
+    set_layout_info: &PipelineSetLayoutInfo,
+    set: vk::DescriptorSet,
+    image_infos: &mut TempList<vk::DescriptorImageInfo>,
+    buffer_infos: &mut TempList<vk::DescriptorBufferInfo>,
+    accel_infos: &mut TempList<UnsafeCell<vk::WriteDescriptorSetAccelerationStructureKHR>>,
+    dynamic_offsets: &mut Vec<u32>,
+) -> Vec<vk::WriteDescriptorSet> {
+    let writes = bindings.iter()
+        .enumerate()
+        // the binding must be defined in the pipeline shader
+        .filter(|(binding_idx, _)| set_layout_info.contains_key(&(*binding_idx as u32)))
+        .map(|(binding_idx, binding)| {
+            let write = vk::WriteDescriptorSet::builder()
+                .dst_set(set)
+                .dst_binding(binding_idx as u32)
+                .dst_array_element(0);
+
+            match binding {
+                DescriptorSetBinding::Image(image) => write
+                    .descriptor_type(match image.image_layout {
+                        vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL => {
+                            vk::DescriptorType::SAMPLED_IMAGE
+                        }
+                        vk::ImageLayout::GENERAL => vk::DescriptorType::STORAGE_IMAGE,
+                        _ => unimplemented!(),
+                    })
+                    .image_info(std::slice::from_ref(image_infos.add(*image)))
+                    .build(),
+                DescriptorSetBinding::ImageArray(images) => {
+                    assert!(!images.is_empty());
+
+                    write.descriptor_type(match images[0].image_layout {
+                        vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL => {
+                            vk::DescriptorType::SAMPLED_IMAGE
+                        }
+                        vk::ImageLayout::GENERAL => vk::DescriptorType::STORAGE_IMAGE,
+                        _ => unimplemented!(),
+                    })
+                    .image_info(images.as_slice())
+                    .build()
+                }
+                DescriptorSetBinding::Buffer(buffer) => write
+                    // TODO: all is storage buffer??
+                    .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                    .buffer_info(std::slice::from_ref(buffer_infos.add(*buffer)))
+                    .build(),
+                DescriptorSetBinding::DynamicBuffer { buffer_info, offset } => {
+                    dynamic_offsets.push(*offset);
+                    write.descriptor_type(vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC)
+                        .buffer_info(std::slice::from_ref(buffer_infos.add(*buffer_info)))
+                        .build()
+                }
+                DescriptorSetBinding::DynamicStorageBuffer { buffer_info, offset } => {
+                    dynamic_offsets.push(*offset);
+                    write.descriptor_type(vk::DescriptorType::STORAGE_BUFFER_DYNAMIC)
+                        .buffer_info(std::slice::from_ref(buffer_infos.add(*buffer_info)))
+                        .build()
+                }
+                DescriptorSetBinding::RayTracingAccelStruct(accel_struct) => {
+                    let mut write = write.descriptor_type(vk::DescriptorType::ACCELERATION_STRUCTURE_KHR)
+                        .push_next(unsafe {
+                            accel_infos.add(UnsafeCell::new(vk::WriteDescriptorSetAccelerationStructureKHR::builder()
+                                .acceleration_structures(std::slice::from_ref(accel_struct))
+                                .build(),
+                            ))
+                            .get().as_mut().unwrap()
+                        })
+                        .build();
+
+                    write.descriptor_count = 1;
+                    write
                 }
             }
         })

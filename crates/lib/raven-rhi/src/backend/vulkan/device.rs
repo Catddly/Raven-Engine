@@ -15,7 +15,7 @@ use crate::backend::vulkan::util::utility;
 use crate::backend::vulkan::constants;
 use crate::draw_frame::{DrawFrame, DeferReleasableResource};
 
-use super::RHIError;
+use super::RhiError;
 use super::physical_device::QueueFamily;
 use super::buffer::Buffer;
 use super::sampler::SamplerDesc;
@@ -29,6 +29,14 @@ pub struct Queue {
     pub raw: vk::Queue,
     pub family: QueueFamily,
 }
+
+#[cfg(feature = "gpu_ray_tracing")]
+pub struct RayTracingExts {
+    pub acceleration_structure_khr: khr::AccelerationStructure,
+    pub ray_tracing_pipeline_khr: khr::RayTracingPipeline,
+    pub acceleration_structure_props: vk::PhysicalDeviceAccelerationStructurePropertiesKHR,
+    pub ray_tracing_props: vk::PhysicalDeviceRayTracingPipelinePropertiesKHR,
+}   
 
 pub struct Device {
     pub raw: ash::Device,
@@ -46,6 +54,10 @@ pub struct Device {
     pub(crate) crash_tracing_buffer: Cell<Option<Buffer>>,
     setup_cb: Mutex<CommandBuffer>,
 
+    #[cfg(feature = "gpu_ray_tracing")]
+    pub ray_tracing_extensions: RayTracingExts,
+
+    ray_tracing_enabled: bool,
     current_frame: Cell<u32>,
     // CPU frames.
     // Note: In CPU controller side, we only have 2 frames here. But in the swapchain we have 3 images.
@@ -96,7 +108,7 @@ impl Device {
         };
 
         // release previous frame's stale resources
-        draw_frame.release_stale_render_resources(&self.raw);
+        draw_frame.release_stale_render_resources(self);
         draw_frame.clone()
     }
 
@@ -112,6 +124,10 @@ impl Device {
         // advance to next frame
         current_frame = (current_frame + 1) % self.draw_frames.len();
         self.current_frame.set(current_frame as u32);
+    }
+
+    pub fn is_ray_tracing_enabled(&self) -> bool {
+        self.ray_tracing_enabled
     }
 
     fn check_extensions_supported(required_extensions: &Vec<&'static CStr>, device_extensions: &HashSet<String>) -> bool {
@@ -190,20 +206,26 @@ impl Device {
             vk::KhrMaintenance3Fn::name(),
 
             //vk::KhrMaintenance4Fn::name(),
+            vk::KhrBufferDeviceAddressFn::name(),
+
             khr::Swapchain::name(),
         ];
         required_extensions.extend(builder.required_extensions.iter());
 
+        let mut ray_tracing_enabled = false;
         let raytracing_extensions = vec![
-            vk::KhrBufferDeviceAddressFn::name(),
-            vk::KhrAccelerationStructureFn::name(),
-            vk::KhrRayTracingPipelineFn::name(),
+            vk::KhrAccelerationStructureFn::name(),  // required to build acceleration structures
+            vk::KhrRayTracingPipelineFn::name(),     // required to use vkCmdTraceRaysKHR
+            vk::KhrDeferredHostOperationsFn::name(), // required by ray tracing pipeline
+
+            vk::KhrRayQueryFn::name(),
         ];
 
         // if user use ray_tracing features and gpu supports raytracing, add necessary extensions into required extensions
         if constants::ENABLE_GPU_RAY_TRACING && Self::check_support_raytracing(&raytracing_extensions, &device_extensions) {
             required_extensions.extend(raytracing_extensions.iter());
             glog::trace!("GPU Ray Tracing feature enable!");
+            ray_tracing_enabled = true;
         }
 
         // this function will panic if any extension is not supported
@@ -221,17 +243,32 @@ impl Device {
             .map(|layer| layer.as_ptr())
             .collect();
 
-        let mut buffer_device_address_feature = ash::vk::PhysicalDeviceBufferDeviceAddressFeatures::default();
+        let mut buffer_device_address_feature = vk::PhysicalDeviceBufferDeviceAddressFeatures::default();
         let mut descriptor_indexing = vk::PhysicalDeviceDescriptorIndexingFeaturesEXT::default();
         let mut imageless_framebuffer = vk::PhysicalDeviceImagelessFramebufferFeaturesKHR::default();
 
-        let mut features2 = vk::PhysicalDeviceFeatures2::builder()
-            .push_next(&mut buffer_device_address_feature)
-            .push_next(&mut descriptor_indexing)
-            .push_next(&mut imageless_framebuffer)
-            .build();
+        let mut ray_tracing_pipeline_feature = vk::PhysicalDeviceRayTracingPipelineFeaturesKHR::default();
+        let mut accel_struct_feature = vk::PhysicalDeviceAccelerationStructureFeaturesKHR::default();
+        let mut ray_query_feature = vk::PhysicalDeviceRayQueryFeaturesKHR::builder().ray_query(true).build();
 
-        // get device features
+        let mut features2 = if ray_tracing_enabled {
+            vk::PhysicalDeviceFeatures2::builder()
+                .push_next(&mut ray_query_feature)
+                .push_next(&mut ray_tracing_pipeline_feature)
+                .push_next(&mut accel_struct_feature)
+                .push_next(&mut buffer_device_address_feature)
+                .push_next(&mut descriptor_indexing)
+                .push_next(&mut imageless_framebuffer)
+                .build()
+        } else {
+            vk::PhysicalDeviceFeatures2::builder()
+                .push_next(&mut buffer_device_address_feature)
+                .push_next(&mut descriptor_indexing)
+                .push_next(&mut imageless_framebuffer)
+                .build()
+        };
+
+        // query device features
         unsafe {
             physical_device.instance.raw.get_physical_device_features2(physical_device.raw, &mut features2);
         }
@@ -250,6 +287,7 @@ impl Device {
             .create_device(physical_device.raw, &device_ci, None)
             .expect("Failed to create vulkan device!")
         };
+
         // once we have the device, we can create gpu resources!
         glog::trace!("Vulkan device created!");
 
@@ -294,8 +332,35 @@ impl Device {
         ];
 
         let setup_cb = Mutex::new(CommandBuffer::new(&device, &global_queue.family));
-
         let immutable_samplers = Self::create_immutable_samplers(&device);
+
+        #[cfg(feature = "gpu_ray_tracing")]
+        let ray_tracing_extensions = {
+            let acceleration_structure_ext =
+                khr::AccelerationStructure::new(&physical_device.instance.raw, &device);
+            let ray_tracing_pipeline_ext =
+                khr::RayTracingPipeline::new(&physical_device.instance.raw, &device);
+            let ray_tracing_pipeline_properties = unsafe {
+                khr::RayTracingPipeline::get_properties(&physical_device.instance.raw, physical_device.raw)
+            };
+   
+            // fetch physical device ray tracing props 
+            let mut as_props = vk::PhysicalDeviceAccelerationStructurePropertiesKHR::default();
+            let mut properties_2 = vk::PhysicalDeviceProperties2::builder()
+                .push_next(&mut as_props)
+                .build();
+                
+            unsafe { 
+                physical_device.instance.raw.get_physical_device_properties2(physical_device.raw, &mut properties_2)
+            };
+
+            RayTracingExts { 
+                acceleration_structure_khr: acceleration_structure_ext, 
+                ray_tracing_pipeline_khr: ray_tracing_pipeline_ext, 
+                acceleration_structure_props: as_props,
+                ray_tracing_props: ray_tracing_pipeline_properties,
+            }
+        };
 
         Ok(Self {
             raw: device,
@@ -309,6 +374,10 @@ impl Device {
             crash_tracing_buffer: Cell::new(Some(crash_tracing_buffer)),
             setup_cb,
 
+            #[cfg(feature = "gpu_ray_tracing")]
+            ray_tracing_extensions,
+
+            ray_tracing_enabled,
             current_frame: Cell::new(0),
             draw_frames,
         })
@@ -330,7 +399,7 @@ impl Device {
         }
     }
 
-    pub fn with_setup_commands(&self, callback: impl FnOnce(vk::CommandBuffer)) -> anyhow::Result<(), RHIError> {
+    pub fn with_setup_commands(&self, callback: impl FnOnce(vk::CommandBuffer)) -> anyhow::Result<(), RhiError> {
         let cb = &self.setup_cb.lock();
 
         unsafe {

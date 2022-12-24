@@ -14,67 +14,63 @@ use crate::{
 };
 
 #[derive(Hash, PartialEq, Eq, Debug, Clone)]
-pub struct TemporaryResourceKey(String);
+pub struct TemporalResourceKey(String);
 
-impl<'a> From<&'a str> for TemporaryResourceKey {
+impl<'a> From<&'a str> for TemporalResourceKey {
     fn from(s: &'a str) -> Self {
-        TemporaryResourceKey(String::from(s))
+        TemporalResourceKey(String::from(s))
     }
 }
 
-impl From<String> for TemporaryResourceKey {
+impl From<String> for TemporalResourceKey {
     fn from(s: String) -> Self {
-        TemporaryResourceKey(s)
+        TemporalResourceKey(s)
     }
 }
 
 #[derive(Default)]
-pub struct TemporaryResourceRegistry(pub(crate) HashMap<TemporaryResourceKey, TemporaryResourceState>);
+pub struct TemporalResourceRegistry(pub(crate) HashMap<TemporalResourceKey, TemporalResourceState>);
 
-/// Resource that is temporary used by render graph.
-/// Because it is temporary, it is not a handle of render graph.
 #[derive(Clone)]
-pub(crate) enum TemporaryResource {
+pub(crate) enum TemporalResource {
     Image(Arc<Image>),
     Buffer(Arc<Buffer>),
 }
 
 /// TemporaryResourceState itself contains the resource itself.
-pub(crate) enum TemporaryResourceState {
+pub(crate) enum TemporalResourceState {
     /// Resource that is created but not yet referenced by render graph.
     Inert {
-        resource: TemporaryResource,
+        resource: TemporalResource,
         access: AccessType,
     },
-    /// Resource that is imported as read resource by some pass in the render graph.
     Imported {
-        resource: TemporaryResource,
+        resource: TemporalResource,
         handle: ExportableGraphResource,
     },
-    /// Resource that is imported as write resource by some pass in the render graph.
     Exported {
-        resource: TemporaryResource,
+        resource: TemporalResource,
         handle: ExportedResourceHandle,
     }
 }
 
-impl TemporaryResourceRegistry {
+impl TemporalResourceRegistry {
     pub(crate) fn clone_assuming_inert(&self) -> Self {
         Self(
             self.0.iter()
                 .map(|(k, v)| match v {
-                    TemporaryResourceState::Inert {
+                    TemporalResourceState::Inert {
                         resource,
                         access,
                     } => (
                         k.clone(),
-                        TemporaryResourceState::Inert {
+                        TemporalResourceState::Inert {
                             resource: resource.clone(),
                             access: *access,
                         },
                     ),
-                    TemporaryResourceState::Imported { .. }
-                    | TemporaryResourceState::Exported { .. } => {
+                    TemporalResourceState::Imported { .. }
+                    | TemporalResourceState::Exported { .. } => {
                         panic!("Trying to clone temporary resource which is not in Inert State!")
                     }
                 })
@@ -90,7 +86,7 @@ pub struct RenderGraphBuilder {
     device: Arc<Device>,
 
     render_graph: RenderGraph,
-    temporal_resources: TemporaryResourceRegistry,
+    temporal_resources: TemporalResourceRegistry,
 }
 
 /// Render Graph Builder IS A render graph, but in specific lifetime.
@@ -110,7 +106,7 @@ impl std::ops::DerefMut for RenderGraphBuilder {
 }
 
 impl RenderGraphBuilder {
-    pub fn new(device: Arc<Device>, temporal_resources: TemporaryResourceRegistry) -> Self {
+    pub fn new(device: Arc<Device>, temporal_resources: TemporalResourceRegistry) -> Self {
         Self {
             device,
             render_graph: RenderGraph::new(),
@@ -129,11 +125,16 @@ pub trait GetOrCreateTemporal<Desc: ResourceDesc> {
     /// 
     /// The newly created or fetched resources will be imported into the render graph.
     /// When this is called, the previous frame's Inert resources will be re-imported into RenderGraphBuilder.
-    /// When the pass building is complete, it will be exported out of the render graph.
+    /// When the pass building is complete, it will be exported out of the render graph and can be used by the graph.
     /// When this frame is complete, those temporary resources will become Inert.
+    /// 
+    /// # Note
+    /// 
+    /// RayTracingAccelerationStructure has not been added to the TemporalResource yet,
+    /// so use this function on RayTracingAccelStructDesc is undefine.
     fn get_or_create_temporal(
         &mut self,
-        name: impl Into<TemporaryResourceKey>,
+        name: impl Into<TemporalResourceKey>,
         desc: Desc,
     ) -> anyhow::Result<Handle<<Desc as ResourceDesc>::Resource>>
     where
@@ -143,7 +144,7 @@ pub trait GetOrCreateTemporal<Desc: ResourceDesc> {
 impl GetOrCreateTemporal<ImageDesc> for RenderGraphBuilder {
     fn get_or_create_temporal(
         &mut self,
-        name: impl Into<TemporaryResourceKey>,
+        name: impl Into<TemporalResourceKey>,
         desc: ImageDesc,
     ) -> anyhow::Result<Handle<<ImageDesc as ResourceDesc>::Resource>> {
         let key = name.into();
@@ -153,29 +154,29 @@ impl GetOrCreateTemporal<ImageDesc> for RenderGraphBuilder {
                 let state = entry.get_mut();
                 
                 match state {
-                    TemporaryResourceState::Inert { resource, access } => {
+                    TemporalResourceState::Inert { resource, access } => {
                         // this clone is actually a Arc::clone().
                         let resource = resource.clone();
                     
                         match &resource {
-                            TemporaryResource::Image(image) => {
+                            TemporalResource::Image(image) => {
                                 let handle = self.render_graph.import(image.clone(), *access);
                                 // DO NOT forget to changed the state of this resource
-                                *state = TemporaryResourceState::Imported { 
+                                *state = TemporalResourceState::Imported { 
                                     resource, 
                                     handle: ExportableGraphResource::Image(handle.clone_unchecked())
                                 };
                                 Ok(handle)
                             }
-                            TemporaryResource::Buffer(..) => {
+                            TemporalResource::Buffer(..) => {
                                 anyhow::bail!("Required an image resource, but pass in a buffer name! {:?}", key)
                             },
                         }
                     },
-                    TemporaryResourceState::Imported { .. } => {
+                    TemporalResourceState::Imported { .. } => {
                         Err(anyhow::anyhow!("This temporal resource is already taken by {:?}", key))
                     },
-                    TemporaryResourceState::Exported { .. } => {
+                    TemporalResourceState::Exported { .. } => {
                         unreachable!()
                     }
                 }
@@ -187,8 +188,8 @@ impl GetOrCreateTemporal<ImageDesc> for RenderGraphBuilder {
                         .with_context(|| format!("Failed to create image: {:?}", desc))?,
                 );
                 let handle = self.render_graph.import(resource.clone(), AccessType::Nothing);
-                entry.insert(TemporaryResourceState::Imported {
-                    resource: TemporaryResource::Image(resource),
+                entry.insert(TemporalResourceState::Imported {
+                    resource: TemporalResource::Image(resource),
                     handle: ExportableGraphResource::Image(handle.clone_unchecked()),
                 });
                 Ok(handle)
@@ -200,7 +201,7 @@ impl GetOrCreateTemporal<ImageDesc> for RenderGraphBuilder {
 impl GetOrCreateTemporal<BufferDesc> for RenderGraphBuilder {
     fn get_or_create_temporal(
         &mut self,
-        name: impl Into<TemporaryResourceKey>,
+        name: impl Into<TemporalResourceKey>,
         desc: BufferDesc,
     ) -> anyhow::Result<Handle<<BufferDesc as ResourceDesc>::Resource>> {
         let key = name.into();
@@ -210,29 +211,29 @@ impl GetOrCreateTemporal<BufferDesc> for RenderGraphBuilder {
                 let state = entry.get_mut();
                 
                 match state {
-                    TemporaryResourceState::Inert { resource, access } => {
+                    TemporalResourceState::Inert { resource, access } => {
                         // this clone is actually a Arc::clone().
                         let resource = resource.clone();
                     
                         match &resource {
-                            TemporaryResource::Buffer(buffer) => {
+                            TemporalResource::Buffer(buffer) => {
                                 let handle = self.render_graph.import(buffer.clone(), *access);
                                 // DO NOT forget to changed the state of this resource
-                                *state = TemporaryResourceState::Imported { 
+                                *state = TemporalResourceState::Imported { 
                                     resource, 
                                     handle: ExportableGraphResource::Buffer(handle.clone_unchecked())
                                 };
                                 Ok(handle)
                             }
-                            TemporaryResource::Image(..) => {
+                            TemporalResource::Image(..) => {
                                 anyhow::bail!("Required a buffer resource, but pass in a image name! {:?}", key)
-                            },
+                            }
                         }
                     },
-                    TemporaryResourceState::Imported { .. } => {
+                    TemporalResourceState::Imported { .. } => {
                         Err(anyhow::anyhow!("This temporal resource is already taken by {:?}", key))
                     },
-                    TemporaryResourceState::Exported { .. } => {
+                    TemporalResourceState::Exported { .. } => {
                         unreachable!()
                     }
                 }
@@ -244,8 +245,8 @@ impl GetOrCreateTemporal<BufferDesc> for RenderGraphBuilder {
                         .with_context(|| format!("Failed to create buffer: {:?}", desc))?,
                 );
                 let handle = self.render_graph.import(resource.clone(), AccessType::Nothing);
-                entry.insert(TemporaryResourceState::Imported {
-                    resource: TemporaryResource::Buffer(resource),
+                entry.insert(TemporalResourceState::Imported {
+                    resource: TemporalResource::Buffer(resource),
                     handle: ExportableGraphResource::Buffer(handle.clone_unchecked()),
                 });
                 Ok(handle)
@@ -257,7 +258,7 @@ impl GetOrCreateTemporal<BufferDesc> for RenderGraphBuilder {
 /// Just a wrapper over TemporalResourceState.
 /// 
 /// Use strong type definition to distinguish between resources and exported resources.
-pub struct ExportedTemporalResources(pub(crate) TemporaryResourceRegistry);
+pub struct ExportedTemporalResources(pub(crate) TemporalResourceRegistry);
 
 impl RenderGraphBuilder {
     /// This will be called when after user finishing the preparation of the render graph.
@@ -267,15 +268,15 @@ impl RenderGraphBuilder {
 
         for state in registry.0.values_mut() {
             match state {
-                TemporaryResourceState::Inert { .. } => {
+                TemporalResourceState::Inert { .. } => {
                     // if the resources are not referenced by render graph, it is no need to export them.
                 }
-                TemporaryResourceState::Imported { resource, handle } => match handle {
+                TemporalResourceState::Imported { resource, handle } => match handle {
                     ExportableGraphResource::Image(handle) => {
                         let handle = render_graph.export(handle.clone_unchecked(), AccessType::Nothing);
 
                         // change state from imported to exported
-                        *state = TemporaryResourceState::Exported {
+                        *state = TemporalResourceState::Exported {
                             resource: resource.clone(),
                             handle: ExportedResourceHandle::Image(handle),
                         }
@@ -284,14 +285,24 @@ impl RenderGraphBuilder {
                         let handle = render_graph.export(handle.clone_unchecked(), AccessType::Nothing);
 
                         // change state from imported to exported
-                        *state = TemporaryResourceState::Exported {
+                        *state = TemporalResourceState::Exported {
                             resource: resource.clone(),
                             handle: ExportedResourceHandle::Buffer(handle),
                         }
                     }
-                },
-                TemporaryResourceState::Exported { .. } => {
-                    // there can be any exported resources!
+                    #[cfg(feature = "gpu_ray_tracing")]
+                    ExportableGraphResource::RayTracingAccelStruct(handle) => {
+                        let handle = render_graph.export(handle.clone_unchecked(), AccessType::Nothing);
+
+                        // change state from imported to exported
+                        *state = TemporalResourceState::Exported {
+                            resource: resource.clone(),
+                            handle: ExportedResourceHandle::RayTracingAccelStruct(handle),
+                        }
+                    }
+                }
+                TemporalResourceState::Exported { .. } => {
+                    // there can't be any exported resources!
                     unreachable!()
                 }
             }
@@ -302,28 +313,36 @@ impl RenderGraphBuilder {
 }
 
 impl ExportedTemporalResources {
-    pub(crate) fn consume(self, render_graph: &RetiredRenderGraph) -> TemporaryResourceRegistry {
+    pub(crate) fn consume(self, render_graph: &RetiredRenderGraph) -> TemporalResourceRegistry {
         let mut registry = self.0;
 
         for state in registry.0.values_mut() {
             match state {
-                TemporaryResourceState::Inert { .. } => {
+                TemporalResourceState::Inert { .. } => {
 
                 },
-                TemporaryResourceState::Imported { .. } => {
+                TemporalResourceState::Imported { .. } => {
                     unreachable!()
                 },
-                TemporaryResourceState::Exported { resource, handle } => {
+                TemporalResourceState::Exported { resource, handle } => {
                     match handle {
                         ExportedResourceHandle::Image(handle) => {
-                            *state = TemporaryResourceState::Inert { 
+                            *state = TemporalResourceState::Inert { 
                                 resource: resource.clone(),
                                 // get the final access type to be next frame's init access type
                                 access: render_graph.get_exported_resource_access(*handle),
                             }
-                        },
+                        }
                         ExportedResourceHandle::Buffer(handle) => {
-                            *state = TemporaryResourceState::Inert {
+                            *state = TemporalResourceState::Inert {
+                                resource: resource.clone(), 
+                                // get the final access type to be next frame's init access type
+                                access: render_graph.get_exported_resource_access(*handle),
+                            }
+                        }
+                        #[cfg(feature = "gpu_ray_tracing")]
+                        ExportedResourceHandle::RayTracingAccelStruct(handle) => {
+                            *state = TemporalResourceState::Inert {
                                 resource: resource.clone(), 
                                 // get the final access type to be next frame's init access type
                                 access: render_graph.get_exported_resource_access(*handle),

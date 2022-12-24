@@ -1,9 +1,10 @@
 #ifndef _MULTI_SCATTER_COMPENSATE_HLSL_
 #define _MULTI_SCATTER_COMPENSATE_HLSL_
 
-#include "../pbr/brdf_result.hlsl"
-
+#include "../common/bindless_resources.hlsl"
 #include "../common/immutable_sampler.hlsl"
+
+#include "../pbr/brdf_result.hlsl"
 
 // Fresnel term but take roughness into account
 float3 fresnel_schlick_roughness(float ndotv, float3 F0, float roughness)
@@ -27,11 +28,10 @@ struct MultiScatterCompensate
     float2 env_brdf;
     float3 F0;
 
-#ifdef BRDF_LUT
     static float2 sample_env_brdf(float3 wo, float roughness)
     {
         const float2 env_brdf_uv = float2(wo.z, roughness);
-        return BRDF_LUT.SampleLevel(sampler_lnce, env_brdf_uv, 0.0);
+        return bindless_textures[BRDF_LUT_BINDLESS_INDEX].SampleLevel(sampler_lnce, env_brdf_uv, 0.0).xy;
     }
 
     static MultiScatterCompensate compensate_for(float3 wo, float roughness, float3 F0)
@@ -54,7 +54,6 @@ struct MultiScatterCompensate
         compensate.F0 = F0;
         return compensate;
     }
-#endif // #ifdef BRDF_LUT
 
     float3 compensate_ibl(in float3 irradiance, in float3 radiance, float3 diffuse_reflectance)
     {

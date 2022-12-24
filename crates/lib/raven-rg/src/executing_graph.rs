@@ -12,10 +12,10 @@ use raven_rhi::{
 
 use crate::{
     pass::{Pass, PassResourceAccessType},
-    pass_context::{PassContext, ExecuteContext},
+    pass_context::{PassContext, GraphResourceRegistry},
     graph_resource::{GraphResource, ExportableGraphResource, GraphResourceImportedData},
     retired_graph::RetiredRenderGraph,
-    compiled_graph::{RegisteredResource, RenderGraphPipelineHandles, GraphPreparedResource, GraphPreparedResourceRef}, executor::{ExecutionParams},
+    compiled_graph::{RegisteredResource, RenderGraphPipelineHandles, GraphPreparedResource, GraphPreparedResourceRef}, graph_executor::{ExecutionParams},
 };
 
 const MAX_TRANSITION_PER_BATCH: usize = 64;
@@ -55,6 +55,8 @@ impl<'exec, 'dynamic> ExecutingRenderGraph<'exec, 'dynamic> {
                         access_type: pass_ref.access.access_type,
                         // Force to reduce pipeline bubbles
                         skip_sync_if_same: true,
+                        #[cfg(debug_assertions)]
+                        debug_pass_name: pass.name.clone(),
                     }));
 
                     // skip when encounter this resource again!
@@ -62,11 +64,15 @@ impl<'exec, 'dynamic> ExecutingRenderGraph<'exec, 'dynamic> {
                 }
             }
 
-            // transition all the resources in batched
-            // for (transition_resource, access) in transition_resources {
-            //     self.resource_transition(&cb, transition_resource, access);
-            // }
-            self.resource_transition_batched(&cb, transition_resources);
+            for (transition_resource, access) in transition_resources {
+                self.resource_transition(&cb, transition_resource, access);
+            }
+
+            // TODO: transition all resources in batched have a problem
+            // when you try to transitioned same image twice in the one single barrier.
+            // you will received validation error from vulkan
+
+            // self.resource_transition_batched(&cb, transition_resources);
         }
 
         // record commands
@@ -91,6 +97,8 @@ impl<'exec, 'dynamic> ExecutingRenderGraph<'exec, 'dynamic> {
                     Some((&self.registered_resources[export_res.handle().id as usize], PassResourceAccessType {
                         access_type: *access,
                         skip_sync_if_same: false,
+                        #[cfg(debug_assertions)]
+                        debug_pass_name: String::from("final present pass"),
                     }))
                 } else {
                     None
@@ -167,7 +175,7 @@ impl<'exec, 'dynamic> ExecutingRenderGraph<'exec, 'dynamic> {
 
         let mut context = PassContext {
             cb: cb,
-            context: ExecuteContext {
+            registry: GraphResourceRegistry {
                 execution_params: &self.execution_params,
 
                 pipelines: &self.pipelines,
@@ -210,13 +218,26 @@ impl<'exec, 'dynamic> ExecutingRenderGraph<'exec, 'dynamic> {
                 
                 // do NOT forget to update the access
                 resource.transition_to(target_access.access_type);
-            },
+            }
             GraphPreparedResourceRef::Buffer(buffer) => {
                 barrier::buffer_barrier(device, cb.raw, &[barrier::BufferBarrier {
                     buffer,
 	                prev_access: &[resource.get_current_access()],
 	                next_access: &[target_access.access_type],
                 }]);
+                
+                // do NOT forget to update the access
+                resource.transition_to(target_access.access_type);
+            }
+            #[cfg(feature = "gpu_ray_tracing")]
+            GraphPreparedResourceRef::RayTracingAccelStruct(_) => {
+                // TODO: ray tracing memory barrier
+
+                // barrier::buffer_barrier(device, cb.raw, &[barrier::BufferBarrier {
+                //     buffer,
+	            //     prev_access: &[resource.get_current_access()],
+	            //     next_access: &[target_access.access_type],
+                // }]);
                 
                 // do NOT forget to update the access
                 resource.transition_to(target_access.access_type);
@@ -263,6 +284,9 @@ impl<'exec, 'dynamic> ExecutingRenderGraph<'exec, 'dynamic> {
         // Used to avoid transition collision
         let mut need_transition: ArrayVec<bool, MAX_TRANSITION_PER_BATCH> = ArrayVec::new();
 
+        #[cfg(debug_assertions)]
+        let mut transitions: ArrayVec<(AccessType, AccessType, &String), MAX_TRANSITION_PER_BATCH> = ArrayVec::new();
+        #[cfg(not(debug_assertions))]
         let mut transitions: ArrayVec<(AccessType, AccessType), MAX_TRANSITION_PER_BATCH> = ArrayVec::new();
 
         let mut buf_barriers: ArrayVec<BufferBarrier, MAX_TRANSITION_PER_BATCH> = ArrayVec::new();
@@ -277,19 +301,39 @@ impl<'exec, 'dynamic> ExecutingRenderGraph<'exec, 'dynamic> {
             }
             need_transition.push(true);
 
+            #[cfg(debug_assertions)]
             match resource.resource {
                 // Note: pass in ref here have cons that, it can only have one argument
-                GraphPreparedResource::CreatedImage(_) => { transitions.push((resource.get_current_access(), access.access_type)); },
-                GraphPreparedResource::ImportedImage(_) => { transitions.push((resource.get_current_access(), access.access_type)); },
+                GraphPreparedResource::CreatedImage(_) => { transitions.push((resource.get_current_access(), access.access_type, &access.debug_pass_name)); }
+                GraphPreparedResource::ImportedImage(_) => { transitions.push((resource.get_current_access(), access.access_type, &access.debug_pass_name)); }
+                
+                GraphPreparedResource::CreatedBuffer(_) => { transitions.push((resource.get_current_access(), access.access_type, &access.debug_pass_name)); }
+                GraphPreparedResource::ImportedBuffer(_) => { transitions.push((resource.get_current_access(), access.access_type, &access.debug_pass_name)); }
 
-                GraphPreparedResource::CreatedBuffer(_) => { transitions.push((resource.get_current_access(), access.access_type)); },
-                GraphPreparedResource::ImportedBuffer(_) => { transitions.push((resource.get_current_access(), access.access_type)); },
+                #[cfg(feature = "gpu_ray_tracing")]
+                GraphPreparedResource::ImportedRayTracingAccelStruct(_) => { transitions.push((resource.get_current_access(), access.access_type, &access.debug_pass_name)); }
 
-                GraphPreparedResource::Delayed(_) => panic!("No transition on GraphPreparedResource::Delayed!"),
+                GraphPreparedResource::Delayed(_) => panic!("No transition on GraphPreparedResource::Delayed!")
+            }
+
+            #[cfg(not(debug_assertions))]
+            match resource.resource {
+                // Note: pass in ref here have cons that, it can only have one argument
+                GraphPreparedResource::CreatedImage(_) => { transitions.push((resource.get_current_access(), access.access_type)); }
+                GraphPreparedResource::ImportedImage(_) => { transitions.push((resource.get_current_access(), access.access_type)); }
+                
+                GraphPreparedResource::CreatedBuffer(_) => { transitions.push((resource.get_current_access(), access.access_type)); }
+                GraphPreparedResource::ImportedBuffer(_) => { transitions.push((resource.get_current_access(), access.access_type)); }
+
+                #[cfg(feature = "gpu_ray_tracing")]
+                GraphPreparedResource::ImportedRayTracingAccelStruct(_) => { transitions.push((resource.get_current_access(), access.access_type)); }
+
+                GraphPreparedResource::Delayed(_) => panic!("No transition on GraphPreparedResource::Delayed!")
             }
         }
         assert_eq!(need_transition.len(), resources.len());
 
+        //#[cfg(debug_assertions)]
         //dbg!(&transitions);
 
         let mut idx = 0;
@@ -314,7 +358,7 @@ impl<'exec, 'dynamic> ExecutingRenderGraph<'exec, 'dynamic> {
                     
                     // do NOT forget to update the access
                     resource.transition_to(access.access_type);
-                },
+                }
                 GraphPreparedResourceRef::Buffer(buffer) => {
                     buf_barriers.push(barrier::BufferBarrier {
                         buffer,
@@ -323,6 +367,12 @@ impl<'exec, 'dynamic> ExecutingRenderGraph<'exec, 'dynamic> {
                     });
                     
                     // do NOT forget to update the access
+                    resource.transition_to(access.access_type);
+                }
+                #[cfg(feature = "gpu_ray_tracing")]
+                GraphPreparedResourceRef::RayTracingAccelStruct(_) => {
+                    // TODO: ray tracing memory barrier
+
                     resource.transition_to(access.access_type);
                 }
             }

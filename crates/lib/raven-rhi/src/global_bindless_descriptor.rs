@@ -1,7 +1,8 @@
 use ash::vk;
 use once_cell::sync::Lazy;
-use raven_rhi::{Rhi, backend::descriptor::{self, PipelineSetBindings}};
 use rspirv_reflect::{DescriptorType, DescriptorInfo, BindingCount};
+
+use crate::{Rhi, backend::descriptor::{self, PipelineSetBindings}};
 
 // to be used in set 1
 pub fn get_engine_global_bindless_descriptor_layout() -> &'static PipelineSetBindings {
@@ -79,7 +80,7 @@ pub fn create_engine_global_bindless_descriptor_set(rhi: &Rhi) -> vk::Descriptor
             .binding(*binding_idx)
             .descriptor_count(descriptor_count)
             .descriptor_type(ty)
-            .stage_flags(vk::ShaderStageFlags::ALL_GRAPHICS)
+            .stage_flags(vk::ShaderStageFlags::ALL)
             .build();
             
         bindings.push(binding);

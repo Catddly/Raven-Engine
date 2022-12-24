@@ -4,11 +4,12 @@ use ash::vk;
 
 use raven_core::math;
 
-use crate::backend::{Device, Buffer, BufferDesc, RHIError};
+use crate::backend::{Device, Buffer, BufferDesc, RhiError};
 
 pub trait CopyDataSource {
     fn as_bytes(&self) -> &[u8];
     fn alignment(&self) -> usize;
+    fn is_empty(&self) -> bool;
 }
 
 impl<T: Copy> CopyDataSource for &[T] {
@@ -24,6 +25,10 @@ impl<T: Copy> CopyDataSource for &[T] {
     fn alignment(&self) -> usize {
         std::mem::align_of::<T>()
     }
+
+    fn is_empty(&self) -> bool {
+        (self as &[T]).is_empty()
+    }
 }
 
 impl<T: Copy> CopyDataSource for Vec<T> {
@@ -38,6 +43,10 @@ impl<T: Copy> CopyDataSource for Vec<T> {
 
     fn alignment(&self) -> usize {
         std::mem::align_of::<T>()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.is_empty()
     }
 }
 
@@ -89,7 +98,7 @@ impl<'a> CopyEngine<'a> {
         device: &Device,
         dst_buffer: &Buffer,
         dst_offset: u32,
-    ) -> anyhow::Result<(), RHIError> {
+    ) -> anyhow::Result<(), RhiError> {
         // the copy data should not exceed the size of dst_buffer
         assert!(
             self.copy_primitives.iter()

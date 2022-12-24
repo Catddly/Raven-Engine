@@ -139,6 +139,7 @@ struct SpecularBrdf
     {
         const float alpha2 = roughness * roughness;
 
+        // change of variables from the half-direction space to regular lighting geometry
         const float jacobian = 1.0 / (4.0 * dot(wi, m));
         const float pdf_half_vec = pdf_ggx_vn(wo, m, alpha2);
 
@@ -166,7 +167,7 @@ struct SpecularBrdf
         // note: hdotl is the same as hdotv here
         // clamp dot products here to small value to prevent numerical instability.
         // Assume that rays incident from below the hemisphere have been filtered.
-        float3 f = eval_fresnel_schlick(F0, 1.0, max(0.00001, min(1.0, dot(h, wi))));
+        float3 f = eval_fresnel_schlick(F0, 1.0, dot(h, wi));
 
         // Calculate weight of the sample specific for selected sampling method
         // (this is microfacet BRDF divided by PDF of sampling method - notice how most terms cancel out)
@@ -205,7 +206,7 @@ struct SpecularBrdf
 
         result.pdf = pdf(wi, wo, m);
         result.value_over_pdf = f * smith.g2_over_g1_wo;
-        result.value = d * f * g / (4.0 * wi.z *wo.z);
+        result.value = d * f * g / (4.0 * wi.z * wo.z);
         result.transmission_ratio = 1.0.xxx - f;
         return result;
     }

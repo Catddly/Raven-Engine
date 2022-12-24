@@ -6,9 +6,9 @@ pub(crate) const ENABLE_DEBUG: bool = false;
 /// Required vulkan validation layer name
 pub(crate) const REQUIRED_VALIDATION_LAYERS: [&str; 1] = ["VK_LAYER_KHRONOS_validation"];
 
-#[cfg(feature = "ray_tracing")]
+#[cfg(feature = "gpu_ray_tracing")]
 pub(crate) const ENABLE_GPU_RAY_TRACING : bool = true;
-#[cfg(not(feature = "ray_tracing"))]
+#[cfg(not(feature = "gpu_ray_tracing"))]
 pub(crate) const ENABLE_GPU_RAY_TRACING : bool = false;
 
 pub const MAX_RENDERPASS_ATTACHMENTS: usize = 9;

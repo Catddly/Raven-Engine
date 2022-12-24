@@ -1,26 +1,30 @@
 use std::{sync::Arc, collections::HashMap};
 
-// TODO: remove this (render graph should not directly contain eny graphic API)
+// TODO: remove this (render graph should not directly contain any graphic API)
 use ash::vk;
 use arrayvec::ArrayVec;
 
 use raven_rhi::{
     backend::{Device, ImageViewDesc, Image, Buffer, RasterPipeline, ComputePipeline, CommandBuffer, RenderPass},
     backend::constants,
-    backend::RHIError,
+    backend::RhiError,
     backend::{renderpass::FrameBufferCacheKey, descriptor},
     backend::{pipeline::CommonPipeline},
     backend::{descriptor::DescriptorSetBinding},
     dynamic_buffer::DynamicBuffer,
 };
+#[cfg(feature = "gpu_ray_tracing")]
+use raven_rhi::backend::{RayTracingPipeline, RayTracingAccelerationStructure};
 
-use crate::executor::{ExecutionParams};
+use crate::{graph_executor::{ExecutionParams}, resource::ResourceView};
 
 use super::{
-    resource::{SRV, UAV, RT},
+    resource::{Srv, Uav, Rt},
     compiled_graph::{RenderGraphPipelineHandles, RegisteredResource, GraphPreparedResourceRef},
     graph_resource::{GraphResourceHandle, GraphResourceRef, GraphRasterPipelineHandle, GraphComputePipelineHandle},
 };
+#[cfg(feature = "gpu_ray_tracing")]
+use super::graph_resource::{GraphRayTracingPipelineHandle};
 
 pub struct PassImageBinding {
     handle: GraphResourceHandle,
@@ -32,10 +36,18 @@ pub struct PassBufferBinding {
     handle: GraphResourceHandle,
 }
 
+#[cfg(feature = "gpu_ray_tracing")]
+pub struct PassRayTracingAccelStructBinding {
+    handle: GraphResourceHandle,
+}
+
 pub enum RenderGraphPassBinding {
     Image(PassImageBinding),
     ImageArray(Vec<PassImageBinding>),
     Buffer(PassBufferBinding),
+
+    #[cfg(feature = "gpu_ray_tracing")]
+    RayTracingAccelStruct(PassRayTracingAccelStructBinding),
 
     DynamicBuffer(u32),
     DynamicStorageBuffer(u32),
@@ -103,7 +115,7 @@ pub trait RenderGraphPassBindable {
     fn bind(&self) -> RenderGraphPassBinding;
 }
 
-impl RenderGraphPassBindable for GraphResourceRef<Buffer, SRV> {
+impl RenderGraphPassBindable for GraphResourceRef<Buffer, Srv> {
     fn bind(&self) -> RenderGraphPassBinding {
         RenderGraphPassBinding::Buffer(PassBufferBinding {
             handle: self.handle.clone(),
@@ -111,7 +123,7 @@ impl RenderGraphPassBindable for GraphResourceRef<Buffer, SRV> {
     }
 }
 
-impl RenderGraphPassBindable for GraphResourceRef<Image, SRV> {
+impl RenderGraphPassBindable for GraphResourceRef<Image, Srv> {
     fn bind(&self) -> RenderGraphPassBinding {
         RenderGraphPassBinding::Image(PassImageBinding {
             handle: self.handle.clone(),
@@ -121,7 +133,7 @@ impl RenderGraphPassBindable for GraphResourceRef<Image, SRV> {
     }
 }
 
-impl RenderGraphPassBindable for Vec<GraphResourceRef<Image, SRV>> {
+impl RenderGraphPassBindable for Vec<GraphResourceRef<Image, Srv>> {
     fn bind(&self) -> RenderGraphPassBinding {
         RenderGraphPassBinding::ImageArray(self.iter()
             .map(|refer| {
@@ -136,7 +148,7 @@ impl RenderGraphPassBindable for Vec<GraphResourceRef<Image, SRV>> {
     }
 }
 
-impl RenderGraphPassBindable for GraphResourceRef<Buffer, UAV> {
+impl RenderGraphPassBindable for GraphResourceRef<Buffer, Uav> {
     fn bind(&self) -> RenderGraphPassBinding {
         RenderGraphPassBinding::Buffer(PassBufferBinding {
             handle: self.handle.clone(),
@@ -144,7 +156,7 @@ impl RenderGraphPassBindable for GraphResourceRef<Buffer, UAV> {
     }
 }
 
-impl RenderGraphPassBindable for GraphResourceRef<Image, UAV> {
+impl RenderGraphPassBindable for GraphResourceRef<Image, Uav> {
     fn bind(&self) -> RenderGraphPassBinding {
         RenderGraphPassBinding::Image(PassImageBinding {
             handle: self.handle.clone(),
@@ -154,7 +166,7 @@ impl RenderGraphPassBindable for GraphResourceRef<Image, UAV> {
     }
 }
 
-impl RenderGraphPassBindable for Vec<GraphResourceRef<Image, UAV>> {
+impl RenderGraphPassBindable for Vec<GraphResourceRef<Image, Uav>> {
     fn bind(&self) -> RenderGraphPassBinding {
         RenderGraphPassBinding::ImageArray(self.iter()
             .map(|refer| {
@@ -166,6 +178,15 @@ impl RenderGraphPassBindable for Vec<GraphResourceRef<Image, UAV>> {
             })    
             .collect()
         )
+    }
+}
+
+#[cfg(feature = "gpu_ray_tracing")]
+impl RenderGraphPassBindable for GraphResourceRef<RayTracingAccelerationStructure, Srv> {
+    fn bind(&self) -> RenderGraphPassBinding {
+        RenderGraphPassBinding::RayTracingAccelStruct(PassRayTracingAccelStructBinding {
+            handle: self.handle.clone(),
+        })
     }
 }
 
@@ -218,14 +239,21 @@ impl IntoPipelineDescriptorBindings for GraphComputePipelineHandle {
     }
 }
 
+#[cfg(feature = "gpu_ray_tracing")]
+impl IntoPipelineDescriptorBindings for GraphRayTracingPipelineHandle {
+    fn into_bindings<'a>(self) -> PipelineBindings<'a, Self> {
+        PipelineBindings::new(self)
+    }
+}
+
 pub struct BoundComputePipeline<'context, 'exec, 'a> {
     context: &'context PassContext<'exec, 'a>,
     pipeline: Arc<ComputePipeline>,
 }
 
 impl<'context, 'exec, 'a> BoundComputePipeline<'context, 'exec, 'a> {
-    pub fn rebind(&self, set_idx: u32, bindings: &[RenderGraphPassBinding]) -> anyhow::Result<(), RHIError> {
-        let bindings = rg_pass_binding_to_descriptor_set_bindings(&self.context.context, bindings)?;
+    pub fn rebind(&self, set_idx: u32, bindings: &[RenderGraphPassBinding]) -> anyhow::Result<(), RhiError> {
+        let bindings = rg_pass_binding_to_descriptor_set_bindings(&self.context.registry, bindings)?;
 
         descriptor::bind_descriptor_set_in_place(
             self.context.device(), self.context.cb, 
@@ -239,7 +267,7 @@ impl<'context, 'exec, 'a> BoundComputePipeline<'context, 'exec, 'a> {
         &self,
         threads: [u32; 3],
     ) {
-        let device = self.context.context.execution_params.device;
+        let device = self.context.registry.execution_params.device;
         let dispatch_groups = self.pipeline.dispatch_groups;
 
         unsafe {
@@ -259,7 +287,7 @@ impl<'context, 'exec, 'a> BoundComputePipeline<'context, 'exec, 'a> {
         offset: u32,
         bytes: &[u8],
     ) {
-        let device = self.context.context.execution_params.device;
+        let device = self.context.registry.execution_params.device;
 
         unsafe {
             device.raw.cmd_push_constants(
@@ -285,7 +313,7 @@ impl<'context, 'exec, 'a> BoundRasterPipeline<'context, 'exec, 'a> {
         offset: u32,
         bytes: &[u8],
     ) {
-        let device = self.context.context.execution_params.device;
+        let device = self.context.registry.execution_params.device;
 
         unsafe {
             device.raw.cmd_push_constants(
@@ -299,41 +327,144 @@ impl<'context, 'exec, 'a> BoundRasterPipeline<'context, 'exec, 'a> {
     }
 }
 
-pub struct ExecuteContext<'exec, 'a> {
+#[cfg(feature = "gpu_ray_tracing")]
+pub struct BoundRayTracingPipeline<'context, 'exec, 'a> {
+    context: &'context PassContext<'exec, 'a>,
+    pipeline: Arc<RayTracingPipeline>,
+}
+
+#[cfg(feature = "gpu_ray_tracing")]
+impl<'context, 'exec, 'a> BoundRayTracingPipeline<'context, 'exec, 'a> {
+    pub fn push_constants(
+        &self,
+        stage_flags: vk::ShaderStageFlags,
+        offset: u32,
+        bytes: &[u8],
+    ) {
+        let device = self.context.registry.execution_params.device;
+
+        unsafe {
+            device.raw.cmd_push_constants(
+                self.context.cb.raw, 
+                self.pipeline.pipeline_layout(), 
+                stage_flags, 
+                offset, 
+                bytes
+            );
+        }
+    }
+
+    pub fn trace_rays(
+        &self,
+        threads: [u32; 3]
+    ) {
+        let device = self.context.registry.execution_params.device;
+        let sbt = &self.pipeline.sbt;
+
+        unsafe {
+            device.ray_tracing_extensions.ray_tracing_pipeline_khr.cmd_trace_rays(
+                self.context.cb.raw,
+                &sbt.raygen_shader_binding_table,
+                &sbt.miss_shader_binding_table,
+                &sbt.hit_shader_binding_table,
+                &sbt.callable_shader_binding_table,
+                threads[0], threads[1], threads[2]
+            );
+        }
+    }
+
+    pub fn trace_rays_indirect(
+        &self,
+        args_buffer: GraphResourceRef<Buffer, Srv>,
+        buffer_offset: u64,
+    ) {
+        let device = self.context.registry.execution_params.device;
+        let sbt = &self.pipeline.sbt;
+        let indirect_buf_base_addr = self.context.registry
+            .get_buffer(args_buffer)
+            .device_address(self.context.device())
+            + buffer_offset;
+
+        unsafe {
+            device.ray_tracing_extensions.ray_tracing_pipeline_khr
+                .cmd_trace_rays_indirect(
+                    self.context.cb.raw,
+                    std::slice::from_ref(&sbt.raygen_shader_binding_table),
+                    std::slice::from_ref(&sbt.miss_shader_binding_table),
+                    std::slice::from_ref(&sbt.hit_shader_binding_table),
+                    std::slice::from_ref(&sbt.callable_shader_binding_table),
+                    indirect_buf_base_addr
+                );
+        }
+    }
+}
+
+pub struct GraphResourceRegistry<'exec, 'a> {
     pub execution_params: &'a ExecutionParams<'exec>,
 
     pub(crate) pipelines: &'a RenderGraphPipelineHandles,
     pub(crate) registered_resources: &'a Vec<RegisteredResource>,
-    pub(crate) global_dynamic_buffer: &'a mut DynamicBuffer,
+    pub global_dynamic_buffer: &'a mut DynamicBuffer,
 }
 
-impl<'exec, 'a> ExecuteContext<'exec, 'a> {
-    pub(crate) fn get_image_view(&self, handle: GraphResourceHandle, view_desc: &ImageViewDesc) -> anyhow::Result<vk::ImageView, RHIError> {
+impl<'exec, 'a> GraphResourceRegistry<'exec, 'a> {
+    // Notice that get_buffer() and get_image() ... all consume a GraphResourceRef<>,
+    // not by reference but by ownership.
+    // We assume that when user borrows the inner resource handle, it can never bind it into pipeline again.
+    // Because pipeline may read this resource reference that user may modified before.
+    // 
+    // Conclude that when user gets the full controls of the resource,
+    // we should also let user take the full responsibility of the pipeline resource binding.
+
+    pub fn get_buffer<View: ResourceView>(&self, buf_ref: GraphResourceRef<Buffer, View>) -> &Buffer {
+        self.get_buffer_from_raw_handle::<View>(buf_ref.handle)
+    }
+
+    pub fn get_image<View: ResourceView>(&self, img_ref: GraphResourceRef<Image, View>) -> &Image {
+        self.get_image_from_raw_handle::<View>(img_ref.handle)
+    }
+
+    #[cfg(feature = "gpu_ray_tracing")]
+    pub fn get_acceleration_structure<View: ResourceView>(&self, accel_ref: GraphResourceRef<RayTracingAccelerationStructure, View>) -> &RayTracingAccelerationStructure {
+        self.get_acceleration_structure_from_raw_handle::<View>(accel_ref.handle)
+    }
+
+    pub(crate) fn get_image_view_from_raw_handle(&self, handle: GraphResourceHandle, view_desc: &ImageViewDesc) -> anyhow::Result<vk::ImageView, RhiError> {
         let image = match self.registered_resources[handle.id as usize].resource.borrow() {
             GraphPreparedResourceRef::Image(image) => image,
-            _ => panic!("Expect image, but pass in a non-image graph resource handle!"),
+            _ => panic!("Expect image, but pass in an incorrect graph resource handle!"),
         };
 
         let device = self.execution_params.device;
         image.view(device, &view_desc)
     }
 
-    pub(crate) fn get_image(&self, handle: GraphResourceHandle) -> &Image {
+    pub(crate) fn get_image_from_raw_handle<View: ResourceView>(&self, handle: GraphResourceHandle) -> &Image {
         let image = match self.registered_resources[handle.id as usize].resource.borrow() {
             GraphPreparedResourceRef::Image(image) => image,
-            _ => panic!("Expect image, but pass in a non-image graph resource handle!"),
+            _ => panic!("Expect image, but pass in an incorrect graph resource handle!"),
         };
 
         image
     }
 
-    pub(crate) fn get_buffer(&self, handle: GraphResourceHandle) -> &Buffer {
+    pub(crate) fn get_buffer_from_raw_handle<View: ResourceView>(&self, handle: GraphResourceHandle) -> &Buffer {
         let buffer = match self.registered_resources[handle.id as usize].resource.borrow() {
             GraphPreparedResourceRef::Buffer(buffer) => buffer,
-            _ => panic!("Expect buffer, but pass in a non-buffer graph resource handle!"),
+            _ => panic!("Expect buffer, but pass in an incorrect graph resource handle!"),
         };
 
         buffer
+    }
+
+    #[cfg(feature = "gpu_ray_tracing")]
+    pub(crate) fn get_acceleration_structure_from_raw_handle<View: ResourceView>(&self, handle: GraphResourceHandle) -> &RayTracingAccelerationStructure {
+        let accel_struct = match self.registered_resources[handle.id as usize].resource.borrow() {
+            GraphPreparedResourceRef::RayTracingAccelStruct(accel_struct) => accel_struct,
+            _ => panic!("Expect ray tracing acceleration structure, but pass in an incorrect graph resource handle!"),
+        };
+
+        accel_struct
     }
 
     pub(crate) fn get_raster_pipeline(&self, handle: GraphRasterPipelineHandle) -> Arc<RasterPipeline> {
@@ -345,6 +476,12 @@ impl<'exec, 'a> ExecuteContext<'exec, 'a> {
         let pipeline = self.pipelines.compute_pipeline_handles[handle.idx];
         self.execution_params.pipeline_cache.get_compute_pipeline(pipeline)
     }
+
+    #[cfg(feature = "gpu_ray_tracing")]
+    pub(crate) fn get_ray_tracing_pipeline(&self, handle: GraphRayTracingPipelineHandle) -> Arc<RayTracingPipeline> {
+        let pipeline = self.pipelines.ray_tracing_pipeline_handles[handle.idx];
+        self.execution_params.pipeline_cache.get_ray_tracing_pipeline(pipeline)
+    }
 }
 
 /// Render pass context to give user to do custom command buffer recording ability and etc.
@@ -352,29 +489,29 @@ pub struct PassContext<'exec, 'a> {
     /// Command Buffer to record rendering commands to.
     pub cb: &'a CommandBuffer,
     /// Context Relative Resources to be used inside this render pass. 
-    pub context: ExecuteContext<'exec, 'a>,
+    pub registry: GraphResourceRegistry<'exec, 'a>,
 }
 
 impl<'exec, 'a> PassContext<'exec, 'a> {
     
     #[inline]
     pub fn device(&self) -> &Device {
-        &self.context.execution_params.device
+        &self.registry.execution_params.device
     }
 
     #[inline]
     pub fn global_dynamic_buffer(&mut self) -> &mut DynamicBuffer {
-        self.context.global_dynamic_buffer
+        self.registry.global_dynamic_buffer
     } 
 
     pub fn begin_render_pass(
         &mut self,
         render_pass: &RenderPass,
         extent: [u32; 2],
-        color_attachments: &[(GraphResourceRef<Image, RT>, &ImageViewDesc)],
-        depth_attachment: Option<(GraphResourceRef<Image, RT>, &ImageViewDesc)>,
-    ) -> anyhow::Result<(), RHIError> {
-        let device = self.context.execution_params.device;
+        color_attachments: &[(GraphResourceRef<Image, Rt>, &ImageViewDesc)],
+        depth_attachment: Option<(GraphResourceRef<Image, Rt>, &ImageViewDesc)>,
+    ) -> anyhow::Result<(), RhiError> {
+        let device = self.registry.execution_params.device;
 
         // get or create the framebuffer from the cache
         let framebuffer = render_pass.frame_buffer_cache.get_or_create(device, FrameBufferCacheKey::new(
@@ -382,19 +519,19 @@ impl<'exec, 'a> PassContext<'exec, 'a> {
             color_attachments.iter().map(|(refer, _)| {
                 // TODO: is this verbose?
                 //&refer.desc
-                &self.context.get_image(refer.handle).desc
+                &self.registry.get_image_from_raw_handle::<Rt>(refer.handle).desc
             }), 
             depth_attachment.as_ref().map(|(refer, _)| {
                 //&refer.desc
-                &self.context.get_image(refer.handle).desc
+                &self.registry.get_image_from_raw_handle::<Rt>(refer.handle).desc
             })
         ));
 
         // collect all image views
         let attachments = color_attachments.iter()
             .chain(depth_attachment.as_ref().into_iter())
-            .map(|(refer, view)| self.context.get_image_view(refer.handle, &view))
-            .collect::<anyhow::Result<ArrayVec<vk::ImageView, { constants::MAX_RENDERPASS_ATTACHMENTS + 1 }>, RHIError>>();
+            .map(|(refer, view)| self.registry.get_image_view_from_raw_handle(refer.handle, &view))
+            .collect::<anyhow::Result<ArrayVec<vk::ImageView, { constants::MAX_RENDERPASS_ATTACHMENTS + 1 }>, RhiError>>();
         let attachments = attachments?;
 
         // fill in the image view for bindless framebuffer
@@ -482,9 +619,9 @@ impl<'exec, 'a> PassContext<'exec, 'a> {
         }
     }
 
-    pub fn bind_raster_pipeline(&self, bindings: PipelineBindings<'_, GraphRasterPipelineHandle>) -> anyhow::Result<BoundRasterPipeline, RHIError> {
-        let pipeline = self.context.get_raster_pipeline(bindings.pipeline_handle);
-        self.bind_pipeline(self.context.execution_params.device, pipeline.as_ref(), &bindings.set_layouts, &bindings.raw_sets)?;
+    pub fn bind_raster_pipeline(&self, bindings: PipelineBindings<'_, GraphRasterPipelineHandle>) -> anyhow::Result<BoundRasterPipeline, RhiError> {
+        let pipeline = self.registry.get_raster_pipeline(bindings.pipeline_handle);
+        self.bind_pipeline(self.registry.execution_params.device, pipeline.as_ref(), &bindings.set_layouts, &bindings.raw_sets)?;
 
         Ok(BoundRasterPipeline {
             context: self,
@@ -492,11 +629,22 @@ impl<'exec, 'a> PassContext<'exec, 'a> {
         })
     }
 
-    pub fn bind_compute_pipeline(&self, bindings: PipelineBindings<'_, GraphComputePipelineHandle>) -> anyhow::Result<BoundComputePipeline, RHIError> {
-        let pipeline = self.context.get_compute_pipeline(bindings.pipeline_handle);
-        self.bind_pipeline(self.context.execution_params.device, pipeline.as_ref(), &bindings.set_layouts, &bindings.raw_sets)?;
+    pub fn bind_compute_pipeline(&self, bindings: PipelineBindings<'_, GraphComputePipelineHandle>) -> anyhow::Result<BoundComputePipeline, RhiError> {
+        let pipeline = self.registry.get_compute_pipeline(bindings.pipeline_handle);
+        self.bind_pipeline(self.registry.execution_params.device, pipeline.as_ref(), &bindings.set_layouts, &bindings.raw_sets)?;
 
         Ok(BoundComputePipeline {
+            context: self,
+            pipeline,
+        })
+    }
+
+    #[cfg(feature = "gpu_ray_tracing")]
+    pub fn bind_ray_tracing_pipeline(&self, bindings: PipelineBindings<'_, GraphRayTracingPipelineHandle>) -> anyhow::Result<BoundRayTracingPipeline, RhiError> {
+        let pipeline = self.registry.get_ray_tracing_pipeline(bindings.pipeline_handle);
+        self.bind_pipeline(self.registry.execution_params.device, pipeline.as_ref(), &bindings.set_layouts, &bindings.raw_sets)?;
+
+        Ok(BoundRayTracingPipeline {
             context: self,
             pipeline,
         })
@@ -509,7 +657,7 @@ impl<'exec, 'a> PassContext<'exec, 'a> {
         pipeline: &CommonPipeline,
         set_layout: &PipelineSetLayoutBindings,
         raw_sets: &HashMap<u32, vk::DescriptorSet>,
-    ) -> anyhow::Result<(), RHIError> {
+    ) -> anyhow::Result<(), RhiError> {
         let pipeline_info = &pipeline.pipeline_info;
 
         // bind pipeline
@@ -527,10 +675,10 @@ impl<'exec, 'a> PassContext<'exec, 'a> {
                     pipeline.pipeline_bind_point(), 
                     pipeline.pipeline_layout(),
                     2,
-                    &[self.context.execution_params.global_constants_set], 
+                    &[self.registry.execution_params.global_constants_set], 
                     &[
                         // binding 0
-                        self.context.execution_params.draw_frame_context_layout.frame_constants_offset
+                        self.registry.execution_params.draw_frame_context_layout.frame_constants_offset
                     ]
                 );
             }
@@ -543,7 +691,7 @@ impl<'exec, 'a> PassContext<'exec, 'a> {
                 continue;
             }
 
-            let bindings = rg_pass_binding_to_descriptor_set_bindings(&self.context, bindings)?;
+            let bindings = rg_pass_binding_to_descriptor_set_bindings(&self.registry, bindings)?;
 
             descriptor::bind_descriptor_set_in_place(
                 device, self.cb, 
@@ -551,7 +699,7 @@ impl<'exec, 'a> PassContext<'exec, 'a> {
             );
         }
 
-        let device = self.context.execution_params.device;
+        let device = self.registry.execution_params.device;
         // TODO: unsafe. user specific descriptor set index may collide with raw descriptor set
         for (set_idx, set) in raw_sets {
             unsafe {
@@ -571,15 +719,15 @@ impl<'exec, 'a> PassContext<'exec, 'a> {
 }
 
 fn rg_pass_binding_to_descriptor_set_bindings(
-    ctx: &ExecuteContext, 
+    ctx: &GraphResourceRegistry, 
     bindings: &[RenderGraphPassBinding]
-) -> anyhow::Result<Vec<DescriptorSetBinding>, RHIError> {
+) -> anyhow::Result<Vec<DescriptorSetBinding>, RhiError> {
     let bindings = bindings.iter()
-        .map(|pass_bingding| {
-            Ok(match &pass_bingding {
+        .map(|pass_binding| {
+            Ok(match &pass_binding {
                 RenderGraphPassBinding::Image(image) => DescriptorSetBinding::Image(vk::DescriptorImageInfo::builder()
                     .image_layout(image.layout)
-                    .image_view(ctx.get_image_view(image.handle, &image.view_desc)?)
+                    .image_view(ctx.get_image_view_from_raw_handle(image.handle, &image.view_desc)?)
                     .build()
                 ),
                 RenderGraphPassBinding::ImageArray(images) => DescriptorSetBinding::ImageArray(
@@ -587,13 +735,13 @@ fn rg_pass_binding_to_descriptor_set_bindings(
                         .map(|image| {
                             Ok(vk::DescriptorImageInfo::builder()
                                 .image_layout(image.layout)
-                                .image_view(ctx.get_image_view(image.handle, &image.view_desc)?)
+                                .image_view(ctx.get_image_view_from_raw_handle(image.handle, &image.view_desc)?)
                                 .build())
                         })
-                        .collect::<anyhow::Result<Vec<_>, RHIError>>()?
+                        .collect::<anyhow::Result<Vec<_>, RhiError>>()?
                 ),
                 RenderGraphPassBinding::Buffer(buffer) => DescriptorSetBinding::Buffer(vk::DescriptorBufferInfo::builder()
-                    .buffer(ctx.get_buffer(buffer.handle).raw)
+                    .buffer(ctx.get_buffer_from_raw_handle::<Srv>(buffer.handle).raw)
                     .range(vk::WHOLE_SIZE)
                     .build()
                 ),
@@ -611,9 +759,13 @@ fn rg_pass_binding_to_descriptor_set_bindings(
                         .range(vk::WHOLE_SIZE)
                         .build(),
                     offset: *offset,
-                }
+                },
+                #[cfg(feature = "gpu_ray_tracing")]
+                RenderGraphPassBinding::RayTracingAccelStruct(accel_struct) => DescriptorSetBinding::RayTracingAccelStruct(
+                    ctx.get_acceleration_structure_from_raw_handle::<Srv>(accel_struct.handle).raw
+                ),
             })
         })
-        .collect::<anyhow::Result<Vec<_>, RHIError>>();
+        .collect::<anyhow::Result<Vec<_>, RhiError>>();
     bindings
 }

@@ -50,6 +50,16 @@ pub struct ShaderBinaryStage {
 pub enum PipelineShaderStage {
     Vertex,
     Pixel,
+    #[cfg(feature = "gpu_ray_tracing")]
+    RayGen,
+    #[cfg(feature = "gpu_ray_tracing")]
+    RayMiss,
+    #[cfg(feature = "gpu_ray_tracing")]
+    RayClosestHit,
+    #[cfg(feature = "gpu_ray_tracing")]
+    RayAnyHit,
+    #[cfg(feature = "gpu_ray_tracing")]
+    RayCallable,
 }
 
 #[derive(Builder, Clone, Hash, Eq, PartialEq, Debug)]

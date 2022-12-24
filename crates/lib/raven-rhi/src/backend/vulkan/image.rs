@@ -8,7 +8,7 @@ use vk_sync::AccessType;
 use raven_core::math;
 
 use super::allocator::{MemoryLocation, AllocationCreateDesc, self, Allocation};
-use super::{Device, RHIError, BufferDesc, ImageBarrier};
+use super::{Device, RhiError, BufferDesc, ImageBarrier};
 
 // image type is associated with image view type.
 // use this for both types.
@@ -54,7 +54,7 @@ impl Image {
         &self,
         device: &Device,
         view_desc: &ImageViewDesc,
-    ) -> anyhow::Result<vk::ImageView, RHIError> {
+    ) -> anyhow::Result<vk::ImageView, RhiError> {
         let mut views = self.views.lock();
 
         if let Some(view) = views.get(view_desc) {
@@ -109,7 +109,7 @@ impl Device {
         &self,
         desc: ImageDesc,
         init_datas: Option<Vec<ImageSubresource<'_>>>
-    ) -> anyhow::Result<Image, RHIError> {
+    ) -> anyhow::Result<Image, RhiError> {
         let image_ci = get_image_create_info(&desc, init_datas.is_some());
 
         let image = unsafe {
@@ -128,7 +128,7 @@ impl Device {
                 location: allocator::to_inner_memory_location(&MemoryLocation::GpuOnly),
                 linear: false,
             })
-            .map_err(|err| RHIError::AllocationFailure {
+            .map_err(|err| RhiError::AllocationFailure {
                 name: "Image".into(),
                 error: err,
             })?;
@@ -158,7 +158,7 @@ impl Device {
         image: &Image,
         init_datas: &[Vec<ImageSubresource<'_>>], // arrays of mipmaps of byte datas
         dst_access: AccessType,
-    ) -> anyhow::Result<(), RHIError> {
+    ) -> anyhow::Result<(), RhiError> {
         for (array_idx, array_datas) in init_datas.into_iter().enumerate() {
             if !array_datas.is_empty() {
                 let total_init_data_bytes = array_datas.iter().map(|sub| sub.data.len()).sum::<usize>();
@@ -261,7 +261,7 @@ impl Device {
         raw: vk::Image,
         desc: &ImageDesc,
         view_desc: &ImageViewDesc,
-    ) -> anyhow::Result<vk::ImageView, RHIError> {
+    ) -> anyhow::Result<vk::ImageView, RhiError> {
         // if image_desc.format == vk::Format::D32_SFLOAT && !desc.aspect_mask.contains(vk::ImageAspectFlags::DEPTH)
         // {
         //     return Err(BackendError::ResourceAccess {
