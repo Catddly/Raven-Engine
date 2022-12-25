@@ -8,4 +8,4 @@ pub use renderer::ibl_renderer::{IblRenderer};
 
 mod world_renderer;
 
-pub use world_renderer::WorldRenderer;
+pub use world_renderer::{WorldRenderer, RenderMode};

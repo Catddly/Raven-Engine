@@ -12,6 +12,15 @@ use raven_rhi::{backend::{Device, ImageDesc, Image, BufferDesc, Buffer, renderpa
 
 use super::image_lut::ImageLut;
 
+#[allow(dead_code)]
+pub const TEXTURE_MASK_ALBEDO_BIT: u32   = 1 << 0;
+#[allow(dead_code)]
+pub const TEXTURE_MASK_NORMAL_BIT: u32   = 1 << 1;
+#[allow(dead_code)]
+pub const TEXTURE_MASK_SPECULAR_BIT: u32 = 1 << 2;
+#[allow(dead_code)]
+pub const TEXTURE_MASK_EMISSIVE_BIT: u32 = 1 << 3;
+
 const GBUFFER_PACK_FORMAT: vk::Format = vk::Format::R32G32B32A32_SFLOAT;
 const GBUFFER_DEPTH_FORMAT: vk::Format = vk::Format::D32_SFLOAT;
 const GBUFFER_GEOMETRIC_NORMAL_FORMAT: vk::Format = vk::Format::A2R10G10B10_UNORM_PACK32;
@@ -46,10 +55,11 @@ struct GpuMesh {
     color_offset: u32,
     uv_offset: u32,
     tangent_offset: u32,
-    index_offset: u32, // do we need index_offset?
+    index_offset: u32,
     mat_id_offset: u32,
 
     mat_data_offset: u32,
+    texture_mask: u32,
 }
 
 #[derive(Clone)]
@@ -131,7 +141,7 @@ pub struct GBuffer {
 }
 
 pub enum MeshShadingContext {
-    GBuffer(GBuffer),
+    Defer(GBuffer),
     #[allow(dead_code)]
     Forward,
     #[allow(dead_code)]
@@ -416,11 +426,9 @@ impl MeshRenderer {
                         upload_materials.push(upload);
                     }
 
-                    for tex_ref in mesh_asset.material_textures.iter() {
-                        let _bindless_texture = self.add_asset_bindless_texture(tex_ref.handle());
-                    }
+                    let mesh_tex_mask = self.add_mesh_bindless_textures(&handle);
 
-                    return self.upload_gpu_mesh_data(packed, colors, uvs, tangents, indices, mat_ids, &upload_materials);
+                    return self.upload_gpu_mesh_data(packed, colors, uvs, tangents, indices, mat_ids, &upload_materials, mesh_tex_mask);
                 } else if let Some(baked) = asset.as_baked() {
                     let field_reader = read_guard.get_baked_mesh_asset(baked);
 
@@ -458,14 +466,9 @@ impl MeshRenderer {
                         upload_materials.push(upload);
                     }
 
-                    let tex_refs = read_guard.get_asset_relative_textures(handle)
-                        .expect(format!("Failed to get mesh relative textures: {:?}", handle).as_str());
+                    let mesh_tex_mask = self.add_mesh_bindless_textures(&handle);
 
-                    for tex_ref in tex_refs.iter() {
-                        let _bindless_tex_handle = self.add_asset_bindless_texture(tex_ref.handle());
-                    }
-
-                    return self.upload_gpu_mesh_data(packed, colors, uvs, tangents, indices, mat_ids, &upload_materials);
+                    return self.upload_gpu_mesh_data(packed, colors, uvs, tangents, indices, mat_ids, &upload_materials, mesh_tex_mask);
                 } else {
                     panic!("Trying to add a non-mesh asset in add_asset_mesh()!");
                 }
@@ -473,6 +476,37 @@ impl MeshRenderer {
         };
 
         MeshHandle::INVALID_HANDLE
+    }
+
+    fn add_mesh_bindless_textures(&mut self, handle: &Arc<AssetHandle>) -> u32 {
+        let read_guard = get_runtime_asset_registry().read();
+
+        let mut mesh_tex_mask = 0;
+        let tex_refs = read_guard.get_asset_relative_textures(handle)
+            .expect(format!("Failed to get mesh relative textures: {:?}", handle).as_str());
+
+        for (idx, tex_ref) in tex_refs.iter().enumerate() { 
+            if let Some(tex_asset) = read_guard.get_asset(tex_ref.handle()) {
+                let extent = if let Some(tex) = tex_asset.as_texture() {
+                    tex.extent
+                } else if let Some(tex) = tex_asset.as_baked() {
+                    let field_reader = read_guard.get_baked_texture_asset(tex);
+                    field_reader.extent()
+                } else {
+                    panic!("Expect texture asset handle!");
+                };
+
+                if extent != [1, 1, 1] {
+                    // TODO: this approach has hazards,
+                    // since we guess which kind of texture it is to fill the mask.
+                    mesh_tex_mask |= 1 << idx;
+                }
+            }
+            
+            let _bindless_tex_handle = self.add_asset_bindless_texture(tex_ref.handle());
+        }
+
+        mesh_tex_mask
     }
 
     pub fn add_mesh_instance(&mut self, transform: Affine3A, handle: MeshHandle) -> MeshInstanceHandle {
@@ -488,7 +522,8 @@ impl MeshRenderer {
         packed: &[PackedVertex], colors: &[[f32; 4]],
         uvs: &[[f32; 2]], tangents: &[[f32; 4]],
         indices: &[u32], mat_ids: &[u32],
-        upload_materials: &[UploadMaterial]
+        upload_materials: &[UploadMaterial],
+        mesh_tex_mask: u32,
     ) -> MeshHandle {
         let curr_global_offset = self.current_draw_data_offset as u32;
 
@@ -527,6 +562,7 @@ impl MeshRenderer {
             index_offset,
             mat_id_offset,
             mat_data_offset,
+            texture_mask: mesh_tex_mask,
         };
 
         #[cfg(feature = "gpu_ray_tracing")]
@@ -583,7 +619,7 @@ impl MeshRenderer {
                 
                 image_clear::clear_depth_stencil(rg, &mut depth);
 
-                MeshShadingContext::GBuffer(GBuffer { 
+                MeshShadingContext::Defer(GBuffer { 
                     packed_gbuffer: packed, 
                     geometric_normal: geo_normal, 
                     depth, 
@@ -614,7 +650,7 @@ impl MeshRenderer {
             );
 
             match &mut shading_context {
-                MeshShadingContext::GBuffer(gbuffer) => {
+                MeshShadingContext::Defer(gbuffer) => {
                     let depth_ref = pass.raster_write(&mut gbuffer.depth, AccessType::DepthAttachmentWriteStencilReadOnly);
                     let gbuffer_ref = pass.raster_write(&mut gbuffer.packed_gbuffer, AccessType::ColorAttachmentWrite);
                     let geo_normal_ref = pass.raster_write(&mut gbuffer.geometric_normal, AccessType::ColorAttachmentWrite);

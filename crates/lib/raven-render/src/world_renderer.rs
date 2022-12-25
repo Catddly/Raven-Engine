@@ -138,12 +138,17 @@ impl WorldRenderer {
             #[cfg(feature = "gpu_ray_tracing")]
             need_reset_accum: true,
 
-            render_mode: RenderMode::GpuPathTracing,
+            render_mode: RenderMode::Raster,
         }
     }
 
     #[inline]
-    pub fn render_resolution(&self) -> [u32; 2] {
+    pub fn set_render_mode(&mut self, mode: RenderMode) {
+        self.render_mode = mode;
+    }
+
+    #[inline]
+    pub fn get_render_resolution(&self) -> [u32; 2] {
         self.render_resolution
     }
 
@@ -199,7 +204,7 @@ impl WorldRenderer {
     }
 
     fn prepare_rg_raster(&mut self, rg: &mut RenderGraphBuilder) -> RgHandle<Image> {
-        let main_img_desc: ImageDesc = ImageDesc::new_2d(self.render_resolution, vk::Format::R16G16B16A16_SFLOAT);
+        let main_img_desc: ImageDesc = ImageDesc::new_2d(self.render_resolution, vk::Format::R32G32B32A32_SFLOAT);
         let mut main_img = rg.new_resource(main_img_desc);
 
         let cubemap = self.sky_renderer.get_cubemap();
@@ -223,7 +228,7 @@ impl WorldRenderer {
 
         // lighting
         match &shading_context {
-            MeshShadingContext::GBuffer(gbuffer) => {        
+            MeshShadingContext::Defer(gbuffer) => {        
                 let mut pass = rg.add_pass("gbuffer lighting");
                 let pipeline = pass.register_compute_pipeline("defer/defer_lighting.hlsl");
 

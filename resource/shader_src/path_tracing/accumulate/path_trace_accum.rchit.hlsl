@@ -112,24 +112,35 @@ void main(inout GBufferRayPayload payload: SV_RayPayload, in RayHitAttrib attrib
     const float3 geometric_normal_ws = normalize(mul(ObjectToWorld3x4(), float4(geometric_normal, 0.0)));
 
     // albedo map
-    BindlessTextureWithLod albedo_tex = ray_cone_sample_texture_with_lod(
-        material.albedo_map, delta_constants, curr_cone_width,
-        geometric_normal_ws, WorldRayDirection()
-    );
-    float4 albedo_texel = albedo_tex.sample_tex(sampler_llr, uv);
+    float4 albedo_texel = 1.0.xxxx;
+    if ((mesh.texture_mask & TEXTURE_MASK_ALBEDO_BIT) != 0)
+    {
+        BindlessTextureWithLod albedo_tex = ray_cone_sample_texture_with_lod(
+            material.albedo_map, delta_constants, curr_cone_width,
+            geometric_normal_ws, WorldRayDirection()
+        );
+        albedo_texel = albedo_tex.sample_tex(sampler_llr, uv);
+    }
     float3 albedo = albedo_texel.rgb * float4(material.base_color).rgb * color.rgb;
     
     // specular map
-    BindlessTextureWithLod specular_tex = ray_cone_sample_texture_with_lod(
-        material.specular_map, delta_constants, curr_cone_width,
-        geometric_normal_ws, WorldRayDirection()
-    );
-    float4 specular_texel = specular_tex.sample_tex(sampler_llr, uv);
-    float metalness = material.metalness * specular_texel.z;
-    float peceptual_roughness = material.roughness * specular_texel.y;
-    float roughness = clamp(perceptual_roughness_to_roughness(peceptual_roughness), 1e-3, 1.0); // In reality, no object is purely smooth
+    float metalness = material.metalness;
+    float roughness = clamp(perceptual_roughness_to_roughness(material.roughness), 1e-3, 1.0); // In reality, no object is purely smooth
+    if ((mesh.texture_mask & TEXTURE_MASK_ALBEDO_BIT) != 0)
+    {
+        BindlessTextureWithLod specular_tex = ray_cone_sample_texture_with_lod(
+            material.specular_map, delta_constants, curr_cone_width,
+            geometric_normal_ws, WorldRayDirection()
+        );
+        float4 specular_texel = specular_tex.sample_tex(sampler_llr, uv);
+
+        metalness *= specular_texel.z;
+        float peceptual_roughness = material.roughness * specular_texel.y;
+        roughness = clamp(perceptual_roughness_to_roughness(peceptual_roughness), 1e-3, 1.0); // In reality, no object is purely smooth
+    }
 
     // normal map
+    if ((mesh.texture_mask & TEXTURE_MASK_NORMAL_BIT) != 0)
     {
         float4 tangent0 = asfloat(draw_datas.Load4(indices.x * sizeof(float4) + mesh.tangent_offset));
         float4 tangent1 = asfloat(draw_datas.Load4(indices.y * sizeof(float4) + mesh.tangent_offset));

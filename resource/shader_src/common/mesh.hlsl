@@ -14,7 +14,14 @@ struct Mesh {
     uint mat_id_offset;
     // Used to index the universal material data buffer
     uint mat_data_offset;
+
+    uint texture_mask;
 };
+
+static const uint TEXTURE_MASK_ALBEDO_BIT   = (1 << 0);
+static const uint TEXTURE_MASK_NORMAL_BIT   = (1 << 1);
+static const uint TEXTURE_MASK_SPECULAR_BIT = (1 << 2);
+static const uint TEXTURE_MASK_EMISSIVE_BIT = (1 << 3);
 
 struct PackedVertex;
 

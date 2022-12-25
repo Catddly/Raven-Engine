@@ -98,31 +98,42 @@ PsOut ps_main(PsIn ps)
     // TODO: apply uv transform (using Material.texture_transform)
 
     // Sample albedo map
-    Texture2D albedo_map = bindless_textures[NonUniformResourceIndex(mat.albedo_map)];
-    float4 albedo_texel = albedo_map.Sample(sampler_llr, ps.uv);
-    if (albedo_texel.a < 0.5) {
-        discard;
-    }
+    float4 albedo_texel = 1.0.xxxx;
+    if ((mesh.texture_mask & TEXTURE_MASK_ALBEDO_BIT) != 0)
+    {   
+        Texture2D albedo_map = bindless_textures[NonUniformResourceIndex(mat.albedo_map)];
+        albedo_texel = albedo_map.Sample(sampler_llr, ps.uv);
+        if (albedo_texel.a < 0.5) {
+            discard;
+        }
+    }   
     float3 base_color = float4(mat.base_color).rgb;
 
     // Sample Metallic Rougheness
-    Texture2D specular_map = bindless_textures[NonUniformResourceIndex(mat.specular_map)];
-    float4 specular_texel = specular_map.Sample(sampler_llr, ps.uv);
-    float metalness = mat.metalness * specular_texel.z;
-    float peceptual_roughness = mat.roughness * specular_texel.y;
-    float roughness = clamp(perceptual_roughness_to_roughness(peceptual_roughness), 1e-3, 1.0); // In reality, no object is purely smooth
+    float metalness = mat.metalness;
+    float roughness = clamp(perceptual_roughness_to_roughness(mat.roughness), 1e-3, 1.0);
+    if ((mesh.texture_mask & TEXTURE_MASK_SPECULAR_BIT) != 0)
+    {
+        Texture2D specular_map = bindless_textures[NonUniformResourceIndex(mat.specular_map)];
+        float4 specular_texel = specular_map.Sample(sampler_llr, ps.uv);
+        metalness *= specular_texel.z;
+        float peceptual_roughness = mat.roughness * specular_texel.y;
+        roughness = clamp(perceptual_roughness_to_roughness(peceptual_roughness), 1e-3, 1.0); // In reality, no object is purely smooth
+    }
 
-    // TODO: vertex normal switch between normal map normal
     // Sample normal
-    //float3 normal_ws = normalize(mul(instance_transforms_dyn[push_constants.instance_index], float4(ps.normal, 0.0)));
+    float3 normal_os = ps.normal;
 
-    Texture2D normal_map = bindless_textures[NonUniformResourceIndex(mat.normal_map)];
-    float4 normal_texel = normal_map.Sample(sampler_llr, ps.uv);
-    float3 normal_ts = float3(normal_texel.xy * 2.0 - 1.0, 0.0); // remap from [0, 1] to [-1, 1]
-    normal_ts.z = sqrt(max(0.001, 1.0 - dot(normal_ts.xy, normal_ts.xy))); // normal in normal map is already normalized
+    if ((mesh.texture_mask & TEXTURE_MASK_NORMAL_BIT) != 0)
+    {
+        Texture2D normal_map = bindless_textures[NonUniformResourceIndex(mat.normal_map)];
+        float4 normal_texel = normal_map.Sample(sampler_llr, ps.uv);
+        float3 normal_ts = float3(normal_texel.xy * 2.0 - 1.0, 0.0); // remap from [0, 1] to [-1, 1]
+        normal_ts.z = sqrt(max(0.001, 1.0 - dot(normal_ts.xy, normal_ts.xy))); // normal in normal map is already normalized
 
-    float3x3 tbn_matrix = float3x3(ps.tangent, ps.bitangent, ps.normal);
-    float3 normal_os = mul(normal_ts, tbn_matrix);
+        float3x3 tbn_matrix = float3x3(ps.tangent, ps.bitangent, ps.normal);
+        normal_os = mul(normal_ts, tbn_matrix);
+    }
 
     float3 normal_ws = normalize(mul(instance_transforms_dyn[push_constants.instance_index], float4(normal_os, 0.0)));
 

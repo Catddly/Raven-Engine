@@ -247,7 +247,7 @@ impl SkyRenderer {
         if let Some(cubemap) = self.cubemap.clone() {
             let cubemap = rg.import(cubemap, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer);
             let depth = match shading_context {
-                MeshShadingContext::GBuffer(gbuffer) => {
+                MeshShadingContext::Defer(gbuffer) => {
                     &gbuffer.depth
                 }
                 _ => unimplemented!()

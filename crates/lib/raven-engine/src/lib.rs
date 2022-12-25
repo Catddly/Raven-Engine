@@ -24,7 +24,7 @@ use raven_core::log;
 use raven_core::console;
 use raven_core::input::{InputManager, KeyCode, MouseButton};
 use raven_core::filesystem::{self, ProjectFolder};
-use raven_render::{WorldRenderer};
+use raven_render::{WorldRenderer, RenderMode};
 use raven_rhi::{RHIConfig, Rhi, backend};
 use raven_rg::{GraphExecutor, IntoPipelineDescriptorBindings, RenderGraphPassBindable, FrameConstants};
 
@@ -153,7 +153,7 @@ pub fn main_loop(engine_context: &mut EngineContext<impl user::App>) {
         app,
     } = engine_context;
 
-    asset_manager.load_asset(AssetLoadDesc::load_mesh("mesh/cerberus_gun/scene.gltf")).unwrap();
+    asset_manager.load_asset(AssetLoadDesc::load_mesh("mesh/cornell_box/scene.gltf")).unwrap();
     asset_manager.load_asset(AssetLoadDesc::load_texture("texture/skybox/right.jpg")).unwrap();
     asset_manager.load_asset(AssetLoadDesc::load_texture("texture/skybox/left.jpg")).unwrap();
     asset_manager.load_asset(AssetLoadDesc::load_texture("texture/skybox/top.jpg")).unwrap();
@@ -167,14 +167,19 @@ pub fn main_loop(engine_context: &mut EngineContext<impl user::App>) {
     renderer.add_cubemap_split(&rhi, tex_handles);
     let mesh_handle = renderer.add_mesh(&handles[0]);
 
-    let xform = Affine3A::from_scale_rotation_translation(
-        Vec3::splat(0.05),
-        Quat::from_rotation_y(90_f32.to_radians()),
+    // let gun_xform = Affine3A::from_scale_rotation_translation(
+    //     Vec3::splat(0.05),
+    //     Quat::from_rotation_y(90_f32.to_radians()),
+    //     Vec3::splat(0.0)
+    // );
+    let cornell_xform = Affine3A::from_scale_rotation_translation(
+        Vec3::splat(1.0),
+        Quat::from_rotation_y(0.0_f32.to_radians()),
         Vec3::splat(0.0)
     );
-    let _instance = renderer.add_mesh_instance(xform, mesh_handle);
+    let _instance = renderer.add_mesh_instance(cornell_xform, mesh_handle);
 
-    let resolution = renderer.render_resolution();
+    let resolution = renderer.get_render_resolution();
     let mut camera = camera::Camera::builder()
         .aspect_ratio(resolution[0] as f32 / resolution[1] as f32)
         .build();
@@ -213,6 +218,8 @@ pub fn main_loop(engine_context: &mut EngineContext<impl user::App>) {
 
     let mut frame_index: u32 = 0;
     let mut persist_states = PersistStates::new();
+
+    let mut use_reference_mode = false;
 
     let mut running = true;
     while running { // main loop start
@@ -285,9 +292,15 @@ pub fn main_loop(engine_context: &mut EngineContext<impl user::App>) {
             persist_states.camera.position = camera.body.position;
             persist_states.camera.rotation = camera.body.rotation;
 
-            // if input_manager.is_mouse_just_pressed(MouseButton::RIGHT) {
-            //     display_sh_cubemap = !display_sh_cubemap;
-            // }
+            if input_manager.is_keyboard_just_pressed(VirtualKeyCode::T) {
+                use_reference_mode = !use_reference_mode;
+
+                if use_reference_mode {
+                    renderer.set_render_mode(RenderMode::GpuPathTracing);
+                } else {
+                    renderer.set_render_mode(RenderMode::Raster);
+                }
+            }
 
             // user-side app tick
             app.tick(dt);

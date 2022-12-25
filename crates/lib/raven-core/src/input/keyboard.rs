@@ -20,7 +20,7 @@ impl KeyboardInputState {
     }
 
     #[allow(dead_code)]
-    pub fn is_button_just_pressed(&self, vk: VirtualKeyCode) -> bool {
+    pub fn is_keyboard_just_pressed(&self, vk: VirtualKeyCode) -> bool {
         self.input_record_map.get(&vk).map_or(false, |state| state.tick_count == 1)
     }
 

@@ -1,5 +1,5 @@
 use glam::Vec2;
-use winit::event::Event;
+use winit::event::{Event, VirtualKeyCode};
 
 use self::{keyboard::KeyboardInputState, mouse::MouseInputState, binding::{InputBindingMap}};
 
@@ -40,6 +40,11 @@ impl InputManager {
 
     pub fn map(&mut self, dt: f32) -> InputMap {
         self.bindings.map_with_input(&self.keyboard_input, &self.mouse_input, dt)
+    }
+
+    #[inline]
+    pub fn is_keyboard_just_pressed(&self, vk: VirtualKeyCode) -> bool {
+        self.keyboard_input.is_keyboard_just_pressed(vk)
     }
 
     #[inline]

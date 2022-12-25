@@ -19,12 +19,10 @@ struct RayCone {
     static float pixel_spread_angle_from_image_height(float img_height)
     {
         return atan(2.0 * frame_constants_dyn.camera_matrices.clip_to_view._11 / img_height);
-        //return atan(-2.0 * frame_constants_dyn.camera_matrices.clip_to_view._11 / img_height);
     }
 
     // figure 3. and equation 29. in Paper[1]
     // Propagate ray cone width based on the hit point distance.
-    // 
     RayCone propagate(float hit_t, float subsequent_spread_angle)
     {
         RayCone new_cone;
