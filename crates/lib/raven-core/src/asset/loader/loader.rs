@@ -104,7 +104,7 @@ pub(crate) fn extract_texture_type(name: &PathBuf) -> anyhow::Result<LoadAssetTe
 }
 
 pub trait AssetLoader {
-    fn load(&self) -> anyhow::Result<Arc<dyn RawAsset + Send + Sync>>;
+    fn load(&self) -> anyhow::Result<Arc<dyn RawAsset>>;
 
     fn get_load_uri(&self) -> PathBuf;
 }

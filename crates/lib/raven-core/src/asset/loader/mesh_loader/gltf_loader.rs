@@ -4,11 +4,18 @@ use std::{
     path::PathBuf, sync::Arc,
 };
 
-use gltf::{Gltf, Document, buffer::Source as BufferSource, Error, image::Source as ImageSource, mesh::Mode, Material as GltfMaterial, texture::TextureTransform};
+use gltf::{
+    Gltf, Document, buffer::Source as BufferSource, Error,
+    image::Source as ImageSource, mesh::Mode, Material as GltfMaterial,
+    texture::TextureTransform
+};
 use bytes::Bytes;
 use glam::{Mat4, Vec3, Vec4};
 
-use crate::{filesystem::{self, ProjectFolder}, asset::{loader::loader::LoadAssetMeshType, Mesh, RawAsset, Material, TextureDesc, TextureGammaSpace, Texture, TextureSource}};
+use crate::{
+    filesystem::{self, ProjectFolder},
+    asset::{loader::loader::LoadAssetMeshType, Mesh, RawAsset, Material, TextureDesc, TextureGammaSpace, Texture, TextureSource}
+};
 use super::super::loader::{self, AssetLoader};
 use crate::asset::util::GenTangentContext;
 
@@ -28,7 +35,7 @@ impl GltfMeshLoader {
 }
 
 impl AssetLoader for GltfMeshLoader {
-    fn load(&self) -> anyhow::Result<Arc<dyn RawAsset + Send + Sync>> {
+    fn load(&self) -> anyhow::Result<Arc<dyn RawAsset>> {
         let dir = filesystem::get_project_folder_path_absolute(ProjectFolder::Assets)?;
         let path = dir.join(self.path.clone());
         assert!(path.is_file(), "Path may not exists or this path is not a file! {:?}", path);
@@ -439,6 +446,7 @@ fn load_gltf_default_scene(doc: &Document, buffers: &[Bytes], images: &[Bytes]) 
 #[test]
 fn test_asset_load_gltf() {
     use crate::filesystem;
+    use crate::asset::AsConcreteRawAsset;
 
     filesystem::set_custom_mount_point(filesystem::ProjectFolder::Assets, "../../../resource/assets/").unwrap();
 

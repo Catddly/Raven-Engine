@@ -8,15 +8,14 @@ mod pack_unpack;
 mod util;
 mod error;
 
-// pub use asset_process::AssetProcessor;
-// pub use asset_baker::AssetBaker;
 pub use asset_manager::{AssetManager, AssetLoadDesc};
 
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::{marker::PhantomData, fmt::Debug};
 
+use downcast_rs::{impl_downcast, DowncastSync};
 use bytes::Bytes;
-use unsafe_any::UnsafeAny;
 
 use crate::container::{TreeByteBuffer, TreeByteBufferNode};
 use crate::asset::asset_registry::{DiskAssetRef, AssetRef};
@@ -24,28 +23,7 @@ use crate::math::AABB;
 use pack_unpack::*;
 
 use self::asset_registry::AssetHandle;
-use self::loader::{extract_asset_type, LoadAssetType};
-
-fn get_uri_bake_stem(uri: &PathBuf) -> PathBuf {
-    let asset_ty = extract_asset_type(uri);
-
-    let baked_uri = match asset_ty {
-        LoadAssetType::Mesh(_) => {
-            uri.strip_prefix("mesh/")
-                .expect(format!("Incorrect mesh uri: {:?}", uri).as_str())
-                .to_owned()
-        }
-        LoadAssetType::Texture(_) => {
-            uri.strip_prefix("texture/")
-                .expect(format!("Incorrect texture uri: {:?}", &uri).as_str())
-                .to_owned()
-        }
-        _ => unimplemented!()
-    }.to_string_lossy().to_string();
-
-    PathBuf::from(baked_uri.replace("/", "=!"))
-}
-
+use self::loader::{LoadAssetType};
 
 pub trait TaggedAssetType {}
 
@@ -70,83 +48,121 @@ impl Debug for AssetType {
     }
 }
 
-pub trait RawAsset {
+// pub fn as_raw_mesh_ref(raw_mesh: &Arc<dyn RawAsset>) -> Option<&Mesh::Raw> {
+//     raw_mesh.downcast_ref()
+// }
+
+// TODO:
+// All the downcast functions.
+// Downcast have 1~2 us overhead.
+// 
+// Try to downcast the asset without the overhead, because we ensure the type in compile-time.
+// We do not want to pay for the things we don't use.
+// We can use downcast_ref_unchecked() instead, but this is a unstable features, so we use UnsafeAny to bypass the runtime check.
+
+// DowncastSync already implemented Send + Sync for Asset
+pub trait RawAsset: DowncastSync {
     fn asset_type(&self) -> AssetType;
+}
+impl_downcast!(sync RawAsset);
 
-    fn as_any(&self) -> &dyn UnsafeAny;
+pub trait AsConcreteRawAsset {
+    fn as_mesh(&self) -> Option<&Mesh::Raw>;
+    fn as_texture(&self) -> Option<&Texture::Raw>;
+    fn as_material(&self) -> Option<&Material::Raw>;
+    fn as_baked(&self) -> Option<&BakedRawAsset>;
+}
 
-    // All the downcast functions.
-    // Downcast have 1~2 us overhead.
-    // 
-    // Try to downcast the asset without the overhead, because we ensure the type in compile-time.
-    // We do not want to pay for the things we don't use.
-    // We can use downcast_ref_unchecked() instead, but this is a unstable features, so we use UnsafeAny to bypass the runtime check.
+impl AsConcreteRawAsset for Arc<dyn RawAsset> {
     fn as_mesh(&self) -> Option<&Mesh::Raw> {
-        match self.asset_type() {
-            AssetType::Mesh => Some(unsafe { self.as_any().downcast_ref_unchecked::<Mesh::Raw>() }),
-            _ => None,
-        }
-    }
-
-    fn as_material(&self) -> Option<&Material::Raw> {
-        match self.asset_type() {
-            AssetType::Material => Some(unsafe { self.as_any().downcast_ref_unchecked::<Material::Raw>() }),
-            _ => None,
-        }
+        self.downcast_ref::<Mesh::Raw>()
     }
 
     fn as_texture(&self) -> Option<&Texture::Raw> {
-        match self.asset_type() {
-            AssetType::Texture => Some(unsafe { self.as_any().downcast_ref_unchecked::<Texture::Raw>() }),
-            _ => None,
-        }
+        self.downcast_ref::<Texture::Raw>()
+    }
+
+    fn as_material(&self) -> Option<&Material::Raw> {
+        self.downcast_ref::<Material::Raw>()
     }
 
     fn as_baked(&self) -> Option<&BakedRawAsset> {
-        match self.asset_type() {
-            AssetType::Baked => Some(unsafe { self.as_any().downcast_ref_unchecked::<BakedRawAsset>() }),
-            _ => None,
-        }
+        self.downcast_ref::<BakedRawAsset>()
     }
 }
 
-pub trait Asset {
-    fn asset_type(&self) -> AssetType;
-
-    fn as_any(&self) -> &dyn UnsafeAny;
-
-    // All the downcast functions.
-    // Downcast have 1~2 us overhead.
-    // 
-    // Try to downcast the asset without the overhead, because we ensure the type in compile-time.
-    // We do not want to pay for the things we don't use.
-    // We can use downcast_ref_unchecked() instead, but this is a unstable features, so we use UnsafeAny to bypass the runtime check.
-    fn as_mesh(&self) -> Option<&Mesh::Storage> {
-        match self.asset_type() {
-            AssetType::Mesh => Some(unsafe { self.as_any().downcast_ref_unchecked::<Mesh::Storage>() }),
-            _ => None,
-        }
+impl AsConcreteRawAsset for Box<dyn RawAsset> {
+    fn as_mesh(&self) -> Option<&Mesh::Raw> {
+        self.downcast_ref::<Mesh::Raw>()
     }
 
-    fn as_material(&self) -> Option<&Material::Storage> {
-        match self.asset_type() {
-            AssetType::Material => Some(unsafe { self.as_any().downcast_ref_unchecked::<Material::Storage>() }),
-            _ => None,
-        }
+    fn as_texture(&self) -> Option<&Texture::Raw> {
+        self.downcast_ref::<Texture::Raw>()
+    }
+
+    fn as_material(&self) -> Option<&Material::Raw> {
+        self.downcast_ref::<Material::Raw>()
+    }
+
+    fn as_baked(&self) -> Option<&BakedRawAsset> {
+        self.downcast_ref::<BakedRawAsset>()
+    }
+}
+
+// TODO:
+// All the downcast functions.
+// Downcast have 1~2 us overhead.
+// 
+// Try to downcast the asset without the overhead, because we ensure the type in compile-time.
+// We do not want to pay for the things we don't use.
+// We can use downcast_ref_unchecked() instead, but this is a unstable features, so we use UnsafeAny to bypass the runtime check.
+
+// DowncastSync already implemented Send + Sync for Asset
+pub trait Asset: DowncastSync {
+    fn asset_type(&self) -> AssetType;
+}
+impl_downcast!(sync Asset);
+
+pub trait AsConcreteAsset {
+    fn as_mesh(&self) -> Option<&Mesh::Storage>;
+    fn as_texture(&self) -> Option<&Texture::Storage>;
+    fn as_material(&self) -> Option<&Material::Storage>;
+    fn as_baked(&self) -> Option<&BakedAsset>;
+}
+
+impl AsConcreteAsset for Arc<dyn Asset> {
+    fn as_mesh(&self) -> Option<&Mesh::Storage> {
+        self.downcast_ref::<Mesh::Storage>()
     }
 
     fn as_texture(&self) -> Option<&Texture::Storage> {
-        match self.asset_type() {
-            AssetType::Texture => Some(unsafe { self.as_any().downcast_ref_unchecked::<Texture::Storage>() }),
-            _ => None,
-        }
+        self.downcast_ref::<Texture::Storage>()
+    }
+
+    fn as_material(&self) -> Option<&Material::Storage> {
+        self.downcast_ref::<Material::Storage>()
     }
 
     fn as_baked(&self) -> Option<&BakedAsset> {
-        match self.asset_type() {
-            AssetType::Baked => Some(unsafe { self.as_any().downcast_ref_unchecked::<BakedAsset>() }),
-            _ => None,
-        }
+        self.downcast_ref::<BakedAsset>()
+    }
+}
+
+impl AsConcreteAsset for Box<dyn Asset> {
+    fn as_mesh(&self) -> Option<&Mesh::Storage> {
+        self.downcast_ref::<Mesh::Storage>()
+    }
+
+    fn as_texture(&self) -> Option<&Texture::Storage> {
+        self.downcast_ref::<Texture::Storage>()
+    }
+
+    fn as_material(&self) -> Option<&Material::Storage> {
+        self.downcast_ref::<Material::Storage>()
+    }
+
+    fn as_baked(&self) -> Option<&BakedAsset> {
+        self.downcast_ref::<BakedAsset>()
     }
 }
 
@@ -157,10 +173,6 @@ pub struct VacantAsset {}
 impl Asset for VacantAsset {
     fn asset_type(&self) -> AssetType {
         AssetType::Vacant
-    }
-
-    fn as_any(&self) -> &dyn UnsafeAny {
-        self
     }
 }
 
@@ -174,7 +186,7 @@ pub struct BakedAsset {
 
 impl BakedAsset {
     pub fn origin_asset_type(&self) -> AssetType {
-        let ty = extract_asset_type(&self.uri);
+        let ty = loader::extract_asset_type(&self.uri);
         match ty {
             loader::LoadAssetType::Mesh(_) => AssetType::Mesh,
             loader::LoadAssetType::Texture(_) => AssetType::Texture,
@@ -187,10 +199,6 @@ impl BakedAsset {
 impl Asset for BakedAsset {
     fn asset_type(&self) -> AssetType {
         AssetType::Baked
-    }
-
-    fn as_any(&self) -> &dyn UnsafeAny {
-        self
     }
 }
 
@@ -210,10 +218,6 @@ impl BakedRawAsset {
 impl RawAsset for BakedRawAsset {
     fn asset_type(&self) -> AssetType {
         AssetType::Baked
-    }
-
-    fn as_any(&self) -> &dyn UnsafeAny {
-        self
     }
 }
 
@@ -420,10 +424,6 @@ macro_rules! define_asset {
                 fn asset_type(&self) -> AssetType {
                     AssetType::$asset_type
                 }
-
-                fn as_any(&self) -> &dyn UnsafeAny {
-                    self
-                }
             }
 
             $(#[derive($($derive_asset)+)])?
@@ -449,10 +449,6 @@ macro_rules! define_asset {
             impl Asset for Storage {
                 fn asset_type(&self) -> AssetType {
                     AssetType::$asset_type
-                }
-
-                fn as_any(&self) -> &dyn UnsafeAny {
-                    self
                 }
             }
 
@@ -606,6 +602,26 @@ define_asset!{
         texture_transform { [[f32; 6]; 4] } // the corresponding 2D transform of the texture
     }
     Material
+}
+
+fn get_uri_bake_stem(uri: &PathBuf) -> PathBuf {
+    let asset_ty = loader::extract_asset_type(uri);
+
+    let baked_uri = match asset_ty {
+        LoadAssetType::Mesh(_) => {
+            uri.strip_prefix("mesh/")
+                .expect(format!("Incorrect mesh uri: {:?}", uri).as_str())
+                .to_owned()
+        }
+        LoadAssetType::Texture(_) => {
+            uri.strip_prefix("texture/")
+                .expect(format!("Incorrect texture uri: {:?}", &uri).as_str())
+                .to_owned()
+        }
+        _ => unimplemented!()
+    }.to_string_lossy().to_string();
+
+    PathBuf::from(baked_uri.replace("/", "=!"))
 }
 
 #[test]

@@ -8,9 +8,9 @@ use parking_lot::RwLock;
 
 
 use super::asset_manager::ASSETS_MMAP;
-use super::{Asset, VacantAsset, BakedAsset, Mesh, Texture, Material, AssetType, VecArrayQueryParam, TaggedAssetType};
+use super::{Asset, VacantAsset, BakedAsset, Mesh, Texture, Material, AssetType, VecArrayQueryParam, TaggedAssetType, AsConcreteAsset};
 
-type RegisterBoxAssetType = Box<dyn Asset + Send + Sync>;
+type RegisterBoxAssetType = Box<dyn Asset>;
 
 const INVALID_ASSET_ID: u64 = u64::MAX;
 

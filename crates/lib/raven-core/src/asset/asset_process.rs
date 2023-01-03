@@ -13,7 +13,7 @@ use crate::math::{self, AABB};
 
 use super::asset_registry::{AssetHandle, AssetRef};
 use super::error::AssetPipelineError;
-use super::{RawAsset, Texture, AssetType, Mesh, PackedVertex, Material, TextureSource, BakedRawAsset, TextureDesc, TextureGammaSpace};
+use super::{RawAsset, Texture, AssetType, Mesh, PackedVertex, Material, TextureSource, BakedRawAsset, TextureDesc, TextureGammaSpace, AsConcreteRawAsset};
 
 /// Consume a raw asset and turn it into a AssetHandle which reference a storage asset.
 #[derive(Clone)]

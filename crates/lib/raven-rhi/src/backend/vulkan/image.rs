@@ -97,7 +97,7 @@ impl Image {
     }
 }
 
-pub struct ImageSubresource<'a> {
+pub struct ImageSubResource<'a> {
     pub data: &'a [u8],
     pub row_pitch_in_bytes: u32,
     pub base_layer: u32,
@@ -108,7 +108,7 @@ impl Device {
     pub fn create_image(
         &self,
         desc: ImageDesc,
-        init_datas: Option<Vec<ImageSubresource<'_>>>
+        init_datas: Option<Vec<ImageSubResource<'_>>>
     ) -> anyhow::Result<Image, RhiError> {
         let image_ci = get_image_create_info(&desc, init_datas.is_some());
 
@@ -156,7 +156,7 @@ impl Device {
 
     pub fn upload_image_data(&self,
         image: &Image,
-        init_datas: &[Vec<ImageSubresource<'_>>], // arrays of mipmaps of byte datas
+        init_datas: &[Vec<ImageSubResource<'_>>], // arrays of mipmaps of byte datas
         dst_access: AccessType,
     ) -> anyhow::Result<(), RhiError> {
         for (array_idx, array_datas) in init_datas.into_iter().enumerate() {

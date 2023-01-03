@@ -32,7 +32,7 @@ impl JpgTextureLoader {
 }
 
 impl AssetLoader for JpgTextureLoader {
-    fn load(&self) -> anyhow::Result<Arc<dyn crate::asset::RawAsset + Send + Sync>> {
+    fn load(&self) -> anyhow::Result<Arc<dyn crate::asset::RawAsset>> {
         let folder = filesystem::get_project_folder_path_absolute(ProjectFolder::Assets)?;
         let path = folder.join(self.path.clone());
         assert!(path.is_file());

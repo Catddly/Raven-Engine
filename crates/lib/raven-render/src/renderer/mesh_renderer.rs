@@ -4,12 +4,12 @@ use std::collections::BTreeSet;
 use ash::vk;
 
 use glam::{Affine3A};
-use raven_core::asset::TextureGammaSpace;
+use raven_core::asset::{TextureGammaSpace, AsConcreteAsset};
 use raven_core::math::AABB;
 use raven_core::{asset::{asset_registry::{AssetHandle, get_runtime_asset_registry}, PackedVertex, VecArrayQueryParam}, utility};
 use raven_rg::{RenderGraphBuilder, RgHandle, IntoPipelineDescriptorBindings, RenderGraphPassBinding, image_clear, PassContext, BoundRasterPipeline};
 use raven_rhi::global_bindless_descriptor;
-use raven_rhi::{backend::{Device, ImageDesc, Image, BufferDesc, Buffer, renderpass, RenderPass, descriptor::update_descriptor_set_buffer, RasterPipelineDesc, PipelineShaderDesc, PipelineShaderStage, AccessType, ImageViewDesc, ImageSubresource}, Rhi, copy_engine::CopyEngine};
+use raven_rhi::{backend::{Device, ImageDesc, Image, BufferDesc, Buffer, renderpass, RenderPass, descriptor::update_descriptor_set_buffer, RasterPipelineDesc, PipelineShaderDesc, PipelineShaderStage, AccessType, ImageViewDesc, ImageSubResource}, Rhi, copy_engine::CopyEngine};
 
 use super::image_lut::ImageLut;
 
@@ -307,7 +307,7 @@ impl MeshRenderer {
                 let (extent, img_subresources, gamma_space) = if let Some(tex_asset) = asset.as_texture() {
                     // TODO: identify image type
                     let uploads = tex_asset.lod_groups.iter()
-                        .map(|mip| ImageSubresource {
+                        .map(|mip| ImageSubResource {
                             data: mip.as_slice(),
                             row_pitch_in_bytes: tex_asset.extent[0] * 4,
                             base_layer: 0,
@@ -326,7 +326,7 @@ impl MeshRenderer {
                     for i in 0..lod_length {
                         let lod = tex_field_reader.lod_groups(VecArrayQueryParam::index(i)).array();
 
-                        uploads.push(ImageSubresource {
+                        uploads.push(ImageSubResource {
                             data: lod,
                             // TODO: no hardcode
                             row_pitch_in_bytes: extent[0] * 4,

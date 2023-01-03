@@ -239,7 +239,7 @@ impl std::hash::Hash for LoadRawAsset {
 
 #[derive(Clone)]
 struct LoadedRawAsset {
-    raw_asset: Arc<dyn RawAsset + Send + Sync>,
+    raw_asset: Arc<dyn RawAsset>,
     key: AssetPipelineKey,
 }
 
@@ -269,7 +269,7 @@ struct BakedAssetLoader {
 }
 
 impl AssetLoader for BakedAssetLoader {
-    fn load(&self) -> anyhow::Result<Arc<dyn RawAsset + Send + Sync>> {
+    fn load(&self) -> anyhow::Result<Arc<dyn RawAsset>> {
         Ok(Arc::new(BakedRawAsset { handle: self.handle }))
     }
 

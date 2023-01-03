@@ -31,7 +31,7 @@ pub use physical_device::{PhysicalDevice, QueueFamily};
 pub use device::Device;
 pub use swapchain::{Swapchain, SwapchainImage};
 pub use buffer::{Buffer, BufferDesc};
-pub use image::{Image, ImageDesc, ImageSubresource, ImageType, ImageViewDesc};
+pub use image::{Image, ImageDesc, ImageSubResource, ImageType, ImageViewDesc};
 pub use sampler::{SamplerDesc};
 
 pub use shader::{ShaderSource, ShaderBinary, ShaderBinaryStage, PipelineShaderStage, PipelineShaderDesc};

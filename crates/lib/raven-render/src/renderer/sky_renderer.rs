@@ -3,9 +3,9 @@ use std::{sync::Arc, f32::consts::PI};
 use ash::vk;
 
 use glam::Vec3;
-use raven_core::{asset::{asset_registry::{AssetHandle, get_runtime_asset_registry}, AssetType, VecArrayQueryParam}, math::{SHBasis9, from_rgb8_to_color}};
+use raven_core::{asset::{asset_registry::{AssetHandle, get_runtime_asset_registry}, AssetType, VecArrayQueryParam, AsConcreteAsset}, math::{SHBasis9, from_rgb8_to_color}};
 use raven_rg::{RenderGraphBuilder, RgHandle, IntoPipelineDescriptorBindings, RenderGraphPassBindable, RenderGraphPassBinding};
-use raven_rhi::{backend::{Image, ImageDesc, ImageSubresource, AccessType}, Rhi};
+use raven_rhi::{backend::{Image, ImageDesc, ImageSubResource, AccessType}, Rhi};
 
 use crate::MeshShadingContext;
 
@@ -53,7 +53,7 @@ impl SkyRenderer {
         let mut extent = [0, 0, 0];
         let cubemap = {
             let read_guard = asset_registry.read();
-            let mut upload_faces: [Vec<ImageSubresource<'_>>; 6] = Default::default();
+            let mut upload_faces: [Vec<ImageSubResource<'_>>; 6] = Default::default();
 
             let mut face = 0;
             for asset in assets {
@@ -69,7 +69,7 @@ impl SkyRenderer {
                         assert_eq!(extent[0], extent[1]); // width height must be the same
 
                         let uploads = tex.lod_groups.iter()
-                            .map(|mip| ImageSubresource {
+                            .map(|mip| ImageSubResource {
                                 data: mip.as_slice(),
                                 // TODO: no hardcode
                                 row_pitch_in_bytes: extent[0] * 4,
@@ -99,7 +99,7 @@ impl SkyRenderer {
                                     .map(|idx| {
                                         let mip = field_reader.lod_groups(VecArrayQueryParam::index(idx)).array();
                                     
-                                        ImageSubresource {
+                                        ImageSubResource {
                                             data: mip,
                                             // TODO: no hardcode
                                             row_pitch_in_bytes: extent[0] * 4,

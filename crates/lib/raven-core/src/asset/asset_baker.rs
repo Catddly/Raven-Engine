@@ -6,7 +6,7 @@ use turbosloth::*;
 
 use crate::filesystem;
 
-use super::{asset_registry::{AssetHandle, self, RuntimeAssetRegistry}, error::AssetPipelineError, AssetType, Mesh, Material, Texture, get_uri_bake_stem};
+use super::{asset_registry::{AssetHandle, self, RuntimeAssetRegistry}, error::AssetPipelineError, AssetType, Mesh, Material, Texture, get_uri_bake_stem, AsConcreteAsset};
 
 #[derive(Clone, Hash)]
 pub struct AssetBaker {

@@ -18,8 +18,8 @@ memmap2 = "0.5.0"
 byteorder = "1.4.0"
 wyhash = "0.5.0"
 
-# Unchecked downcast
-unsafe-any = "0.4.2"
+# TODO: Unchecked downcast
+downcast-rs = "1.2.0"
 
 # Math
 glam = { version = "0.21.0", features = ["glam-assert"] }
