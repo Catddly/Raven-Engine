@@ -22,7 +22,7 @@ impl RetiredRenderGraph {
     }
 
     /// Release all the resources that is created by the render graph.
-    /// THese resources might be used in next frame, use cache to avoid frequently create and destroy resources.
+    /// These resources might be used in next frame, use cache to avoid frequently create and destroy resources.
     pub fn release_owned_resources(
         self,
         cache: &mut TransientResourceCache,

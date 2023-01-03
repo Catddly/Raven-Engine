@@ -1,6 +1,11 @@
 mod sh;
 mod aabb;
 
+use glam::Vec3;
+pub use sh::SHBasis9;
+
+pub use aabb::AABB;
+
 #[inline]
 pub fn min_value_align_to(size: usize, alignment: usize) -> usize {
     assert_eq!(alignment.count_ones(), 1);
@@ -30,6 +35,3 @@ pub fn from_rgb8_to_color(r: u8, g: u8, b: u8) -> Vec3 {
         b as f32 / 255.0,
     ])
 }
-
-use glam::Vec3;
-pub use sh::SHBasis9;

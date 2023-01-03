@@ -152,7 +152,8 @@ impl Device {
             super::buffer::BufferDesc::new_gpu_only(
                 RAY_TRACING_TLAS_SCRATCH_BUFFER_SIZE,
                 vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS,
-            ),
+            )
+            .alignment(self.ray_tracing_extensions.acceleration_structure_props.min_acceleration_structure_scratch_offset_alignment as _),
             "tlas scratch buffer",
         )?;
 
@@ -366,7 +367,7 @@ impl Device {
             memory_requirements.update_scratch_size
         );
 
-        // check if the preallocate buffer can store the as data
+        // check if the preallocate buffer can store the accel struct data
         let backing_buffer_size = preallocate_bytes.max(memory_requirements.acceleration_structure_size as usize);
 
         let backing_buffer = self.create_buffer(

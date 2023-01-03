@@ -11,8 +11,8 @@ lazy_static::lazy_static! {
     static ref GLOBAL_MUTE_MODULE_NAMES: HashSet<&'static str> = HashSet::from([
         "hotwatch::util",
         "gpu_allocator::vulkan",
-        "gpu_allocator::allocator::free_list_allocator",
-        "gpu_allocator::allocator::dedicated_block_allocator",
+        // "gpu_allocator::allocator::free_list_allocator",
+        // "gpu_allocator::allocator::dedicated_block_allocator",
     ]);
 }
 

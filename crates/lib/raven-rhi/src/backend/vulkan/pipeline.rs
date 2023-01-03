@@ -49,17 +49,37 @@ impl CommonPipeline {
     }
 }
 
+#[derive(Clone, Debug)]
+pub enum RasterPipelinePrimitiveTopology {
+    LineList,
+    TriangleList,
+}
+
+#[derive(Clone, Debug)]
+pub enum RasterPipelineCullMode {
+    Back,
+    Front,
+    None,
+    FrontAndBack,
+}
+
 // Raster Pipeline description
 #[derive(Builder, Clone)]
 #[builder(pattern = "owned", derive(Clone))]
 pub struct RasterPipelineDesc {
     pub render_pass: Arc<RenderPass>,
-    #[builder(default = "true")]
-    pub culling: bool,
-    #[builder(default = "true")]
-    pub depth_write: bool,
+    #[builder(default = "RasterPipelineCullMode::Back")]
+    pub cull_mode: RasterPipelineCullMode,
+    #[builder(default = "RasterPipelinePrimitiveTopology::TriangleList")]
+    pub topology: RasterPipelinePrimitiveTopology,
+    #[builder(default = "false")]
+    pub depth_bias: bool,
     #[builder(default)]
     pub custom_set_layout_overwrites: [Option<PipelineSetBindings>; constants::MAX_DESCRIPTOR_SET_COUNT],
+    #[builder(default = "true")]
+    pub depth_test: bool,
+    #[builder(default = "true")]
+    pub depth_write: bool,
 }
 
 impl RasterPipelineDesc {
@@ -85,8 +105,6 @@ impl Deref for RasterPipeline {
 #[derive(Builder, Clone, Debug)]
 #[builder(pattern = "owned", derive(Clone))]
 pub struct ComputePipelineDesc {
-    #[builder(default)]
-    pub push_constants_bytes: usize,
     #[builder(setter(into))]
     pub source: ShaderSource,
     #[builder(default)]
@@ -95,15 +113,13 @@ pub struct ComputePipelineDesc {
 
 impl std::hash::Hash for ComputePipelineDesc {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        state.write_usize(self.push_constants_bytes);
         self.source.hash(state);
     }
 }
 
 impl PartialEq for ComputePipelineDesc {
     fn eq(&self, other: &Self) -> bool {
-        self.push_constants_bytes.eq(&other.push_constants_bytes) &&
-            self.source.eq(&other.source)
+        self.source.eq(&other.source)
     }
 }
 impl Eq for ComputePipelineDesc {}
@@ -185,7 +201,7 @@ impl Deref for RayTracingPipeline {
 }
 
 pub fn create_raster_pipeline(
-    device: &Device, 
+    device: &Device,
     desc: RasterPipelineDesc, 
     shader_binaries: &[ShaderBinaryStage]
 ) -> anyhow::Result<RasterPipeline, RhiError> {
@@ -295,18 +311,23 @@ pub fn create_raster_pipeline(
         .build();
 
     let vertex_input_assembly_state = vk::PipelineInputAssemblyStateCreateInfo::builder()
-        .topology(vk::PrimitiveTopology::TRIANGLE_LIST)
+        .topology(match desc.topology {
+            RasterPipelinePrimitiveTopology::TriangleList => vk::PrimitiveTopology::TRIANGLE_LIST,
+            RasterPipelinePrimitiveTopology::LineList => vk::PrimitiveTopology::LINE_LIST,
+        })
         .build();
 
     let rasterization_state = vk::PipelineRasterizationStateCreateInfo::builder()
-        .cull_mode(if desc.culling { 
-            vk::CullModeFlags::BACK
-        } else {
-            vk::CullModeFlags::NONE
+        .cull_mode(match desc.cull_mode {
+            RasterPipelineCullMode::Back => vk::CullModeFlags::BACK,
+            RasterPipelineCullMode::Front => vk::CullModeFlags::FRONT,
+            RasterPipelineCullMode::None => vk::CullModeFlags::NONE,
+            RasterPipelineCullMode::FrontAndBack => vk::CullModeFlags::FRONT_AND_BACK,
         })
         .front_face(vk::FrontFace::COUNTER_CLOCKWISE)
         .polygon_mode(vk::PolygonMode::FILL)
         .line_width(1.0)
+        .depth_bias_enable(desc.depth_bias)
         .build();
 
     // don't specified viewport and scissor here, bind dynamically
@@ -327,7 +348,7 @@ pub fn create_raster_pipeline(
         .build();
 
     let depth_stencil_state = vk::PipelineDepthStencilStateCreateInfo::builder()
-        .depth_test_enable(true)
+        .depth_test_enable(desc.depth_test)
         .depth_write_enable(desc.depth_write)
         .depth_compare_op(vk::CompareOp::GREATER_OR_EQUAL) // Use reverse depth to gain better z-depth precision
         .front(noop_stencil_op)
@@ -353,9 +374,15 @@ pub fn create_raster_pipeline(
         .attachments(&attachments)
         .build();
 
-    let dynamic_state = vk::PipelineDynamicStateCreateInfo::builder()
-        .dynamic_states(&[vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR])
-        .build();
+    let dynamic_state = if desc.depth_bias {
+        vk::PipelineDynamicStateCreateInfo::builder()
+            .dynamic_states(&[vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR, vk::DynamicState::DEPTH_BIAS])
+            .build()
+    } else {
+        vk::PipelineDynamicStateCreateInfo::builder()
+            .dynamic_states(&[vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR])
+            .build()
+    };
 
     let graphic_pipeline_ci = vk::GraphicsPipelineCreateInfo::builder()
         .stages(&shader_modules)

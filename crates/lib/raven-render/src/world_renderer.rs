@@ -1,10 +1,10 @@
-use std::sync::Arc;
+use std::{sync::Arc, collections::HashMap};
 
 use ash::vk;
 
-use glam::Affine3A;
-use raven_core::{utility::as_byte_slice_values, asset::asset_registry::AssetHandle};
-use raven_rg::{RenderGraphBuilder, RgHandle, IntoPipelineDescriptorBindings, RenderGraphPassBindable, GetOrCreateTemporal, image_clear};
+use glam::{Affine3A, Vec2, Vec3, Quat};
+use raven_core::{utility, asset::asset_registry::AssetHandle, render::camera::{Camera, controller::FirstPersonController, CameraRenderData}};
+use raven_rg::{RenderGraphBuilder, RgHandle, IntoPipelineDescriptorBindings, RenderGraphPassBindable, RenderGraphPassBinding};
 use raven_rhi::{Rhi, backend::{ImageDesc, Image, AccessType}};
 
 use crate::{
@@ -13,7 +13,7 @@ use crate::{
     renderer::{
         mesh_renderer::{MeshHandle, MeshInstanceHandle},
         post_process_renderer::{PostProcessRenderer, self}, image_lut::ImageLut, lut_renderer::BrdfLutComputer,
-    }
+    }, LightRenderer, DebugRenderer
 };
 #[cfg(feature = "gpu_ray_tracing")]
 use crate::renderer::gpu_path_tracing_renderer::GpuPathTracingRenderer;
@@ -95,20 +95,26 @@ impl Default for ExposureState {
 }
 
 pub struct WorldRenderer {
+    // TODO: remove this
+    // renderer only do render jobs
+    main_camera: Option<(Camera, FirstPersonController)>,
+
     render_resolution: [u32; 2],
 
     sky_renderer: SkyRenderer,
     ibl_renderer: IblRenderer,
 
     mesh_renderer: MeshRenderer,
+    light_renderer: LightRenderer,
 
     auto_exposure: AutoExposureAdjustment,
     exposure_state: ExposureState,
     post_process_renderer: PostProcessRenderer,
 
+    debug_renderer: DebugRenderer,
+
     #[cfg(feature = "gpu_ray_tracing")]
     gpu_ray_tracing_renderer: GpuPathTracingRenderer,
-    #[cfg(feature = "gpu_ray_tracing")]
     need_reset_accum: bool,
 
     render_mode: RenderMode,
@@ -122,23 +128,72 @@ impl WorldRenderer {
         let handle = mesh_renderer.add_bindless_image_lut(brdf_lut);
         assert_eq!(handle.0, 0);
 
+        let mut light_renderer = LightRenderer::new(rhi);
+        light_renderer.add_directional_light(
+            Quat::from_rotation_arc(Vec3::from((0.0, 0.0, -1.0)), Vec3::from((-0.32803, 0.90599, 0.26749))),
+            1.0
+        );
+
         Self {
+            main_camera: None,
             render_resolution: render_res,
 
             sky_renderer: SkyRenderer::new(),
             ibl_renderer: IblRenderer::new(rhi),
+
             mesh_renderer,
+            light_renderer,
 
             auto_exposure: AutoExposureAdjustment::new(),
             exposure_state: Default::default(),
             post_process_renderer: PostProcessRenderer::new(rhi),
 
+            debug_renderer: DebugRenderer::new(rhi),
+
             #[cfg(feature = "gpu_ray_tracing")]
             gpu_ray_tracing_renderer: GpuPathTracingRenderer::new(rhi),
-            #[cfg(feature = "gpu_ray_tracing")]
             need_reset_accum: true,
 
             render_mode: RenderMode::Raster,
+        }
+    }
+
+    // TODO: remove this
+    // renderer only do render jobs
+    pub fn update_camera(&mut self, mouse_delta: Vec2, is_left_mouse_holding: bool, input: &HashMap<&str, f32>) {
+        if let Some((cam, controller)) = &mut self.main_camera {
+            controller.update(
+                cam, mouse_delta,
+                is_left_mouse_holding,
+                input["walk"], input["strafe"], input["lift"]
+            );
+        }
+    }
+
+    #[inline]
+    pub fn get_camera_render_data(&self) -> CameraRenderData {
+        if let Some((cam, _)) = &self.main_camera {
+            cam.get_camera_render_data()
+        } else {
+            panic!("Main camera not set yet!");
+        }
+    }
+
+    #[inline]
+    pub fn get_camera_position(&self) -> Vec3 {
+        if let Some((cam, _)) = &self.main_camera {
+            cam.body.position
+        } else {
+            panic!("Main camera not set yet!");
+        }
+    }
+
+    #[inline]
+    pub fn get_camera_rotation(&self) -> Quat {
+        if let Some((cam, _)) = &self.main_camera {
+            cam.body.rotation
+        } else {
+            panic!("Main camera not set yet!");
         }
     }
 
@@ -169,6 +224,10 @@ impl WorldRenderer {
         self.mesh_renderer.add_mesh_instance(transform, handle)
     }
 
+    pub fn set_main_camera(&mut self, camera: Camera, controller: FirstPersonController) {
+        self.main_camera = Some((camera, controller));
+    }
+
     pub fn update_pre_exposure(&mut self, dt: f32) {
         self.auto_exposure.update_ev(-self.post_process_renderer.image_log2_luminance(), dt);
         
@@ -195,15 +254,19 @@ impl WorldRenderer {
     pub fn prepare_rg(&mut self, rg: &mut RenderGraphBuilder, dt: f32) -> RgHandle<Image> {
         self.update_pre_exposure(dt);
 
-        self.mesh_renderer.compute_lut_if_needed(rg);
+        self.mesh_renderer.compute_brdf_lut_if_needed(rg);
 
-        match self.render_mode {
+        let output = match self.render_mode {
             RenderMode::Raster => self.prepare_rg_raster(rg),
             RenderMode::GpuPathTracing => self.prepare_rg_gpu_path_tracing(rg),
-        }
+        };
+
+        output
     }
 
     fn prepare_rg_raster(&mut self, rg: &mut RenderGraphBuilder) -> RgHandle<Image> {
+        let bindless_descriptor_set = self.mesh_renderer.bindless_descriptor_set();
+
         let main_img_desc: ImageDesc = ImageDesc::new_2d(self.render_resolution, vk::Format::R32G32B32A32_SFLOAT);
         let mut main_img = rg.new_resource(main_img_desc);
 
@@ -224,7 +287,12 @@ impl WorldRenderer {
         };
         
         // mesh rasterization
-        let shading_context = self.mesh_renderer.prepare_rg(rg);
+        let mut shading_context = self.mesh_renderer.prepare_rg(rg);
+
+        // shadow mapping
+        let (light_map, light_matrices) = self.light_renderer.prepare_rg(
+            rg, &self.mesh_renderer, bindless_descriptor_set
+        );
 
         // lighting
         match &shading_context {
@@ -250,21 +318,33 @@ impl WorldRenderer {
                     None
                 };
                 let main_img_ref = pass.write(&mut main_img, AccessType::ComputeShaderWrite);
-
-                let bindless_descriptor_set = self.mesh_renderer.bindless_descriptor_set();
+                
+                // TODO: support multiple shadow maps
+                let light_map_ref = pass.read(&light_map, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer);
 
                 let extent = gbuffer.packed_gbuffer.desc().extent;
-                pass.render(move |context| {
+                pass.render(move |ctx| {
+                    let light_mats_iter = light_matrices.into_iter()
+                        .map(|light_matrix| {
+                            light_matrix.transpose().to_cols_array()
+                        });
+                    let light_mat_offset = ctx.global_dynamic_buffer().push_from_iter(light_mats_iter);
+
                     let mut depth_img_binding = depth_img_ref.bind();
                     depth_img_binding.with_aspect(vk::ImageAspectFlags::DEPTH);
 
+                    let mut light_map_binding = light_map_ref.bind();
+                    light_map_binding.with_aspect(vk::ImageAspectFlags::DEPTH);
+
                     // bind pipeline and descriptor set
                     let bound_pipeline = if is_cubemap_exist {
-                        context.bind_compute_pipeline(pipeline.into_bindings()
+                        ctx.bind_compute_pipeline(pipeline.into_bindings()
                             .descriptor_set(0, &[
                                 gbuffer_img_ref.bind(),
                                 depth_img_binding,
                                 main_img_ref.bind(),
+                                light_map_binding,
+                                RenderGraphPassBinding::DynamicStorageBuffer(light_mat_offset),
                                 cubemap_ref.unwrap().bind(),
                                 sh_buffer_ref.unwrap().bind(),
                                 prefilter_cubemap_ref.unwrap().bind(),
@@ -272,17 +352,20 @@ impl WorldRenderer {
                             .raw_descriptor_set(1, bindless_descriptor_set)
                         )?
                     } else {
-                        context.bind_compute_pipeline(pipeline.into_bindings()
+                        ctx.bind_compute_pipeline(pipeline.into_bindings()
                             .descriptor_set(0, &[
                                 gbuffer_img_ref.bind(),
                                 depth_img_binding,
-                                main_img_ref.bind()
+                                main_img_ref.bind(),
+                                light_map_binding,
+                                RenderGraphPassBinding::DynamicStorageBuffer(light_mat_offset),
                             ])
+                            .raw_descriptor_set(1, bindless_descriptor_set)
                         )?
                     };
 
                     let push_constants = [extent[0], extent[1]];
-                    bound_pipeline.push_constants(vk::ShaderStageFlags::COMPUTE, 0, as_byte_slice_values(&push_constants));
+                    bound_pipeline.push_constants(vk::ShaderStageFlags::COMPUTE, 0, utility::as_byte_slice_values(&push_constants));
                     
                     bound_pipeline.dispatch(extent);
 
@@ -292,10 +375,34 @@ impl WorldRenderer {
             _ => unimplemented!(),
         }
         
-        let post_img = self.post_process_renderer.prepare_rg(
+        let mut post_img = self.post_process_renderer.prepare_rg(
             rg, main_img,
             self.exposure_state.post_mult, 1.0
         );
+
+        // match (&self.frame_count, &self.main_camera) {
+            //     (0, Some(main_cam)) => {
+                //         self.debug_renderer.add_debug_line_lists(main_cam.0.get_camera_frustum_line_lists());
+                
+                //         self.cam_aabb = main_cam.0.get_camera_frustum_aabb();
+                //         self.debug_renderer.add_debug_aabb(self.cam_aabb);
+                //     }
+                
+                //     (_, Some(_)) => {
+                    //         self.debug_renderer.add_debug_aabb(self.cam_aabb);
+                    //     }
+                    
+        //     _ => {}
+        // }
+        
+        self.debug_renderer.add_debug_aabb(self.mesh_renderer.get_scene_aabb());
+        match &mut shading_context {
+            MeshShadingContext::Defer(gbuffer) => {
+                self.debug_renderer.prepare_rg(rg, &mut post_img, &mut gbuffer.depth);
+            }
+            _ => unimplemented!(),
+        }
+        self.debug_renderer.remove_all_aabbs();
 
         post_img
     }
@@ -306,6 +413,8 @@ impl WorldRenderer {
 
     #[cfg(feature = "gpu_ray_tracing")]
     fn prepare_rg_gpu_path_tracing(&mut self, rg: &mut RenderGraphBuilder) -> RgHandle<Image> {
+        use raven_rg::{GetOrCreateTemporal, image_clear};
+
         let mut accum_img = rg.get_or_create_temporal(
             "path tracing accum image",
             ImageDesc::new_2d(self.render_resolution, vk::Format::R32G32B32A32_SFLOAT)
@@ -336,11 +445,12 @@ impl WorldRenderer {
     }
 
     #[cfg(not(feature = "gpu_ray_tracing"))]
-    fn prepare_rg_gpu_path_tracing(&mut self, rg: &mut RenderGraphBuilder) -> RgHandle<Image> {
+    fn prepare_rg_gpu_path_tracing(&mut self, _rg: &mut RenderGraphBuilder) -> RgHandle<Image> {
         panic!("gpu ray tracing is not support!");
     }
 
     pub fn clean(self, rhi: &Rhi) {
+        self.debug_renderer.clean();
         self.post_process_renderer.clean(rhi);
 
         self.ibl_renderer.clean(rhi);
@@ -348,6 +458,8 @@ impl WorldRenderer {
 
         #[cfg(feature = "gpu_ray_tracing")]
         self.gpu_ray_tracing_renderer.clean(rhi);
+
+        self.light_renderer.clean();
         self.mesh_renderer.clean(rhi);
     }
 }

@@ -5,6 +5,11 @@ use std::any::Any;
 
 use glam::{Vec3, Quat, Mat4, Vec4};
 
+use crate::math::AABB;
+
+// TODO: move this to config
+const CAMERA_MAX_SHADOW_Z: f32 = 500.0;
+
 #[derive(Copy, Clone)]
 pub struct CameraTransform {
     position: Vec3,
@@ -88,7 +93,7 @@ impl Camera {
         self.lens = lens;
     }
 
-    pub fn camera_matrices(&self) -> CameraMatrices {
+    pub fn get_camera_render_data(&self) -> CameraRenderData {
         // rotation first, and then translation
         let view_to_world = {
             let translation = Mat4::from_translation(self.body.position);
@@ -116,12 +121,133 @@ impl Camera {
             Vec4::new(0.0, 0.0, -1.0, 0.0)
         );
 
-        CameraMatrices {
+        CameraRenderData {
             world_to_view,
             view_to_world,
             view_to_clip,
             clip_to_view,
         }
+    }
+
+    pub fn get_camera_frustum_aabb(&self) -> AABB {
+        // TODO: cache matrix data
+        let view_to_world = {
+            let translation = Mat4::from_translation(self.body.position);
+            translation * Mat4::from_quat(self.body.rotation)
+        };
+
+        // TODO: add math derivation to Doc
+        let view_to_clip = Mat4::perspective_rh(
+            self.lens.fov_vertical_degrees.to_radians(),
+            self.lens.aspect_ratio,
+            // reverse z
+            CAMERA_MAX_SHADOW_Z,
+            self.lens.near_plane,
+        );
+        let clip_to_view = view_to_clip.inverse();
+        let frustum_aabb = Self::get_camera_frustum_aabb_impl(view_to_world * clip_to_view);
+
+        frustum_aabb
+    }
+
+    pub fn get_camera_frustum_line_lists(&self) -> Vec<Vec3> {
+        let mut res = Vec::with_capacity(24);
+
+        let view_to_world = {
+            let translation = Mat4::from_translation(self.body.position);
+            translation * Mat4::from_quat(self.body.rotation)
+        };
+
+        // let view_to_clip = Mat4::perspective_rh(
+        //     self.lens.fov_vertical_degrees.to_radians(),
+        //     self.lens.aspect_ratio,
+        //     0.1,
+        //     10.0
+        // );
+        let view_to_clip = Mat4::perspective_rh(
+            self.lens.fov_vertical_degrees.to_radians(),
+            self.lens.aspect_ratio,
+            // reverse z
+            CAMERA_MAX_SHADOW_Z,
+            self.lens.near_plane,
+        );
+        // TODO: use row-reduction to compute inverse matrix (faster than calling inverse())
+        let clip_to_view = view_to_clip.inverse();
+        let clip_to_world = view_to_world * clip_to_view;
+
+        let clip_space_points = [
+            // line [1]
+            Vec3::new(-1.0, -1.0, 1.0),
+            Vec3::new(-1.0,  1.0, 1.0),
+            // line [2]
+            Vec3::new(-1.0, -1.0, 1.0),
+            Vec3::new( 1.0, -1.0, 1.0),
+            // line [3]
+            Vec3::new(-1.0, -1.0, 1.0),
+            Vec3::new(-1.0, -1.0, 0.0),
+
+            // line [4]
+            Vec3::new( 1.0,  1.0, 0.0),
+            Vec3::new(-1.0,  1.0, 0.0),
+            // line [5]
+            Vec3::new( 1.0,  1.0, 0.0),
+            Vec3::new( 1.0, -1.0, 0.0),
+            // line [6]
+            Vec3::new( 1.0,  1.0, 0.0),
+            Vec3::new( 1.0,  1.0, 1.0),
+
+            // line [7]
+            Vec3::new( 1.0, -1.0, 1.0),
+            Vec3::new( 1.0,  1.0, 1.0),
+            // line [8]
+            Vec3::new( 1.0, -1.0, 1.0),
+            Vec3::new( 1.0,  1.0, 0.0),
+
+            // line [9]
+            Vec3::new(-1.0,  1.0, 0.0),
+            Vec3::new(-1.0,  1.0, 1.0),
+            // line [10]
+            Vec3::new(-1.0,  1.0, 0.0),
+            Vec3::new(-1.0, -1.0, 0.0),
+
+            // line [11]
+            Vec3::new( 1.0,  1.0, 1.0),
+            Vec3::new(-1.0,  1.0, 1.0),
+            // line [12]
+            Vec3::new(-1.0, -1.0, 0.0),
+            Vec3::new( 1.0, -1.0, 0.0),
+        ];
+
+        for point_cs in clip_space_points {
+            let point_ws = clip_to_world.project_point3(point_cs);
+    
+            res.push(point_ws);
+        }
+
+        res
+    }
+
+    fn get_camera_frustum_aabb_impl(clip_to_world: Mat4) -> AABB {
+        let mut res = AABB::new();
+
+        let clip_space_points: [Vec3; 8] = [
+            Vec3::new(-1.0, -1.0, 1.0),
+            Vec3::new(-1.0,  1.0, 1.0),
+            Vec3::new( 1.0, -1.0, 1.0),
+            Vec3::new( 1.0,  1.0, 1.0),
+            Vec3::new(-1.0, -1.0, 0.0),
+            Vec3::new(-1.0,  1.0, 0.0),
+            Vec3::new( 1.0, -1.0, 0.0),
+            Vec3::new( 1.0,  1.0, 0.0)
+        ];
+
+        for point_cs in clip_space_points {
+            let point_ws = clip_to_world.project_point3(point_cs);
+    
+            res.merge_point_vec3(point_ws);
+        }
+
+        res
     }
 }
 
@@ -184,7 +310,7 @@ pub struct CameraController {
 
 #[repr(C, align(16))]  // align to float4
 #[derive(Copy, Clone)]
-pub struct CameraMatrices {
+pub struct CameraRenderData {
     pub world_to_view: Mat4,
     pub view_to_world: Mat4,
     pub view_to_clip: Mat4,

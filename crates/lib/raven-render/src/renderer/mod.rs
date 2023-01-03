@@ -6,5 +6,9 @@ pub mod sky_renderer;
 pub mod ibl_renderer;
 pub mod post_process_renderer;
 
+pub mod light_renderer;
+
+pub mod debug_renderer;
+
 #[cfg(feature = "gpu_ray_tracing")]
 pub mod gpu_path_tracing_renderer;

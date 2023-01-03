@@ -9,7 +9,7 @@ use turbosloth::*;
 use bytes::Bytes;
 use wyhash::WyHash;
 
-use crate::math;
+use crate::math::{self, AABB};
 
 use super::asset_registry::{AssetHandle, AssetRef};
 use super::error::AssetPipelineError;
@@ -105,6 +105,32 @@ impl RawMeshProcess {
     
         (z << 21) | (y << 11) | x
     }
+
+    fn calculate_mesh_aabb(vertex_pos: &[[f32; 3]]) -> AABB {
+        let mut aabb = AABB::new();
+
+        // let mut min_vertex: [f32; 3] = [f32::MAX; 3];
+        // let mut max_vertex: [f32; 3] = [f32::MIN; 3];
+
+        for vertex in vertex_pos {
+            // min_vertex[0] = min_vertex[0].min(vertex[0]);
+            // min_vertex[1] = min_vertex[1].min(vertex[1]);
+            // min_vertex[2] = min_vertex[2].min(vertex[2]);
+
+            // max_vertex[0] = max_vertex[0].max(vertex[0]);
+            // max_vertex[1] = max_vertex[1].max(vertex[1]);
+            // max_vertex[2] = max_vertex[2].max(vertex[2]);
+
+            aabb.merge_point_f32(vertex);
+        }
+
+        // dbg!(min_vertex);
+        // dbg!(max_vertex);
+
+        dbg!(&aabb);
+
+        aabb
+    }
 }
 
 #[async_trait]
@@ -114,6 +140,8 @@ impl LazyWorker for RawMeshProcess {
     async fn run(mut self, ctx: RunContext) -> Self::Output {
         // vertex packing
         let mut packed_vertex = Vec::with_capacity(self.raw.positions.len());
+
+        let aabb = Self::calculate_mesh_aabb(&self.raw.positions);
 
         for (idx, pos) in self.raw.positions.iter().enumerate() {
             let [nx, ny, nz] = self.raw.normals[idx];
@@ -168,6 +196,8 @@ impl LazyWorker for RawMeshProcess {
             tangents: self.raw.tangents,
             uvs: self.raw.uvs,
             indices: self.raw.indices,
+
+            aabb,
 
             materials: materials,
             material_textures: textures,

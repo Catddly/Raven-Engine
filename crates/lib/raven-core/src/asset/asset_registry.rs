@@ -8,7 +8,7 @@ use parking_lot::RwLock;
 
 
 use super::asset_manager::ASSETS_MMAP;
-use super::{Asset, VacantAsset, BakedAsset, Mesh, Texture, Material, AssetType, VecArrayQueryParam};
+use super::{Asset, VacantAsset, BakedAsset, Mesh, Texture, Material, AssetType, VecArrayQueryParam, TaggedAssetType};
 
 type RegisterBoxAssetType = Box<dyn Asset + Send + Sync>;
 
@@ -43,13 +43,14 @@ impl std::ops::Deref for AssetHandle {
     }
 }
 
-pub struct AssetRef<T> {
+#[derive(Clone, Debug)]
+pub struct AssetRef<T: TaggedAssetType> {
     pub(crate) handle: Arc<AssetHandle>,
     pub(crate) uuid: u64,
     pub(crate) _marker: PhantomData<fn(&T)>,
 }
 
-impl<T> AssetRef<T> {
+impl<T: TaggedAssetType> AssetRef<T> {
     pub fn handle(&self) -> &Arc<AssetHandle> {
         &self.handle
     }
@@ -101,8 +102,8 @@ pub struct RuntimeAssetRegistry {
 
     assets: Vec<RegisterBoxAssetType>,
 
-    mesh_relative_mats: HashMap<AssetHandle, Vec<AssetRef<Material::Packed>>>,
-    mesh_relative_texs: HashMap<AssetHandle, Vec<AssetRef<Texture::Packed>>>,
+    mesh_relative_mats: HashMap<AssetHandle, Vec<AssetRef<Material::Storage>>>,
+    mesh_relative_texs: HashMap<AssetHandle, Vec<AssetRef<Texture::Storage>>>,
 }
 
 impl RuntimeAssetRegistry {
@@ -153,11 +154,11 @@ impl RuntimeAssetRegistry {
         self.assets.get(handle.id as usize)
     }
 
-    pub fn get_asset_relative_materials(&self, handle: &AssetHandle) -> Option<&Vec<AssetRef<Material::Packed>>> {
+    pub fn get_asset_relative_materials(&self, handle: &AssetHandle) -> Option<&Vec<AssetRef<Material::Storage>>> {
         self.mesh_relative_mats.get(handle)
     }
 
-    pub fn get_asset_relative_textures(&self, handle: &AssetHandle) -> Option<&Vec<AssetRef<Texture::Packed>>> {
+    pub fn get_asset_relative_textures(&self, handle: &AssetHandle) -> Option<&Vec<AssetRef<Texture::Storage>>> {
         self.mesh_relative_texs.get(handle)
     }
 
@@ -191,6 +192,22 @@ impl RuntimeAssetRegistry {
         let asset = self.get_asset(&handle).unwrap();
         
         match asset.asset_type() {
+            AssetType::Mesh => {
+                let mesh_asset = asset.as_mesh().unwrap();
+
+                let mut mat_refs = Vec::with_capacity(mesh_asset.materials.len());
+                for mat in mesh_asset.materials.iter() {
+                    mat_refs.push(mat.clone());
+                }
+                
+                let mut tex_refs = Vec::with_capacity(mesh_asset.material_textures.len());
+                for tex in mesh_asset.material_textures.iter() {
+                    tex_refs.push(tex.clone());
+                }
+                
+                self.mesh_relative_mats.entry(*handle).or_insert(mat_refs);
+                self.mesh_relative_texs.entry(*handle).or_insert(tex_refs);
+            }
             AssetType::Baked => {
                 let baked_asset = asset.as_baked().unwrap();
                 let baked_asset_type = baked_asset.origin_asset_type();

@@ -35,7 +35,10 @@ pub use image::{Image, ImageDesc, ImageSubresource, ImageType, ImageViewDesc};
 pub use sampler::{SamplerDesc};
 
 pub use shader::{ShaderSource, ShaderBinary, ShaderBinaryStage, PipelineShaderStage, PipelineShaderDesc};
-pub use pipeline::{RasterPipelineDesc, ComputePipelineDesc, RasterPipeline, ComputePipeline};
+pub use pipeline::{
+    RasterPipelineDesc, ComputePipelineDesc, RasterPipeline, ComputePipeline,
+    RasterPipelinePrimitiveTopology, RasterPipelineCullMode
+};
 #[cfg(feature = "gpu_ray_tracing")]
 pub use pipeline::{RayTracingPipelineDesc, RayTracingPipeline};
 pub use renderpass::{RenderPass, RenderPassDesc, RenderPassAttachmentDesc};

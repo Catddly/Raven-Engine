@@ -67,7 +67,7 @@ impl FirstPersonController {
                 let new_forward = vertical_rot.mul_vec3(forward).normalize();
 
                 let dot = new_forward.dot(Vec3::Y);
-                if dot >= 0.99 || dot <= -0.99 {
+                if dot >= 0.9999 || dot <= -0.9999 {
                     (forward, up)
                 } else {
                     (new_forward, vertical_rot.mul_vec3(up).normalize())
@@ -82,14 +82,15 @@ impl FirstPersonController {
                 [-forward.x, -forward.y, -forward.z],
             ]);
             self.controller.get_control_mut::<CamCtrlRotation>().rotate_to(Quat::from_mat3(&rotation_mat).normalize());
+            
         }
 
         let delta_pos = 
             input_strafe * self.move_speed * right +
             input_lift   * self.move_speed * up +
             input_walk   * self.move_speed * forward;
-        self.controller.get_control_mut::<CamCtrlPosition>().move_by(delta_pos);
 
+        self.controller.get_control_mut::<CamCtrlPosition>().move_by(delta_pos);
         self.controller.update(camera);
     }
 }

@@ -5,8 +5,9 @@ use ash::vk;
 
 use glam::{Affine3A};
 use raven_core::asset::TextureGammaSpace;
+use raven_core::math::AABB;
 use raven_core::{asset::{asset_registry::{AssetHandle, get_runtime_asset_registry}, PackedVertex, VecArrayQueryParam}, utility};
-use raven_rg::{RenderGraphBuilder, RgHandle, IntoPipelineDescriptorBindings, RenderGraphPassBinding, image_clear};
+use raven_rg::{RenderGraphBuilder, RgHandle, IntoPipelineDescriptorBindings, RenderGraphPassBinding, image_clear, PassContext, BoundRasterPipeline};
 use raven_rhi::global_bindless_descriptor;
 use raven_rhi::{backend::{Device, ImageDesc, Image, BufferDesc, Buffer, renderpass, RenderPass, descriptor::update_descriptor_set_buffer, RasterPipelineDesc, PipelineShaderDesc, PipelineShaderStage, AccessType, ImageViewDesc, ImageSubresource}, Rhi, copy_engine::CopyEngine};
 
@@ -67,6 +68,9 @@ pub(crate) struct UploadedMesh {
     pub(crate) index_buffer_offset: u32,
     pub(crate) index_count: u32,
 
+    /// Mesh aabb in object space.
+    pub(crate) aabb: AABB,
+
     // data necessary for building blas
     #[cfg(feature = "gpu_ray_tracing")]
     pub(crate) vertex_packed_address: u64,
@@ -80,6 +84,8 @@ pub(crate) struct UploadedMesh {
 pub struct MeshInstance {
     pub(crate) transform: Affine3A,
     pub(crate) handle: MeshHandle,
+    /// mesh aabb in world space (i.e. transformed)
+    pub(crate) _aabb: AABB,
 }
 
 impl std::hash::Hash for MeshInstance {
@@ -130,6 +136,8 @@ pub struct MeshRenderer {
     image_luts: Vec<ImageLut>,
     bindless_images: Vec<Arc<Image>>,
     next_bindless_texture_idx: u32,
+
+    scene_aabb: AABB,
 
     device: Arc<Device>,
 }
@@ -182,10 +190,10 @@ impl MeshRenderer {
         // create giant buffers to contain mesh vertex data and index data
         let universal_draw_data_buffer_desc: BufferDesc = BufferDesc::new_gpu_only(
             1024 * 1024 * 512, // 512 MB
-            vk::BufferUsageFlags::STORAGE_BUFFER
-            | vk::BufferUsageFlags::INDEX_BUFFER
-            | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
-            | vk::BufferUsageFlags::TRANSFER_DST
+            vk::BufferUsageFlags::STORAGE_BUFFER |
+                vk::BufferUsageFlags::INDEX_BUFFER |
+                vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS |
+                vk::BufferUsageFlags::TRANSFER_DST
         );
         
         let universal_mesh_buffer_desc: BufferDesc = BufferDesc::new_cpu_to_gpu(
@@ -250,6 +258,8 @@ impl MeshRenderer {
             image_luts: Vec::new(),
             bindless_images: Vec::new(),
             next_bindless_texture_idx: 0,
+
+            scene_aabb: AABB::new(),
 
             device: rhi.device.clone(),
         }
@@ -428,7 +438,10 @@ impl MeshRenderer {
 
                     let mesh_tex_mask = self.add_mesh_bindless_textures(&handle);
 
-                    return self.upload_gpu_mesh_data(packed, colors, uvs, tangents, indices, mat_ids, &upload_materials, mesh_tex_mask);
+                    return self.upload_gpu_mesh_data(
+                        packed, colors, uvs, tangents, indices, mat_ids,
+                        &upload_materials, mesh_tex_mask, mesh_asset.aabb
+                    );
                 } else if let Some(baked) = asset.as_baked() {
                     let field_reader = read_guard.get_baked_mesh_asset(baked);
 
@@ -468,7 +481,10 @@ impl MeshRenderer {
 
                     let mesh_tex_mask = self.add_mesh_bindless_textures(&handle);
 
-                    return self.upload_gpu_mesh_data(packed, colors, uvs, tangents, indices, mat_ids, &upload_materials, mesh_tex_mask);
+                    return self.upload_gpu_mesh_data(
+                        packed, colors, uvs, tangents, indices, mat_ids,
+                        &upload_materials, mesh_tex_mask, field_reader.aabb()
+                    );
                 } else {
                     panic!("Trying to add a non-mesh asset in add_asset_mesh()!");
                 }
@@ -511,9 +527,16 @@ impl MeshRenderer {
 
     pub fn add_mesh_instance(&mut self, transform: Affine3A, handle: MeshHandle) -> MeshInstanceHandle {
         let instance_handle = MeshInstanceHandle(self.mesh_instances.len() as _);
+
+        let mut mesh_aabb = self.meshes[handle.id as usize].aabb;
+        mesh_aabb.transform(transform.into());
+
+        self.scene_aabb.merge_aabb(&mesh_aabb);
+
         self.mesh_instances.insert(MeshInstance {
             transform,
             handle,
+            _aabb: mesh_aabb
         });
         instance_handle
     }
@@ -523,8 +546,9 @@ impl MeshRenderer {
         uvs: &[[f32; 2]], tangents: &[[f32; 4]],
         indices: &[u32], mat_ids: &[u32],
         upload_materials: &[UploadMaterial],
-        mesh_tex_mask: u32,
+        mesh_tex_mask: u32, aabb: AABB,
     ) -> MeshHandle {
+        //dbg!(&aabb);
         let curr_global_offset = self.current_draw_data_offset as u32;
 
         // copy upload
@@ -579,6 +603,8 @@ impl MeshRenderer {
             index_count: indices.len() as u32,
             index_buffer_offset: index_offset,
 
+            aabb,
+
             #[cfg(feature = "gpu_ray_tracing")]
             vertex_packed_address,
             #[cfg(feature = "gpu_ray_tracing")]
@@ -598,12 +624,17 @@ impl MeshRenderer {
         mesh_data
     }
 
+    #[inline]
     pub(crate) fn get_mesh_instances(&self) -> &BTreeSet<MeshInstance> {
         &self.mesh_instances
     }
 
+    pub fn get_scene_aabb(&self) -> AABB {
+        self.scene_aabb
+    }
+
     // TODO: temp
-    pub fn compute_lut_if_needed(&mut self, rg: &mut RenderGraphBuilder) {
+    pub fn compute_brdf_lut_if_needed(&mut self, rg: &mut RenderGraphBuilder) {
         for image_lut in self.image_luts.iter_mut() {
             image_lut.compute_if_needed(rg);
         }
@@ -703,32 +734,12 @@ impl MeshRenderer {
                         )?;
 
                         // do drawing
-                        for (instance_idx, mesh_ins) in mesh_instances.iter().enumerate() {
-                            let mesh = &meshes[mesh_ins.handle.id as usize];
-
-                            unsafe {
-                                let raw = &ctx.device().raw;
-
-                                raw.cmd_bind_index_buffer(
-                                    ctx.cb.raw, 
-                                    draw_data_buffer.raw,
-                                    mesh.index_buffer_offset as u64,
-                                    vk::IndexType::UINT32,
-                                );
-    
-                                let push_constants = [mesh_ins.handle.id, instance_idx as u32];
-                                bound_pipeline.push_constants(
-                                    vk::ShaderStageFlags::ALL_GRAPHICS, 
-                                    0,
-                                    utility::as_byte_slice_values(&push_constants)
-                                );
-
-                                raw.cmd_draw_indexed(ctx.cb.raw,
-                                    mesh.index_count,
-                                    1, 0, 0, 0
-                                );
-                            }
-                        }
+                        Self::mesh_draw_func(
+                            &mesh_instances,
+                            &meshes,
+                            &draw_data_buffer,
+                            ctx, &bound_pipeline
+                        );
 
                         ctx.end_render_pass();
                         Ok(())
@@ -739,6 +750,54 @@ impl MeshRenderer {
         }
 
         shading_context
+    }
+
+    #[inline]
+    pub(crate) fn get_draw_data_buffer(&self) -> Arc<Buffer> {
+        self.draw_data_buffer.clone()
+    }
+
+    #[inline]
+    pub(crate) fn get_uploaded_meshes(&self) -> &Vec<UploadedMesh> {
+        &self.meshes
+    }
+
+    // TODO: change api, this is ugly
+    pub(crate) fn mesh_draw_func(
+        mesh_instances: &BTreeSet<MeshInstance>,
+        meshes: &Vec<UploadedMesh>,
+        draw_data_buffer: &Arc<Buffer>,
+        ctx: &PassContext,
+        bound_pipeline: &BoundRasterPipeline<'_, '_, '_>,
+    ) {
+        for (instance_idx, mesh_ins) in mesh_instances.iter().enumerate() {
+            let mesh = &meshes[mesh_ins.handle.id as usize];
+
+            unsafe {
+                let raw = &ctx.device().raw;
+
+                raw.cmd_bind_index_buffer(
+                    ctx.cb.raw, 
+                    draw_data_buffer.raw,
+                    mesh.index_buffer_offset as u64,
+                    vk::IndexType::UINT32,
+                );
+
+                // TODO: fix this, light renderer use incorrect light index.
+                // here it used instance index as light index
+                let push_constants = [mesh_ins.handle.id, instance_idx as u32];
+                bound_pipeline.push_constants(
+                    vk::ShaderStageFlags::ALL_GRAPHICS, 
+                    0,
+                    utility::as_byte_slice_values(&push_constants)
+                );
+
+                raw.cmd_draw_indexed(ctx.cb.raw,
+                    mesh.index_count,
+                    1, 0, 0, 0
+                );
+            }
+        }
     }
 
     pub fn clean(self, rhi: &Rhi) {

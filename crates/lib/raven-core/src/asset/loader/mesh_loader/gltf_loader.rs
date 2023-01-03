@@ -307,7 +307,7 @@ fn load_gltf_default_scene(doc: &Document, buffers: &[Bytes], images: &[Bytes]) 
                 for map in material.texture_mapping.iter_mut() {
                     *map += texture_base;
                 }
-
+                
                 raw_mesh.materials.push(material);
                 raw_mesh.material_textures.append(&mut textures);
 

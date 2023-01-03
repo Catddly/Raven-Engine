@@ -379,7 +379,7 @@ impl PostProcessRenderer {
         }
 
         for target_mip in 1..output_desc.mip_levels {
-            let mut pass = rg.add_pass("bloom blur {}");
+            let mut pass = rg.add_pass(format!("bloom blur {}", target_mip).as_str());
             let pipeline = pass.register_compute_pipeline("post_processing/bloom/bloom_blur.hlsl");
 
             let input_ref = pass.read(&output, AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer);

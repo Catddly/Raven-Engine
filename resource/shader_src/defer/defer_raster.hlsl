@@ -36,7 +36,7 @@ struct VsOut {
     [[vk::location(6)]] float3 pos_vs: TEXCOORD6;
 };
 
-VsOut vs_main(uint vid: SV_VertexID, uint iid: SV_InstanceID)
+VsOut vs_main(uint vid: SV_VertexID)
 {
     VsOut vsout;
 

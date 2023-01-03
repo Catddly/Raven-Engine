@@ -307,6 +307,17 @@ pub struct BoundRasterPipeline<'context, 'exec, 'a> {
 }
 
 impl<'context, 'exec, 'a> BoundRasterPipeline<'context, 'exec, 'a> {
+    pub fn rebind(&self, set_idx: u32, bindings: &[RenderGraphPassBinding]) -> anyhow::Result<(), RhiError> {
+        let bindings = rg_pass_binding_to_descriptor_set_bindings(&self.context.registry, bindings)?;
+
+        descriptor::bind_descriptor_set_in_place(
+            self.context.device(), self.context.cb, 
+            set_idx, &self.pipeline, bindings.as_slice()
+        );
+
+        Ok(())
+    }
+
     pub fn push_constants(
         &self,
         stage_flags: vk::ShaderStageFlags,
@@ -579,6 +590,17 @@ impl<'exec, 'a> PassContext<'exec, 'a> {
         self.set_viewport([width, height]);
         self.set_scissor([width, height]);
     }
+
+    pub fn set_depth_bias(&self, bias_constant: f32, clamp: f32, slope_factor: f32) {
+        unsafe {
+            self.device().raw.cmd_set_depth_bias(
+                self.cb.raw,
+                bias_constant,
+                clamp,
+                slope_factor
+            );
+        }
+    } 
 
     #[inline]
     pub fn set_viewport(&self, [width, height]: [u32; 2]) {

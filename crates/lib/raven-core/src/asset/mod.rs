@@ -20,6 +20,7 @@ use unsafe_any::UnsafeAny;
 
 use crate::container::{TreeByteBuffer, TreeByteBufferNode};
 use crate::asset::asset_registry::{DiskAssetRef, AssetRef};
+use crate::math::AABB;
 use pack_unpack::*;
 
 use self::asset_registry::AssetHandle;
@@ -45,6 +46,10 @@ fn get_uri_bake_stem(uri: &PathBuf) -> PathBuf {
     PathBuf::from(baked_uri.replace("/", "=!"))
 }
 
+
+pub trait TaggedAssetType {}
+
+#[repr(u32)]
 pub enum AssetType {
     Vacant,
     Baked,
@@ -159,6 +164,8 @@ impl Asset for VacantAsset {
     }
 }
 
+impl TaggedAssetType for VacantAsset {}
+
 /// Baked asset.
 /// To be used to index data from mmap.
 pub struct BakedAsset {
@@ -186,6 +193,8 @@ impl Asset for BakedAsset {
         self
     }
 }
+
+impl TaggedAssetType for BakedAsset {}
 
 #[derive(Clone)]
 pub struct BakedRawAsset {
@@ -447,6 +456,8 @@ macro_rules! define_asset {
                 }
             }
 
+            impl TaggedAssetType for Storage {}
+
             #[repr(packed)]
             pub struct Packed {
                 $(
@@ -509,6 +520,7 @@ define_asset!{
         tangents     { Vec([f32; 4]) }
         uvs          { Vec([f32; 2]) }
         indices      { Vec(u32) }
+        aabb         { AABB }
         
         materials         { Vec(Asset(Material)) }
         material_textures { Vec(Asset(Texture)) }

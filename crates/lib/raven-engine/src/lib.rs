@@ -154,6 +154,7 @@ pub fn main_loop(engine_context: &mut EngineContext<impl user::App>) {
     } = engine_context;
 
     asset_manager.load_asset(AssetLoadDesc::load_mesh("mesh/cornell_box/scene.gltf")).unwrap();
+    //asset_manager.load_asset(AssetLoadDesc::load_mesh("mesh/cornell_box/scene.gltf")).unwrap();
     asset_manager.load_asset(AssetLoadDesc::load_texture("texture/skybox/right.jpg")).unwrap();
     asset_manager.load_asset(AssetLoadDesc::load_texture("texture/skybox/left.jpg")).unwrap();
     asset_manager.load_asset(AssetLoadDesc::load_texture("texture/skybox/top.jpg")).unwrap();
@@ -174,16 +175,18 @@ pub fn main_loop(engine_context: &mut EngineContext<impl user::App>) {
     // );
     let cornell_xform = Affine3A::from_scale_rotation_translation(
         Vec3::splat(1.0),
-        Quat::from_rotation_y(0.0_f32.to_radians()),
+        Quat::IDENTITY,
         Vec3::splat(0.0)
     );
     let _instance = renderer.add_mesh_instance(cornell_xform, mesh_handle);
 
     let resolution = renderer.get_render_resolution();
-    let mut camera = camera::Camera::builder()
+    let camera = camera::Camera::builder()
         .aspect_ratio(resolution[0] as f32 / resolution[1] as f32)
         .build();
-    let mut camera_controller = camera::controller::FirstPersonController::new(Vec3::new(0.0, 0.5, 5.0), Quat::IDENTITY);
+    let camera_controller = camera::controller::FirstPersonController::new(Vec3::new(0.0, 0.5, 5.0), Quat::IDENTITY);
+
+    renderer.set_main_camera(camera, camera_controller);
 
     input_manager.add_binding(
         KeyCode::vkcode(VirtualKeyCode::W), 
@@ -283,14 +286,13 @@ pub fn main_loop(engine_context: &mut EngineContext<impl user::App>) {
             let input = input_manager.map(dt);
             let mouse_delta = input_manager.mouse_pos_delta() * dt;
 
-            camera_controller.update(&mut camera, mouse_delta,
-                input_manager.is_mouse_hold(MouseButton::LEFT),
-                input["walk"], input["strafe"], input["lift"]
+            renderer.update_camera(
+                mouse_delta, input_manager.is_mouse_hold(MouseButton::LEFT), &input
             );
-            let cam_matrices = camera.camera_matrices();
+            let cam_matrices = renderer.get_camera_render_data();
 
-            persist_states.camera.position = camera.body.position;
-            persist_states.camera.rotation = camera.body.rotation;
+            persist_states.camera.position = renderer.get_camera_position();
+            persist_states.camera.rotation = renderer.get_camera_rotation();
 
             if input_manager.is_keyboard_just_pressed(VirtualKeyCode::T) {
                 use_reference_mode = !use_reference_mode;

@@ -27,20 +27,56 @@ struct SHBuffer
 [[vk::binding(0)]] Texture2D<float4> gbuffer_tex;
 [[vk::binding(1)]] Texture2D<float> depth_tex;
 [[vk::binding(2)]] RWTexture2D<float4> output_tex;
-[[vk::binding(3)]] TextureCube cube_map;
-[[vk::binding(4)]] StructuredBuffer<SHBuffer> sh_buffer;
-[[vk::binding(5)]] TextureCube prefilter_cube_map;
+[[vk::binding(3)]] Texture2D<float> light_map;
+[[vk::binding(4)]] StructuredBuffer<row_major float4x4> light_map_transforms_dyn; // TODO: maybe move this to frame constants?
+[[vk::binding(5)]] TextureCube cube_map;
+[[vk::binding(6)]] StructuredBuffer<SHBuffer> sh_buffer;
+[[vk::binding(7)]] TextureCube prefilter_cube_map;
 
 #define CONVOLVED_CUBEMAP convolved_cube_map
 #define PREFILTERED_CUBEMAP prefilter_cube_map
 #define SH_BUFFER sh_buffer
 
-#include "../pbr/ibl/ibl_lighting.hlsl"
 #include "../pbr/brdf.hlsl"
+#include "../pbr/ibl/ibl_lighting.hlsl"
 #include "../pbr/multi_scatter_compensate.hlsl"
 
+// Note: bias matrix to move NDC (coord x and y) [-1, 1] to [0, 1] for texture sampling
+// inverse y here to compensate the negative y viewport in vulkan (see ctx.set_viewport())
+static const float4x4 bias_mat = float4x4(
+    0.5,  0.0, 0.0, 0.5,
+    0.0, -0.5, 0.0, 0.5,
+    0.0,  0.0, 1.0, 0.0,
+    0.0,  0.0, 0.0, 1.0
+);
+
+float is_shadowed(float3 position_ws)
+{
+    float4 shadow_coord = mul(bias_mat, mul(light_map_transforms_dyn[0], float4(position_ws, 1.0)));
+    // Note: notice that orthographic projection is linear transform therefore keep the w as 1.0,
+    // but for interoperability, we keep the perspective division here.
+    // perspective division (i.e. homogeneous clipping space divide w)
+    shadow_coord /= shadow_coord.w;
+
+    float shadowed = 1.0;
+
+    // outside the depth range is all shadowed
+    if (shadow_coord.z >= 0.0 && shadow_coord.z <= 1.0)
+	{
+		const float closest_depth = light_map.SampleLevel(sampler_lnce, shadow_coord.xy, 0.0).r;
+
+		if (shadow_coord.w > 0.0 && closest_depth < shadow_coord.z)
+		{
+			shadowed = 0.0;
+		}
+	}
+
+    return shadowed;
+}
+
 [numthreads(8, 8, 1)]
-void main(in uint2 px: SV_DispatchThreadID) {
+void main(in uint2 px: SV_DispatchThreadID)
+{
     float2 resolution = float2(push_constants.render_res_width, push_constants.render_res_height);
     float2 uv = pixel_to_uv(float2(px), resolution);
 
@@ -91,15 +127,18 @@ void main(in uint2 px: SV_DispatchThreadID) {
     Brdf brdf = Brdf::from_gbuffer(gbuffer);
     MultiScatterCompensate compensate = MultiScatterCompensate::compensate_for(wo, gbuffer.roughness, brdf.specular_brdf.F0);
 
+    const float3 pos_ws = cam_ctx.get_frag_position_ws(depth);
+
     float3 total_radiance = 0.0.xxx; 
     // direct lighting
     {
         const float3 brdf_value = brdf.eval_directional_light(wi, wo, compensate);
         const float3 light_radiance = float3(1.0, 1.0, 1.0);
- 
-        total_radiance += brdf_value * light_radiance * max(0.0, wi.z);
+
+        const float shadowed = is_shadowed(pos_ws);
+        total_radiance += (1.0 - shadowed) * (brdf_value * light_radiance * max(0.0, wi.z));
     }
-    
+
     // indirect lighting
     {
         Ibl ibl = Ibl::from_brdf(brdf.specular_brdf); 
@@ -110,7 +149,7 @@ void main(in uint2 px: SV_DispatchThreadID) {
         total_radiance += irradiance;
     }
 
-    total_radiance = total_radiance * frame_constants_dyn.pre_exposure_mult;
+    total_radiance *= frame_constants_dyn.pre_exposure_mult;
 
     output_tex[px] = float4(total_radiance, 1.0);
 }

@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use ash::vk;
 
-use raven_core::render::camera::CameraMatrices;
+use raven_core::render::camera::CameraRenderData;
 use raven_rhi::{Rhi, backend::{Device, barrier::{self, ImageBarrier}, Swapchain}, pipeline_cache::PipelineCache, dynamic_buffer::DynamicBuffer, global_constants_descriptor};
 
 use crate::{compiled_graph::CompiledRenderGraph, transient_resource_cache::TransientResourceCache};
@@ -43,7 +43,7 @@ pub struct ExecutionParams<'a> {
 #[repr(C, align(16))] // align to float4
 #[derive(Copy, Clone)]
 pub struct FrameConstants {
-    pub cam_matrices: CameraMatrices,
+    pub cam_matrices: CameraRenderData,
 
     pub frame_index: u32,
     pub pre_exposure_mult: f32,
@@ -106,7 +106,7 @@ impl GraphExecutor {
         // update and compile pipeline shaders
         match self.pipeline_cache.prepare(&self.device) {
             Ok(()) => {
-                // If this frame is successfully prepared, we get all the resources ready to be drawn
+                // if this frame is successfully prepared, we have got all the resources ready to be drawn
                 self.temporal_resources = RenderGraphTemporalResources::Exported(exported_temporal_resources);
 
                 // create new pipelines and destroy stale pipelines
@@ -126,7 +126,7 @@ impl GraphExecutor {
                 };
 
                 for (k, v) in exported_temporal_resources.0.0 {
-                    // this is a new resource of this frame
+                    // change all temporal resources into inert state and  insert it back
                     #[allow(clippy::map_entry)]
                     if !temporal_resources.0.contains_key(&k) {
                         let resource = match v {

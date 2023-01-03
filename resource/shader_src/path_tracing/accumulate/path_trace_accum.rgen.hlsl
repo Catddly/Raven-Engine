@@ -12,6 +12,9 @@
 #include "../../ray_tracing/gbuffer_ray_tracing.hlsl"
 #include "../../ray_tracing/ray_tracing_shadow.hlsl"
 
+// reference paper:
+// [1] https://media.contentapi.ea.com/content/dam/ea/seed/presentations/2019-ray-tracing-gems-chapter-20-akenine-moller-et-al.pdf
+
 [[vk::binding(0)]] RaytracingAccelerationStructure tlas;
 // w channel in output_tex is the accumulated time.
 [[vk::binding(1)]] RWTexture2D<float4> output_tex;
@@ -99,8 +102,9 @@ void main()
 
                 if (primary_hit.is_hit)
                 {
-                    // TODO: this will assume that all hit surface is planar
-                    // See Paper[1] in ray_cone.hlsl
+                    // TODO: assume that all hit surface is planar for now
+                    // add normal and position differientials to calculate bete
+                    // See Paper[1]
                     const float subsequent_spread_angle = 0.0;
                     ray_cone = ray_cone.propagate(primary_hit.t, subsequent_spread_angle);
 

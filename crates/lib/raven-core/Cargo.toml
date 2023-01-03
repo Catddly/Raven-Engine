@@ -19,7 +19,7 @@ byteorder = "1.4.0"
 wyhash = "0.5.0"
 
 # Unchecked downcast
-unsafe-any = "0.4.0"
+unsafe-any = "0.4.2"
 
 # Math
 glam = { version = "0.21.0", features = ["glam-assert"] }
