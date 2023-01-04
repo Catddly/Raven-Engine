@@ -49,10 +49,6 @@ void main()
     // load prev frame's output value
     float4 prev_px = output_tex[px];
 
-    // path trace hard shadow
-    // temporary
-    const float3 SUN_DIRECTION = normalize(float3(-0.32803, 0.90599, 0.26749));
-
     if (prev_px.w < MAX_PIXEL_ACCUMULATETION)
     {
         float4 output_packed_total_radiance = 0.0;
@@ -108,9 +104,6 @@ void main()
                     const float subsequent_spread_angle = 0.0;
                     ray_cone = ray_cone.propagate(primary_hit.t, subsequent_spread_angle);
 
-                    // only trace shadow for primary ray
-                    bool is_shadowed = (path_index == 0) && ray_trace_shadow_directional(tlas, primary_hit.position, -SUN_DIRECTION);
-
                     GBuffer gbuffer_data = primary_hit.packed_gbuffer.unpack();
 
                     // if we hit the back face of a triangle
@@ -131,16 +124,31 @@ void main()
                     const float3x3 tangent_to_world = build_orthonormal_basis(gbuffer_data.normal);
                     // right multiply tangent_to_world matrix to apply world to tangent space transformation.
                     // pretty much the same in defer/defer_lighting.hlsl
-                    const float3 wi = mul(SUN_DIRECTION, tangent_to_world);
                     float3 wo = mul(-sample_ray.Direction, tangent_to_world);
 
                     Brdf brdf = Brdf::from_gbuffer(gbuffer_data);
                     MultiScatterCompensate compensate = MultiScatterCompensate::compensate_for(wo, gbuffer_data.roughness, brdf.specular_brdf.F0);
 
-                    const float3 brdf_value = brdf.eval_directional_light(wi, wo, compensate);
-                    const float3 light_radiance = is_shadowed ? 0.0.xxx : float3(1.0, 1.0, 1.0);
-            
-                    total_radiance += throughput * brdf_value * light_radiance * max(0.0, wi.z);
+                    for (uint i = 0; i < frame_constants_dyn.directional_light_count; ++i)
+                    {
+                        // TODO: add some utility function
+                        const LightFrameConstants light = frame_constants_dyn.light_constants[i];
+                        const float3 light_dir = normalize(light.direction);
+                        
+                        const float3 wi = mul(light_dir, tangent_to_world);
+
+                        bool is_shadowed = false;
+                        if (light.shadowed)
+                        {
+                            // only trace shadow for primary ray
+                            is_shadowed = (path_index == 0) && ray_trace_shadow_directional(tlas, primary_hit.position, -light_dir);
+                        }
+
+                        const float3 brdf_value = brdf.eval_directional_light(wi, wo, compensate);
+                        const float3 light_radiance = is_shadowed ? 0.0.xxx : light.color * light.intensity;
+
+                        total_radiance += throughput * brdf_value * light_radiance * max(0.0, wi.z);
+                    }
 
                     // 4. Sample ray to continue path tracing
                     float3 urand = float3(

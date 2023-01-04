@@ -15,7 +15,7 @@ struct VsOut {
 
 VsOut vs_main(uint vid: SV_VertexID)
 {
-    CameraMatrices cam = frame_constants_dyn.camera_matrices;
+    CameraFrameConstants cam = frame_constants_dyn.camera_constants;
 
     float3 vertex_os = asfloat(debug_aabb_vb.Load3(vid * sizeof(float3)));
     float4 vertex_ws = mul(debug_aabb_transforms_dyn[push_constants.aabb_index], float4(vertex_os, 1.0));

@@ -585,6 +585,24 @@ impl Device {
         })
     }
 
+    pub fn destroy_ray_tracing_shader_binding_table(
+        &self,
+        sbt: RayTracingShaderBindingTable
+    ) {
+        if let Some(buf) = sbt.raygen_shader_binding_table_buffer {
+            self.destroy_buffer(buf);
+        }
+        if let Some(buf) = sbt.miss_shader_binding_table_buffer {
+            self.destroy_buffer(buf);
+        }
+        if let Some(buf) = sbt.hit_shader_binding_table_buffer {
+            self.destroy_buffer(buf);
+        }
+        if let Some(buf) = sbt.callable_shader_binding_table_buffer {
+            self.destroy_buffer(buf);
+        }
+    }
+
     pub fn update_tlas(
         &self,
         cb_raw: vk::CommandBuffer,

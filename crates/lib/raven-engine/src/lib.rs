@@ -24,9 +24,11 @@ use raven_core::log;
 use raven_core::console;
 use raven_core::input::{InputManager, KeyCode, MouseButton};
 use raven_core::filesystem::{self, ProjectFolder};
-use raven_render::{WorldRenderer, RenderMode};
+use raven_render::{WorldRenderer};
+#[cfg(feature = "gpu_ray_tracing")]
+use raven_render::RenderMode;
 use raven_rhi::{RHIConfig, Rhi, backend};
-use raven_rg::{GraphExecutor, IntoPipelineDescriptorBindings, RenderGraphPassBindable, FrameConstants};
+use raven_rg::{GraphExecutor, IntoPipelineDescriptorBindings, RenderGraphPassBindable, FrameConstants, LightFrameConstants};
 
 use raven_core::system::OnceQueue;
 
@@ -222,6 +224,7 @@ pub fn main_loop(engine_context: &mut EngineContext<impl user::App>) {
     let mut frame_index: u32 = 0;
     let mut persist_states = PersistStates::new();
 
+    #[cfg(feature = "gpu_ray_tracing")]
     let mut use_reference_mode = false;
 
     let mut running = true;
@@ -294,6 +297,7 @@ pub fn main_loop(engine_context: &mut EngineContext<impl user::App>) {
             persist_states.camera.position = renderer.get_camera_position();
             persist_states.camera.rotation = renderer.get_camera_rotation();
 
+            #[cfg(feature = "gpu_ray_tracing")]
             if input_manager.is_keyboard_just_pressed(VirtualKeyCode::T) {
                 use_reference_mode = !use_reference_mode;
 
@@ -310,17 +314,33 @@ pub fn main_loop(engine_context: &mut EngineContext<impl user::App>) {
             static_events.clear();
 
             if persist_states.is_states_changed(&old_persist_states) {
+                #[cfg(feature = "gpu_ray_tracing")]
                 renderer.reset_path_tracing_accumulation();
             }
 
+            let mut light_constants: [LightFrameConstants; 10] = Default::default();
+            light_constants[0] = LightFrameConstants {
+                color: [1.0, 1.0, 1.0],
+                shadowed: 1, // true
+                direction: [-0.32803, 0.90599, 0.26749],
+                intensity: 1.0
+            };
+
             FrameConstants {
                 cam_matrices,
+                light_constants,
 
                 frame_index,
                 // TODO: this should be delayed
                 pre_exposure_mult: 1.0,
                 pre_exposure_prev_frame_mult: 1.0,
                 pre_exposure_delta: 1.0,
+
+                // TODO: add scene, no hardcode here
+                directional_light_count: 1,
+                pad0: 0,
+                pad1: 0,
+                pad2: 0,
             }
         };
         // tick render end

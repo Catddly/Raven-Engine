@@ -36,7 +36,7 @@ impl ImageLutComputer for BrdfLutComputer {
             )?;
 
             let push_constants = [BRDF_LUT_IMAGE_RESOLUTION, BRDF_LUT_IMAGE_RESOLUTION];
-            bound_pipeline.push_constants(vk::ShaderStageFlags::COMPUTE, 0, utility::as_byte_slice_values(&push_constants));
+            bound_pipeline.push_constants(vk::ShaderStageFlags::COMPUTE, 0, utility::as_byte_slice_val(&push_constants));
 
             bound_pipeline.dispatch([BRDF_LUT_IMAGE_RESOLUTION, BRDF_LUT_IMAGE_RESOLUTION, 1]);
 

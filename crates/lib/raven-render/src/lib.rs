@@ -9,6 +9,7 @@ pub use renderer::ibl_renderer::{IblRenderer};
 
 pub use renderer::debug_renderer::{DebugRenderer};
 
+mod auto_exposure;
 mod world_renderer;
 
 pub use world_renderer::{WorldRenderer, RenderMode};

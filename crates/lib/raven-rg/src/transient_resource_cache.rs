@@ -21,20 +21,6 @@ impl TransientResourceCache {
         }
     }
 
-    pub fn clean(self, device: &Device) {
-        for (_, images) in self.images {
-            for image in images {
-                device.destroy_image(image);
-            }
-        }
-
-        for (_, buffers) in self.buffers {
-            for buffer in buffers {
-                device.destroy_buffer(buffer);
-            }
-        }
-    }
-
     pub fn get_buffer(&mut self, desc: &BufferDesc) -> Option<Buffer> {
         if let Some(vec) = self.buffers.get_mut(desc) {
             vec.pop()
@@ -64,6 +50,20 @@ impl TransientResourceCache {
             vec.push(buffer);
         } else {
             self.buffers.insert(buffer.desc, vec![buffer]);
+        }
+    }
+
+    pub fn clean(self, device: &Device) {
+        for (_, images) in self.images {
+            for image in images {
+                device.destroy_image(image);
+            }
+        }
+
+        for (_, buffers) in self.buffers {
+            for buffer in buffers {
+                device.destroy_buffer(buffer);
+            }
         }
     }
 }

@@ -40,7 +40,7 @@ VsOut vs_main(uint vid: SV_VertexID)
 {
     VsOut vsout;
 
-    CameraMatrices cam = frame_constants_dyn.camera_matrices;
+    CameraFrameConstants cam = frame_constants_dyn.camera_constants;
 
     // get mesh offset data
     const Mesh mesh = meshes[push_constants.mesh_index];
@@ -144,7 +144,7 @@ PsOut ps_main(PsIn ps)
     // in right hand coordinate system, cross(ddy, ddx), not (ddx, ddy)
     float3 geometric_normal_vs = normalize(cross(dy, dx));
 
-    CameraMatrices cam = frame_constants_dyn.camera_matrices;
+    CameraFrameConstants cam = frame_constants_dyn.camera_constants;
     float3 geometric_normal_ws = mul(cam.view_to_world, float4(geometric_normal_vs, 0.0)).rgb;
 
     // geometric normal and shading normal is pointing the opposite direction, fix it.

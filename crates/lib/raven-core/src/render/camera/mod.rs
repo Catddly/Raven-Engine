@@ -93,7 +93,7 @@ impl Camera {
         self.lens = lens;
     }
 
-    pub fn get_camera_render_data(&self) -> CameraRenderData {
+    pub fn get_camera_render_data(&self) -> CameraFrameConstants {
         // rotation first, and then translation
         let view_to_world = {
             let translation = Mat4::from_translation(self.body.position);
@@ -121,7 +121,7 @@ impl Camera {
             Vec4::new(0.0, 0.0, -1.0, 0.0)
         );
 
-        CameraRenderData {
+        CameraFrameConstants {
             world_to_view,
             view_to_world,
             view_to_clip,
@@ -308,9 +308,9 @@ pub struct CameraController {
     controls: Vec<Box<dyn CameraControl>>,
 }
 
-#[repr(C, align(16))]  // align to float4
+#[repr(C, align(16))]
 #[derive(Copy, Clone)]
-pub struct CameraRenderData {
+pub struct CameraFrameConstants {
     pub world_to_view: Mat4,
     pub view_to_world: Mat4,
     pub view_to_clip: Mat4,

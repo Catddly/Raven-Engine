@@ -7,11 +7,19 @@ use glam::{Affine3A};
 use raven_core::asset::{TextureGammaSpace, AsConcreteAsset};
 use raven_core::math::AABB;
 use raven_core::{asset::{asset_registry::{AssetHandle, get_runtime_asset_registry}, PackedVertex, VecArrayQueryParam}, utility};
-use raven_rg::{RenderGraphBuilder, RgHandle, IntoPipelineDescriptorBindings, RenderGraphPassBinding, image_clear, PassContext, BoundRasterPipeline};
-use raven_rhi::global_bindless_descriptor;
-use raven_rhi::{backend::{Device, ImageDesc, Image, BufferDesc, Buffer, renderpass, RenderPass, descriptor::update_descriptor_set_buffer, RasterPipelineDesc, PipelineShaderDesc, PipelineShaderStage, AccessType, ImageViewDesc, ImageSubResource}, Rhi, copy_engine::CopyEngine};
+use raven_rg::{RenderGraphBuilder, RgHandle, IntoPipelineDescriptorBindings, RenderGraphPassBinding, image_clear};
+use raven_rhi::backend::{RasterPipelineCullMode, descriptor};
+use raven_rhi::{
+    backend::{
+        Device, ImageDesc, Image, BufferDesc, Buffer,
+        renderpass, RenderPass,
+        RasterPipelineDesc, PipelineShaderDesc, PipelineShaderStage, 
+        AccessType, ImageViewDesc, ImageSubResource
+    },
+    Rhi, copy_engine::CopyEngine
+};
 
-use super::image_lut::ImageLut;
+use super::light_renderer::{LightRenderData, self};
 
 #[allow(dead_code)]
 pub const TEXTURE_MASK_ALBEDO_BIT: u32   = 1 << 0;
@@ -117,10 +125,9 @@ impl Ord for MeshInstance {
 pub struct MeshInstanceHandle(u32);
 
 pub struct MeshRenderer {
-    // TODO: temporary, should move to the global renderer
-    renderpass: Arc<RenderPass>,
-    // TODO: temporary, should move to the global renderer
-    bindless_descriptor: vk::DescriptorSet,
+    shadow_renderpass: Arc<RenderPass>,
+    raster_renderpass: Arc<RenderPass>,
+    bindless_descriptor_set: vk::DescriptorSet,
 
     scheme: MeshRasterScheme,
     resolution: [u32; 2],
@@ -133,7 +140,6 @@ pub struct MeshRenderer {
     mesh_buffer: Arc<Buffer>,
     bindless_tex_sizes_buffer: Buffer,
 
-    image_luts: Vec<ImageLut>,
     bindless_images: Vec<Arc<Image>>,
     next_bindless_texture_idx: u32,
 
@@ -169,13 +175,17 @@ struct UploadMaterial {
 }
 
 impl MeshRenderer {
-    // TODO: temp
-    pub fn bindless_descriptor_set(&self) -> vk::DescriptorSet {
-        self.bindless_descriptor
-    }
-
     pub fn new(rhi: &Rhi, scheme: MeshRasterScheme, resolution: [u32; 2]) -> Self {
-        let renderpass = renderpass::create_render_pass(&rhi.device, 
+        let shadow_renderpass = renderpass::create_render_pass(
+            &rhi.device,
+            renderpass::RenderPassDesc {
+                color_attachments: &[],
+                depth_attachment: Some(
+                    renderpass::RenderPassAttachmentDesc::new(light_renderer::SHADOW_MAP_DEFAULT_FORMAT)
+                )
+            }
+        );
+        let raster_renderpass = renderpass::create_render_pass(&rhi.device, 
             renderpass::RenderPassDesc {
                 color_attachments: &[
                     // packed gbuffer
@@ -220,29 +230,10 @@ impl MeshRenderer {
             .create_buffer(texture_sizes_buffer_desc, "bindless textures sizes")
             .unwrap();
 
-        let bindless_descriptor = global_bindless_descriptor::create_engine_global_bindless_descriptor_set(rhi);
-
-        update_descriptor_set_buffer(&rhi.device, 
-            0, 
-            bindless_descriptor, 
-            vk::DescriptorType::STORAGE_BUFFER, 
-            &draw_data_buffer);
-
-        update_descriptor_set_buffer(&rhi.device, 
-            1, 
-            bindless_descriptor, 
-            vk::DescriptorType::STORAGE_BUFFER, 
-            &mesh_buffer);
-
-        update_descriptor_set_buffer(&rhi.device, 
-            2, 
-            bindless_descriptor, 
-            vk::DescriptorType::STORAGE_BUFFER, 
-            &bindless_tex_sizes_buffer);
-
         Self {
-            renderpass,
-            bindless_descriptor,
+            shadow_renderpass,
+            raster_renderpass,
+            bindless_descriptor_set: vk::DescriptorSet::null(),
 
             scheme,
             resolution,
@@ -255,7 +246,6 @@ impl MeshRenderer {
             mesh_buffer,
             bindless_tex_sizes_buffer,
 
-            image_luts: Vec::new(),
             bindless_images: Vec::new(),
             next_bindless_texture_idx: 0,
 
@@ -265,16 +255,7 @@ impl MeshRenderer {
         }
     }
 
-    pub fn add_bindless_image_lut(&mut self, lut: ImageLut) -> BindlessTexHandle {
-        self.image_luts.push(lut);
-
-        let new_lut = self.image_luts.last().unwrap();
-        let backing_image = new_lut.get_backing_image();
-
-        self.add_bindless_texture(backing_image.clone())
-    }
-
-    pub fn add_bindless_texture(&mut self, image: Arc<Image>) -> BindlessTexHandle {
+    pub fn add_bindless_image(&mut self, image: Arc<Image>) -> BindlessTexHandle {
         let extent = image.desc.extent;
         let extent_inv_extent = [
             extent[0] as f32, extent[1] as f32,
@@ -298,7 +279,7 @@ impl MeshRenderer {
         handle
     }
 
-    pub fn add_asset_bindless_texture(&mut self, handle: &Arc<AssetHandle>) -> BindlessTexHandle {
+    pub fn add_bindless_image_asset(&mut self, handle: &Arc<AssetHandle>) -> BindlessTexHandle {
         let registry = get_runtime_asset_registry();
         {
             let read_guard = registry.read();
@@ -385,7 +366,7 @@ impl MeshRenderer {
             .build();
 
         let write = vk::WriteDescriptorSet::builder()
-            .dst_set(self.bindless_descriptor)
+            .dst_set(self.bindless_descriptor_set)
             .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
             .dst_binding(3)
             .dst_array_element(handle.0)
@@ -519,13 +500,14 @@ impl MeshRenderer {
                 }
             }
             
-            let _bindless_tex_handle = self.add_asset_bindless_texture(tex_ref.handle());
+            let _bindless_tex_handle = self.add_bindless_image_asset(tex_ref.handle());
         }
 
         mesh_tex_mask
     }
 
     pub fn add_mesh_instance(&mut self, transform: Affine3A, handle: MeshHandle) -> MeshInstanceHandle {
+        debug_assert!(MeshHandle::is_valid(handle));
         let instance_handle = MeshInstanceHandle(self.mesh_instances.len() as _);
 
         let mut mesh_aabb = self.meshes[handle.id as usize].aabb;
@@ -548,7 +530,6 @@ impl MeshRenderer {
         upload_materials: &[UploadMaterial],
         mesh_tex_mask: u32, aabb: AABB,
     ) -> MeshHandle {
-        //dbg!(&aabb);
         let curr_global_offset = self.current_draw_data_offset as u32;
 
         // copy upload
@@ -618,6 +599,8 @@ impl MeshRenderer {
         }
     }
 
+    #[inline]
+    #[allow(dead_code)]
     pub(crate) fn get_uploaded_mesh_data(&self, handle: MeshHandle) -> UploadedMesh {
         assert!((handle.id as usize) < self.meshes.len() && MeshHandle::is_valid(handle), "Invalid mesh handle!");
         let mesh_data = self.meshes[handle.id as usize].clone();
@@ -625,22 +608,55 @@ impl MeshRenderer {
     }
 
     #[inline]
-    pub(crate) fn get_mesh_instances(&self) -> &BTreeSet<MeshInstance> {
-        &self.mesh_instances
+    #[allow(dead_code)]
+    pub(crate) fn get_mesh_instances(&self) -> BTreeSet<MeshInstance> {
+        self.mesh_instances.clone()
     }
 
+    #[inline]
     pub fn get_scene_aabb(&self) -> AABB {
         self.scene_aabb
     }
 
-    // TODO: temp
-    pub fn compute_brdf_lut_if_needed(&mut self, rg: &mut RenderGraphBuilder) {
-        for image_lut in self.image_luts.iter_mut() {
-            image_lut.compute_if_needed(rg);
-        }
+    pub(crate) fn update_bindless_resource(&mut self, bindless_descriptor_set: vk::DescriptorSet) {
+        descriptor::update_descriptor_set_buffer(&self.device, 
+            0, 
+            bindless_descriptor_set, 
+            vk::DescriptorType::STORAGE_BUFFER, 
+            &self.draw_data_buffer);
+
+        descriptor::update_descriptor_set_buffer(&self.device, 
+            1, 
+            bindless_descriptor_set, 
+            vk::DescriptorType::STORAGE_BUFFER, 
+            &self.mesh_buffer);
+
+        descriptor::update_descriptor_set_buffer(&self.device, 
+            2, 
+            bindless_descriptor_set, 
+            vk::DescriptorType::STORAGE_BUFFER, 
+            &self.bindless_tex_sizes_buffer);
+
+        self.bindless_descriptor_set = bindless_descriptor_set;
     }
 
-    pub fn prepare_rg(&mut self, rg: &mut RenderGraphBuilder) -> MeshShadingContext {
+    pub fn prepare_rg(
+        &mut self,
+        rg: &mut RenderGraphBuilder,
+        light_render_data: LightRenderData,
+    ) -> (MeshShadingContext, Vec<RgHandle<Image>>) {
+        let mesh_shading_context = self.draw_mesh_raster(rg);
+        let shadow_maps = self.draw_shadow_map(rg, light_render_data);
+
+        (mesh_shading_context, shadow_maps)
+    }
+
+    fn draw_mesh_raster(
+        &mut self,
+        rg: &mut RenderGraphBuilder,
+    ) -> MeshShadingContext {
+        let bindless_descriptor = self.bindless_descriptor_set;
+
         // create shading context (GBuffer etc.)
         let mut shading_context = match self.scheme {
             MeshRasterScheme::Deferred => {
@@ -659,10 +675,10 @@ impl MeshRenderer {
             _ => unimplemented!("MeshRasterScheme"),
         };
 
-        let extent = [self.resolution[0], self.resolution[1]];
-        let renderpass = self.renderpass.clone();
-        let bindless_descriptor = self.bindless_descriptor;
         {
+            let extent = [self.resolution[0], self.resolution[1]];
+            let raster_renderpass = self.raster_renderpass.clone();
+
             let mut pass = rg.add_pass("mesh raster");
             let pipeline = pass.register_raster_pipeline(&[
                 PipelineShaderDesc::builder()
@@ -676,7 +692,7 @@ impl MeshRenderer {
                     .stage(PipelineShaderStage::Pixel)
                     .build().unwrap()
             ], RasterPipelineDesc::builder()
-                .render_pass(renderpass.clone())
+                .render_pass(raster_renderpass.clone())
                 .build().unwrap()
             );
 
@@ -712,10 +728,10 @@ impl MeshRenderer {
 
                                 transform
                             });
-                        let instance_data_offset = ctx.global_dynamic_buffer().push_from_iter(xform_iter);
+                        let instance_xform_offset = ctx.global_dynamic_buffer().push_from_iter(xform_iter);
 
                         ctx.begin_render_pass(
-                            &*renderpass, 
+                            &*raster_renderpass, 
                             extent, 
                             &[
                                 (gbuffer_ref, &ImageViewDesc::default()),
@@ -729,19 +745,40 @@ impl MeshRenderer {
                         ctx.set_default_viewport_and_scissor(extent);
 
                         let bound_pipeline = ctx.bind_raster_pipeline(pipeline.into_bindings()
-                            .descriptor_set(0, &[RenderGraphPassBinding::DynamicStorageBuffer(instance_data_offset)])
+                            .descriptor_set(0, &[RenderGraphPassBinding::DynamicStorageBuffer(instance_xform_offset)])
                             .raw_descriptor_set(1, bindless_descriptor)
                         )?;
 
                         // do drawing
-                        Self::mesh_draw_func(
-                            &mesh_instances,
-                            &meshes,
-                            &draw_data_buffer,
-                            ctx, &bound_pipeline
-                        );
+                        for (instance_idx, mesh_ins) in mesh_instances.iter().enumerate() {
+                            let mesh = &meshes[mesh_ins.handle.id as usize];
+                
+                            unsafe {
+                                let raw = &ctx.device().raw;
+                
+                                raw.cmd_bind_index_buffer(
+                                    ctx.cb.raw, 
+                                    draw_data_buffer.raw,
+                                    mesh.index_buffer_offset as u64,
+                                    vk::IndexType::UINT32,
+                                );
+                
+                                let push_constants = [mesh_ins.handle.id, instance_idx as u32];
+                                bound_pipeline.push_constants(
+                                    vk::ShaderStageFlags::ALL_GRAPHICS, 
+                                    0,
+                                    utility::as_byte_slice_val(&push_constants)
+                                );
+                
+                                raw.cmd_draw_indexed(ctx.cb.raw,
+                                    mesh.index_count,
+                                    1, 0, 0, 0
+                                );
+                            }
+                        }
 
                         ctx.end_render_pass();
+
                         Ok(())
                     });
                 },
@@ -752,57 +789,130 @@ impl MeshRenderer {
         shading_context
     }
 
-    #[inline]
-    pub(crate) fn get_draw_data_buffer(&self) -> Arc<Buffer> {
-        self.draw_data_buffer.clone()
-    }
+    fn draw_shadow_map(
+        &mut self,
+        rg: &mut RenderGraphBuilder,
+        light_render_data: LightRenderData,
+    ) -> Vec<RgHandle<Image>> {
+        let bindless_descriptor = self.bindless_descriptor_set;
 
-    #[inline]
-    pub(crate) fn get_uploaded_meshes(&self) -> &Vec<UploadedMesh> {
-        &self.meshes
-    }
+        let LightRenderData { 
+            light_matrices,
+            mut light_maps 
+        } = light_render_data;
 
-    // TODO: change api, this is ugly
-    pub(crate) fn mesh_draw_func(
-        mesh_instances: &BTreeSet<MeshInstance>,
-        meshes: &Vec<UploadedMesh>,
-        draw_data_buffer: &Arc<Buffer>,
-        ctx: &PassContext,
-        bound_pipeline: &BoundRasterPipeline<'_, '_, '_>,
-    ) {
-        for (instance_idx, mesh_ins) in mesh_instances.iter().enumerate() {
-            let mesh = &meshes[mesh_ins.handle.id as usize];
-
-            unsafe {
-                let raw = &ctx.device().raw;
-
-                raw.cmd_bind_index_buffer(
-                    ctx.cb.raw, 
-                    draw_data_buffer.raw,
-                    mesh.index_buffer_offset as u64,
-                    vk::IndexType::UINT32,
-                );
-
-                // TODO: fix this, light renderer use incorrect light index.
-                // here it used instance index as light index
-                let push_constants = [mesh_ins.handle.id, instance_idx as u32];
-                bound_pipeline.push_constants(
-                    vk::ShaderStageFlags::ALL_GRAPHICS, 
-                    0,
-                    utility::as_byte_slice_values(&push_constants)
-                );
-
-                raw.cmd_draw_indexed(ctx.cb.raw,
-                    mesh.index_count,
-                    1, 0, 0, 0
-                );
-            }
+        for light_map in &mut light_maps {
+            image_clear::clear_depth_stencil(rg, light_map);
         }
+
+        let mut pass = rg.add_pass("directional shadow map");
+        let pipeline = pass.register_raster_pipeline(&[
+                PipelineShaderDesc::builder()
+                    .stage(PipelineShaderStage::Vertex)
+                    .source("shadow/shadow_mapping.hlsl")
+                    .entry("vs_main")
+                    .build().unwrap(),
+                PipelineShaderDesc::builder()
+                    .stage(PipelineShaderStage::Pixel)
+                    .source("shadow/shadow_mapping.hlsl")
+                    .entry("ps_main")
+                    .build().unwrap(),
+            ],
+            RasterPipelineDesc::builder()
+                .render_pass(self.shadow_renderpass.clone())
+                .cull_mode(RasterPipelineCullMode::Front)
+                .depth_bias(true)
+                .build().unwrap()
+        );
+
+        // draw mesh shadow
+        {
+            let shadow_renderpass = self.shadow_renderpass.clone();
+
+            let shadow_map_refs = light_maps.iter_mut()
+                .map(|map| {
+                    pass.raster_write(map, AccessType::DepthAttachmentWriteStencilReadOnly)
+                })
+                .collect::<Vec<_>>();
+
+            let draw_data_buffer = self.draw_data_buffer.clone();
+            let meshes = self.meshes.to_owned();
+            let mesh_instances = self.mesh_instances.to_owned();
+
+            pass.render(move |ctx| {
+                let instance_xform_offset = ctx.global_dynamic_buffer().previous_pushed_data_offset();
+
+                let matrix_data_iter = light_matrices.into_iter()
+                    .map(|mat| {
+                        mat.transpose().to_cols_array()
+                    });
+                let light_mat_offset = ctx.global_dynamic_buffer().push_from_iter(matrix_data_iter);
+                
+                for (light_idx, shadow_map_ref) in shadow_map_refs.into_iter().enumerate() {
+                    ctx.begin_render_pass(
+                        &shadow_renderpass,
+                        [light_renderer::SHADOW_MAP_DEFAULT_RESOLUTION, light_renderer::SHADOW_MAP_DEFAULT_RESOLUTION],
+                        &[],
+                        Some((shadow_map_ref, &ImageViewDesc::builder()
+                            .aspect_mask(vk::ImageAspectFlags::DEPTH)
+                            .build().unwrap())
+                        )
+                    )?;
+                    ctx.set_default_viewport_and_scissor([light_renderer::SHADOW_MAP_DEFAULT_RESOLUTION, light_renderer::SHADOW_MAP_DEFAULT_RESOLUTION]);
+                    // Note: we use reverse-z, so the bias constant and slope factor here are all negative
+                    ctx.set_depth_bias(-0.1, 0.0, -0.25);
+
+                    let bound_pipeline = ctx.bind_raster_pipeline(
+                        pipeline.into_bindings()
+                            .descriptor_set(0, &[
+                                RenderGraphPassBinding::DynamicStorageBuffer(light_mat_offset),
+                                RenderGraphPassBinding::DynamicStorageBuffer(instance_xform_offset),
+                            ])
+                            .raw_descriptor_set(1, bindless_descriptor)
+                    )?;
+
+                    for (instance_idx, mesh_inst) in mesh_instances.iter().enumerate() {
+                        let mesh = &meshes[mesh_inst.handle.id as usize];
+            
+                        unsafe {
+                            let raw = &ctx.device().raw;
+            
+                            raw.cmd_bind_index_buffer(
+                                ctx.cb.raw, 
+                                draw_data_buffer.raw,
+                                mesh.index_buffer_offset as u64,
+                                vk::IndexType::UINT32,
+                            );
+
+                            let push_constants = [
+                                mesh_inst.handle.id,
+                                instance_idx as u32,
+                                light_idx as u32,
+                            ];
+                            bound_pipeline.push_constants(
+                                vk::ShaderStageFlags::ALL_GRAPHICS,
+                                0,
+                                utility::as_byte_slice_val(&push_constants)
+                            );
+            
+                            raw.cmd_draw_indexed(ctx.cb.raw,
+                                mesh.index_count,
+                                1, 0, 0, 0
+                            );
+                        }
+                    }
+
+                    ctx.end_render_pass();
+                }
+
+                Ok(())
+            });
+        }
+
+        light_maps
     }
 
     pub fn clean(self, rhi: &Rhi) {
-        drop(self.image_luts);
-
         for img in self.bindless_images {
             let img = Arc::try_unwrap(img)
                 .expect("Failed to clean bindless images!");

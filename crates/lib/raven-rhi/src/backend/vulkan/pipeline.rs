@@ -834,6 +834,7 @@ pub fn destroy_compute_pipeline(device: &Device, pipeline: ComputePipeline) {
 
 #[cfg(feature = "gpu_ray_tracing")]
 pub fn destroy_ray_tracing_pipeline(device: &Device, pipeline: RayTracingPipeline) {
+    device.destroy_ray_tracing_shader_binding_table(pipeline.sbt);
     destroy_common_pipeline_ptrs(device, pipeline.pipeline.pipeline_ptrs);
 }
 

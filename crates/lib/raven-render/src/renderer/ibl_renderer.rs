@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use ash::vk;
 
-use raven_core::{utility::as_byte_slice_values, math::{self, SHBasis9}};
+use raven_core::{utility::as_byte_slice_val, math::{self, SHBasis9}};
 use raven_rg::{RenderGraphBuilder, RgHandle, RenderGraphPassBindable, IntoPipelineDescriptorBindings};
 use raven_rhi::{backend::{Image, AccessType, ImageDesc, Buffer, BufferDesc}, Rhi, copy_engine::CopyEngine};
 
@@ -60,13 +60,11 @@ impl IblRenderer {
     pub fn prepare_ibl_if_needed(&mut self, rg: &mut RenderGraphBuilder, cubemap: &RgHandle<Image>) -> (RgHandle<Buffer>, RgHandle<Image>) {
         let (mut sh_buffer, mut prefilter_cubemap) = if self.ibl_resources_prepared {
             (
-                //rg.import(self.convolved_cubemap.clone(), AccessType::Nothing),
                 rg.import(self.sh_buffer.clone(), AccessType::Nothing),
                 rg.import(self.prefilter_cubemap.clone(), AccessType::Nothing),
             )
         } else {
             (
-                //rg.import(self.convolved_cubemap.clone(), AccessType::AnyShaderReadSampledImageOrUniformTexelBuffer),
                 rg.import(self.sh_buffer.clone(), AccessType::AnyShaderReadUniformBuffer),
                 rg.import(self.prefilter_cubemap.clone(), AccessType::AnyShaderReadSampledImageOrUniformTexelBuffer),
             )
@@ -121,7 +119,7 @@ impl IblRenderer {
     
                         // TODO: bug found! When using three u32 value, the cmd_dispatch will crash
                         let push_constants = [PREFILTER_CUBEMAP_RESOLUTION as u32, convolved_res];
-                        bound_pipeline.push_constants(vk::ShaderStageFlags::COMPUTE, 0, as_byte_slice_values(&push_constants));
+                        bound_pipeline.push_constants(vk::ShaderStageFlags::COMPUTE, 0, as_byte_slice_val(&push_constants));
         
                         bound_pipeline.dispatch([convolved_res.max(8), convolved_res.max(8), 6]);
                     }

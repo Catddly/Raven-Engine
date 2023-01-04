@@ -2,15 +2,55 @@ use std::sync::Arc;
 
 use ash::vk;
 
-use raven_core::render::camera::CameraRenderData;
+use raven_core::render::camera::CameraFrameConstants;
 use raven_rhi::{Rhi, backend::{Device, barrier::{self, ImageBarrier}, Swapchain}, pipeline_cache::PipelineCache, dynamic_buffer::DynamicBuffer, global_constants_descriptor};
 
-use crate::{compiled_graph::CompiledRenderGraph, transient_resource_cache::TransientResourceCache};
+use crate::{compiled_graph::CompiledRenderGraph, transient_resource_cache::TransientResourceCache, graph_builder::TemporalResource};
 use crate::graph_builder::{RenderGraphBuilder, TemporalResourceRegistry, ExportedTemporalResources, TemporalResourceState};
 
 enum RenderGraphTemporalResources {
     Inert(TemporalResourceRegistry),
     Exported(ExportedTemporalResources),
+}
+
+impl RenderGraphTemporalResources {
+    pub fn clean(self, device: &Device) {
+        let registry = match self {
+            Self::Inert(registry) => {
+                registry
+            },
+            Self::Exported(resources) => {
+                resources.0
+            }
+        };
+
+        for (_, resource) in registry.0 {
+            match resource {
+                TemporalResourceState::Inert { resource, .. } => {
+                    match resource {
+                        TemporalResource::Image(img) => {
+                            let img = Arc::try_unwrap(img)
+                                .expect("Render graph temporal image resource may not be retained!");
+                            
+                            device.destroy_image(img);
+                        }
+                        TemporalResource::Buffer(buf) => {
+                            let buf = Arc::try_unwrap(buf)
+                                .expect("Render graph temporal buffer resource may not be retained!");
+                            
+                            device.destroy_buffer(buf);
+                        }
+                    }
+                }
+                TemporalResourceState::Imported { .. } => {
+                    panic!("Invalid render graph temporal resource state while cleaning!");                     
+                }
+                TemporalResourceState::Exported { .. } => {
+                    panic!("Invalid render graph temporal resource state while cleaning!");                     
+                }
+            }
+        }
+    }
 }
 
 impl Default for RenderGraphTemporalResources {
@@ -40,15 +80,42 @@ pub struct ExecutionParams<'a> {
     pub draw_frame_context_layout: DrawFrameContextLayout,
 }
 
-#[repr(C, align(16))] // align to float4
+// TODO: temporary
+#[repr(C, align(16))]
+#[derive(Copy, Clone)]
+pub struct LightFrameConstants {
+    pub color    : [f32; 3], // color in range [0.0, 1.0]
+    pub shadowed : u32,      // it is a bool
+    pub direction: [f32; 3], // direction vector
+    pub intensity: f32,
+}
+
+impl Default for LightFrameConstants {
+    fn default() -> Self {
+        Self {
+            color: [1.0, 1.0, 1.0],
+            shadowed: 0, // false
+            direction: [1.0, 0.0, 0.0],
+            intensity: 1.0
+        }
+    }
+}
+
+#[repr(C, align(16))]
 #[derive(Copy, Clone)]
 pub struct FrameConstants {
-    pub cam_matrices: CameraRenderData,
+    pub cam_matrices: CameraFrameConstants,
+    pub light_constants: [LightFrameConstants; 10],
 
     pub frame_index: u32,
     pub pre_exposure_mult: f32,
     pub pre_exposure_prev_frame_mult: f32,
     pub pre_exposure_delta: f32,
+
+    pub directional_light_count: u32,
+    pub pad0: u32,
+    pub pad1: u32,
+    pub pad2: u32,
 }
 
 #[derive(Copy, Clone)]
@@ -317,6 +384,7 @@ impl GraphExecutor {
 
         self.global_dynamic_buffer.clean(&self.device);
         self.transient_resource_cache.clean(&self.device);
+        self.temporal_resources.clean(&self.device);
         self.pipeline_cache.clean(&self.device);
     }
 }

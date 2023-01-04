@@ -18,7 +18,7 @@ struct RayCone {
     // frame_constants.view_constants.clip_to_view._11 == tan(vertical_field_of_view / 2.0)
     static float pixel_spread_angle_from_image_height(float img_height)
     {
-        return atan(2.0 * frame_constants_dyn.camera_matrices.clip_to_view._11 / img_height);
+        return atan(2.0 * frame_constants_dyn.camera_constants.clip_to_view._11 / img_height);
     }
 
     // figure 3. and equation 29. in Paper[1]

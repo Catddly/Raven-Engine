@@ -3,7 +3,8 @@
 [[vk::push_constant]]
 struct {
     uint mesh_index;
-    uint instance_index; // this is instance index for now
+    uint instance_index;
+    uint light_index;
 } push_constants;
 
 [[vk::binding(0)]] StructuredBuffer<row_major float4x4> light_transforms_dyn;  // dynamic read-only storage buffer
@@ -19,7 +20,7 @@ float4 vs_main(uint vid: SV_VertexID) : SV_Position
 
     float3 vertex_pos_ws = mul(object_transforms_dyn[push_constants.instance_index], float4(vertex.position, 1.0));
 
-    return mul(light_transforms_dyn[0], float4(vertex_pos_ws, 1.0));
+    return mul(light_transforms_dyn[push_constants.light_index], float4(vertex_pos_ws, 1.0));
 }
 
 // Only draw objects in shadow map

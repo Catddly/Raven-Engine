@@ -29,7 +29,7 @@ struct CameraRayContext
     {
         const float4 hit_pos_cs = float4(this.cs_coord, hit_depth, 1.0);
 
-        CameraMatrices cam = frame_constants_dyn.camera_matrices;
+        CameraFrameConstants cam = frame_constants_dyn.camera_constants;
 
         const float4 hit_pos_vs = mul(cam.clip_to_view, hit_pos_cs);
         const float4 hit_pos_ws_homo = mul(cam.view_to_world, hit_pos_vs);
@@ -48,7 +48,7 @@ struct CameraRayContext
         ctx.origin_cs = float4(ctx.cs_coord, 1.0, 1.0);
         ctx.direction_cs = float4(ctx.cs_coord, 0.0, 1.0);
 
-        CameraMatrices cam = frame_constants_dyn.camera_matrices;
+        CameraFrameConstants cam = frame_constants_dyn.camera_constants;
 
         ctx.origin_vs = mul(cam.clip_to_view, ctx.origin_cs);
         ctx.direction_vs = mul(cam.clip_to_view, ctx.direction_cs);

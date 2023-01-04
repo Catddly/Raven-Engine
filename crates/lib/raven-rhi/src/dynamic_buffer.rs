@@ -10,6 +10,7 @@ pub const MAX_DYNAMIC_BUFFER_FRAME_COUNT: usize = 2;
 pub struct DynamicBuffer {
     pub buffer: Buffer,
     /// Offset should always be aligned to alignment
+    prev_offset_bytes: u32, // cached previous push data offset to have the ability to reuse some buffer data
     current_offset_bytes: u32,
     current_frame: u32,
 
@@ -36,6 +37,7 @@ impl DynamicBuffer {
 
         Self {
             buffer,
+            prev_offset_bytes: 0,
             current_offset_bytes: 0,
             current_frame: 0,
 
@@ -55,10 +57,11 @@ impl DynamicBuffer {
         self.max_storage_buffer_range
     }
 
-    #[inline]
     pub fn advance_frame(&mut self) {
         self.current_frame = (self.current_frame + 1) % MAX_DYNAMIC_BUFFER_FRAME_COUNT as u32;
-        self.current_offset_bytes = 0; // reset next frame's buffer data
+        // reset next frame's buffer data
+        self.prev_offset_bytes = 0;
+        self.current_offset_bytes = 0;
     }
 
     #[inline]
@@ -71,6 +74,11 @@ impl DynamicBuffer {
         self.buffer.device_address(device) + (self.current_offset() as vk::DeviceAddress)
     }
 
+    #[inline]
+    pub fn previous_pushed_data_offset(&self) -> u32 {
+        self.prev_offset_bytes
+    }
+
     /// Push a value into GPU dynamic buffer, returning the offset in the buffer.
     pub fn push<T: Copy>(&mut self, value: &T) -> u32 {
         let t_size = std::mem::size_of::<T>();
@@ -78,8 +86,9 @@ impl DynamicBuffer {
         assert!(self.current_offset_bytes as usize + t_size <= MAX_DYNAMIC_BUFFER_SIZE_BYTES);
 
         let curr_offset = self.current_offset() as usize;
+        self.prev_offset_bytes = curr_offset as u32;
+
         let copy_slice = &mut self.buffer.allocation.mapped_slice_mut().unwrap()[curr_offset..curr_offset + t_size];
-        // memcpy
         copy_slice.copy_from_slice(as_byte_slice(value));
 
         self.current_offset_bytes += math::min_value_align_to(t_size, self.alignment as usize) as u32;
@@ -96,10 +105,13 @@ impl DynamicBuffer {
         assert!(self.alignment as usize % t_align == 0);
 
         let curr_offset = self.current_offset() as usize;
+        self.prev_offset_bytes = curr_offset as u32;
+
         // current offset must be aligned to t_align
         assert!(curr_offset % t_align == 0);
-
+        
         let mut offset = curr_offset;
+
         // TODO: optimize: should be faster to copy once, instead of copy n times
         for v in iter {
             let copy_slice = &mut self.buffer.allocation.mapped_slice_mut().unwrap()[offset..offset + t_size];

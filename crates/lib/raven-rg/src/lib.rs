@@ -17,7 +17,7 @@ mod helper;
 
 pub use graph_resource::Handle as RgHandle;
 pub use graph_builder::{RenderGraphBuilder, GetOrCreateTemporal};
-pub use graph_executor::{GraphExecutor, FrameConstants};
+pub use graph_executor::{GraphExecutor, FrameConstants, LightFrameConstants};
 pub use pass_context::{
     IntoPipelineDescriptorBindings, RenderGraphPassBinding, RenderGraphPassBindable, PassContext,
     BoundRasterPipeline, BoundComputePipeline

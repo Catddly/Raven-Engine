@@ -3,10 +3,12 @@ name = "sandbox"
 version = "0.1.0"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[features]
+default = ["gpu_ray_tracing"]
+# default = []
+gpu_ray_tracing = ["raven-engine/gpu_ray_tracing"]
 
 [dependencies]
-# raven-engine = { path = "../../lib/raven-engine/" }
-raven-engine = { path = "../../lib/raven-engine/", features = ["gpu_ray_tracing"] }
+raven-engine = { path = "../../lib/raven-engine/" }
 log = "0.4"       # logging lib
 anyhow = "1.0.0"  # error lib
