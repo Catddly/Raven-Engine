@@ -1,0 +1,19 @@
+[package]
+name = "raven-reflect"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+raven-reflect-derive = { path = "raven-reflect-derive" }
+
+syn = { version = "1.0" }
+
+anyhow = "1.0.0"  # error lib
+thiserror = "1.0.0"
+log = "0.4"       # logging lib
+
+downcast-rs = "1.2.0"
+
+# More compact and efficient implementations of the standard synchronization primitives.
+parking_lot = "0.12.0"
+once_cell = "1.15.0"

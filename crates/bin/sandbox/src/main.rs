@@ -1,12 +1,8 @@
-use std::process::exit;
+extern crate log as glog;
 
 use raven_engine::prelude::*;
 
-extern crate log as glog;
-
-pub struct Sandbox {
-    
-}
+pub struct Sandbox;
 
 impl Sandbox {
     pub fn new() -> Self {

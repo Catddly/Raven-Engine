@@ -10,7 +10,7 @@ macro_rules! raven_main {
         fn main() {
             let mut engine_context = raven_engine::init($app).unwrap_or_else(|err| {
                 eprintln!("Raven Engine failed to init with: {}", err); // use eprintln here, because log module may not be initialized successfully.
-                exit(1);
+                std::process::exit(1);
             });
             raven_engine::main_loop(&mut engine_context);
             raven_engine::shutdown(engine_context);

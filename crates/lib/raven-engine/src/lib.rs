@@ -155,7 +155,7 @@ pub fn main_loop(engine_context: &mut EngineContext<impl user::App>) {
         app,
     } = engine_context;
 
-    asset_manager.load_asset(AssetLoadDesc::load_mesh("mesh/cornell_box/scene.gltf")).unwrap();
+    asset_manager.load_asset(AssetLoadDesc::load_mesh("mesh/cerberus_gun/scene.gltf")).unwrap();
     //asset_manager.load_asset(AssetLoadDesc::load_mesh("mesh/cornell_box/scene.gltf")).unwrap();
     asset_manager.load_asset(AssetLoadDesc::load_texture("texture/skybox/right.jpg")).unwrap();
     asset_manager.load_asset(AssetLoadDesc::load_texture("texture/skybox/left.jpg")).unwrap();
@@ -170,17 +170,17 @@ pub fn main_loop(engine_context: &mut EngineContext<impl user::App>) {
     renderer.add_cubemap_split(&rhi, tex_handles);
     let mesh_handle = renderer.add_mesh(&handles[0]);
 
-    // let gun_xform = Affine3A::from_scale_rotation_translation(
-    //     Vec3::splat(0.05),
-    //     Quat::from_rotation_y(90_f32.to_radians()),
-    //     Vec3::splat(0.0)
-    // );
-    let cornell_xform = Affine3A::from_scale_rotation_translation(
-        Vec3::splat(1.0),
-        Quat::IDENTITY,
+    let gun_xform = Affine3A::from_scale_rotation_translation(
+        Vec3::splat(0.05),
+        Quat::from_rotation_y(90_f32.to_radians()),
         Vec3::splat(0.0)
     );
-    let _instance = renderer.add_mesh_instance(cornell_xform, mesh_handle);
+    // let cornell_xform = Affine3A::from_scale_rotation_translation(
+    //     Vec3::splat(1.0),
+    //     Quat::IDENTITY,
+    //     Vec3::splat(0.0)
+    // );
+    let _instance = renderer.add_mesh_instance(gun_xform, mesh_handle);
 
     let resolution = renderer.get_render_resolution();
     let camera = camera::Camera::builder()
