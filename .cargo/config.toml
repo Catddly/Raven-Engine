@@ -1,0 +1,13 @@
+[source.crates-io]
+replace-with = 'ustc'
+
+[source.ustc]
+registry = "git://mirrors.ustc.edu.cn/crates.io-index"
+
+# To build in dynamic_linking feature for raven-engine, please use cargo +nightly build to compile your project.
+
+# Use LLVM linker
+[target.x86_64-pc-windows-msvc]
+linker = "rust-lld.exe"
+# Uncomment this when you need to use dynamic linking.
+# rustflags = ["-Zshare-generics=n"] # Only in nightly version of compiler

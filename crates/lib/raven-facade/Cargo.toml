@@ -1,0 +1,27 @@
+[package]
+name = "raven-facade"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+gpu_ray_tracing = [
+    "raven-rhi/gpu_ray_tracing",
+    "raven-rg/gpu_ray_tracing",
+    "raven-render/gpu_ray_tracing"
+]
+
+[dependencies]
+raven-thread     = { path = "../../lib/raven-thread/" }
+raven-scene      = { path = "../../lib/raven-scene/" }
+raven-input      = { path = "../../lib/raven-input/" }
+raven-container  = { path = "../../lib/raven-container/" }
+
+raven-log        = { path = "../../lib/raven-log/" }
+raven-math       = { path = "../../lib/raven-math/" }
+raven-asset      = { path = "../../lib/raven-asset/" }
+raven-filesystem = { path = "../../lib/raven-filesystem/" }
+raven-core       = { path = "../../lib/raven-core/" }
+raven-reflect    = { path = "../../lib/raven-reflect/" }
+raven-rhi        = { path = "../../lib/raven-rhi/" }
+raven-rg         = { path = "../../lib/raven-rg/" }
+raven-render     = { path = "../../lib/raven-render/" }

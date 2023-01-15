@@ -4,29 +4,16 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-gpu_ray_tracing = [
-    "raven-rhi/gpu_ray_tracing",
-    "raven-rg/gpu_ray_tracing",
-    "raven-render/gpu_ray_tracing",
-]
+gpu_ray_tracing = ["raven-facade/gpu_ray_tracing"]
+
+dynamic_linking = ["raven-dylib"]
 
 [dependencies]
-raven-core    = { path = "../../lib/raven-core/" }
-raven-reflect = { path = "../../lib/raven-reflect/" }
-raven-rhi     = { path = "../../lib/raven-rhi/" }
-raven-rg      = { path = "../../lib/raven-rg/" }
-raven-render  = { path = "../../lib/raven-render/" }
+# Force dynamic linking
+# See https://doc.rust-lang.org/reference/linkage.html
+raven-dylib  = { path = "../../lib/raven-dylib/", default-features = false, optional = true }
+raven-facade = { path = "../../lib/raven-facade/", default-features = false }
 
-anyhow = "1.0.0"  # error lib
-log = "0.4"       # logging lib
-glam = { version = "0.21.0", features = ["glam-assert"] }
-
-futures = "0.3.0"
-
-# Temporary
-# Strictly speaking, this should not be here, this should only be in RHI layer!
-ash = "0.33.0"
-
-smol = "1.2.0"
-turbosloth = { git = "https://github.com/h3r2tic/turbosloth.git", rev = "540964c" }
-memmap2 = "0.5.0"
+log = "0.4.17"
+winit = "0.27.5"
+anyhow = "1.0.68"

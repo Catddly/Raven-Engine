@@ -1,0 +1,31 @@
+[package]
+name = "raven-asset"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+raven-math       = { path = "../../lib/raven-math/" }
+raven-filesystem = { path = "../../lib/raven-filesystem/" }
+raven-container  = { path = "../../lib/raven-container/" }
+raven-thread     = { path = "../../lib/raven-thread/" }
+
+anyhow = "1.0.68"
+thiserror = "1.0.38"
+bytes = "1.3.0"
+downcast-rs = "1.2.0"
+once_cell = "1.17.0"
+parking_lot = "0.12.1"
+memmap2 = "0.5.8"
+byteorder = "1.4.3"
+mikktspace = "0.3.0"
+
+# May write our own on-demand computing library
+turbosloth = { git = "https://github.com/h3r2tic/turbosloth.git", rev = "540964c" }
+lazy_static = "1.4.0"
+smol = "1.3.0"
+futures = "0.3.25"
+image = "0.24.5"
+wyhash = "0.5.0"
+gltf = { version = "1.0.0", features = ["KHR_texture_transform", "KHR_materials_pbrSpecularGlossiness"] }
+base64 = "0.21.0"
+log = "0.4.17"

@@ -2,8 +2,10 @@ use std::{sync::Arc, collections::HashMap};
 
 use ash::vk;
 
-use glam::{Affine3A, Vec2, Vec3, Quat};
-use raven_core::{utility, asset::asset_registry::AssetHandle, render::camera::{Camera, controller::FirstPersonController, CameraFrameConstants}};
+use raven_container::as_bytes;
+use raven_math::{Affine3A, Vec2, Vec3, Quat};
+use raven_asset::asset_registry::AssetHandle;
+use raven_scene::camera::{Camera, controller::FirstPersonController, CameraFrameConstants};
 use raven_rg::{RenderGraphBuilder, RgHandle, IntoPipelineDescriptorBindings, RenderGraphPassBindable, RenderGraphPassBinding};
 use raven_rhi::{Rhi, backend::{ImageDesc, Image, AccessType}, global_bindless_descriptor};
 
@@ -329,7 +331,7 @@ impl WorldRenderer {
                     };
 
                     let push_constants = [extent[0], extent[1]];
-                    bound_pipeline.push_constants(vk::ShaderStageFlags::COMPUTE, 0, utility::as_byte_slice_val(&push_constants));
+                    bound_pipeline.push_constants(vk::ShaderStageFlags::COMPUTE, 0, as_bytes::as_byte_slice_val(&push_constants));
                     
                     bound_pipeline.dispatch(extent);
 

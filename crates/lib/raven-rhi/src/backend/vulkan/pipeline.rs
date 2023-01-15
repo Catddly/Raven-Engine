@@ -1,7 +1,7 @@
 use std::{sync::Arc, collections::BTreeMap, ffi::CString, ops::Deref};
 
 use ash::vk;
-use raven_core::container::TempList;
+use raven_container::TempList;
 use rspirv_reflect::PushConstantInfo;
 use byte_slice_cast::AsSliceOf;
 

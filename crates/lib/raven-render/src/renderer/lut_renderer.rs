@@ -1,6 +1,6 @@
 use ash::vk;
 
-use raven_core::utility;
+use raven_container::as_bytes;
 use raven_rg::{RgHandle, RenderGraphBuilder, IntoPipelineDescriptorBindings, RenderGraphPassBindable};
 use raven_rhi::{
     Rhi,
@@ -36,7 +36,7 @@ impl ImageLutComputer for BrdfLutComputer {
             )?;
 
             let push_constants = [BRDF_LUT_IMAGE_RESOLUTION, BRDF_LUT_IMAGE_RESOLUTION];
-            bound_pipeline.push_constants(vk::ShaderStageFlags::COMPUTE, 0, utility::as_byte_slice_val(&push_constants));
+            bound_pipeline.push_constants(vk::ShaderStageFlags::COMPUTE, 0, as_bytes::as_byte_slice_val(&push_constants));
 
             bound_pipeline.dispatch([BRDF_LUT_IMAGE_RESOLUTION, BRDF_LUT_IMAGE_RESOLUTION, 1]);
 

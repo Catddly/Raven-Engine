@@ -11,7 +11,7 @@ use crate::backend::{CommandBuffer, DEVICE_DRAW_FRAMES};
 use crate::backend::vulkan::allocator::{Allocator, AllocatorCreateDesc, AllocatorDebugSettings};
 use crate::backend::vulkan::buffer::BufferDesc;
 use crate::backend::vulkan::{Instance, PhysicalDevice};
-use crate::backend::vulkan::util::utility;
+use crate::backend::vulkan::utility;
 use crate::backend::vulkan::constants;
 use crate::draw_frame::{DrawFrame, DeferReleasableResource};
 

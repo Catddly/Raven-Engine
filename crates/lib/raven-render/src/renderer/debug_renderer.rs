@@ -2,9 +2,9 @@ use std::sync::Arc;
 
 use ash::vk;
 
-use glam::{Vec3, Mat4};
+use raven_container::as_bytes;
+use raven_math::{Vec3, Mat4, AABB};
 use raven_rg::{RenderGraphBuilder, RgHandle, IntoPipelineDescriptorBindings, RenderGraphPassBinding, RenderGraphPassBindable};
-use raven_core::{math::AABB, utility};
 use raven_rhi::{backend::{
     Device,
     RasterPipelineDesc, PipelineShaderDesc, PipelineShaderStage,
@@ -198,7 +198,7 @@ impl DebugRenderer {
                 bound_pipeline.push_constants(
                     vk::ShaderStageFlags::ALL_GRAPHICS,
                     0,
-                    utility::as_byte_slice(&i)
+                    as_bytes::as_byte_slice(&i)
                 );
 
                 let raw_device = &ctx.device().raw;
@@ -223,7 +223,7 @@ impl DebugRenderer {
                 bound_pipeline.push_constants(
                     vk::ShaderStageFlags::ALL_GRAPHICS,
                     0,
-                    utility::as_byte_slice(&0)
+                    as_bytes::as_byte_slice(&0)
                 );
 
                 let raw_device = &ctx.device().raw;

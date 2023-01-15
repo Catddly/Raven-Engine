@@ -1,8 +1,9 @@
 use ash::vk;
 
-use raven_core::{utility::as_byte_slice, math};
-
 use crate::{backend::{Buffer, BufferDesc, Device}, Rhi};
+
+use raven_container::as_bytes;
+use raven_math;
 
 pub const MAX_DYNAMIC_BUFFER_SIZE_BYTES: usize = 1024 * 1024 * 16;
 pub const MAX_DYNAMIC_BUFFER_FRAME_COUNT: usize = 2;
@@ -89,9 +90,9 @@ impl DynamicBuffer {
         self.prev_offset_bytes = curr_offset as u32;
 
         let copy_slice = &mut self.buffer.allocation.mapped_slice_mut().unwrap()[curr_offset..curr_offset + t_size];
-        copy_slice.copy_from_slice(as_byte_slice(value));
+        copy_slice.copy_from_slice(as_bytes::as_byte_slice(value));
 
-        self.current_offset_bytes += math::min_value_align_to(t_size, self.alignment as usize) as u32;
+        self.current_offset_bytes += raven_math::min_value_align_to(t_size, self.alignment as usize) as u32;
 
         curr_offset as _
     }
@@ -115,12 +116,12 @@ impl DynamicBuffer {
         // TODO: optimize: should be faster to copy once, instead of copy n times
         for v in iter {
             let copy_slice = &mut self.buffer.allocation.mapped_slice_mut().unwrap()[offset..offset + t_size];
-            copy_slice.copy_from_slice(as_byte_slice(&v));
+            copy_slice.copy_from_slice(as_bytes::as_byte_slice(&v));
             // array elements should be aligned
-            offset += math::min_value_align_to(t_size, t_align);
+            offset += raven_math::min_value_align_to(t_size, t_align);
         }
 
-        self.current_offset_bytes += math::min_value_align_to(offset - curr_offset, self.alignment as usize) as u32;
+        self.current_offset_bytes += raven_math::min_value_align_to(offset - curr_offset, self.alignment as usize) as u32;
 
         curr_offset as _
     }

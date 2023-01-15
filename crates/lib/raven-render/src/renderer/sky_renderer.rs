@@ -2,8 +2,8 @@ use std::{sync::Arc, f32::consts::PI};
 
 use ash::vk;
 
-use glam::Vec3;
-use raven_core::{asset::{asset_registry::{AssetHandle, get_runtime_asset_registry}, AssetType, VecArrayQueryParam, AsConcreteAsset}, math::{SHBasis9, from_rgb8_to_color}};
+use raven_math::{Vec3, SHBasis9, from_rgb8_to_color};
+use raven_asset::{asset_registry::{AssetHandle, get_runtime_asset_registry}, AssetType, VecArrayQueryParam, AsConcreteAsset};
 use raven_rg::{RenderGraphBuilder, RgHandle, IntoPipelineDescriptorBindings, RenderGraphPassBindable, RenderGraphPassBinding};
 use raven_rhi::{backend::{Image, ImageDesc, ImageSubResource, AccessType}, Rhi};
 

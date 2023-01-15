@@ -10,9 +10,21 @@ default-members = [
     "crates/bin/sandbox",
 
     "crates/lib/raven-engine",
+
+    "crates/lib/raven-log",
+    "crates/lib/raven-math",
+    "crates/lib/raven-asset",
+    "crates/lib/raven-filesystem",
+    
+    "crates/lib/raven-container",
+    "crates/lib/raven-input",
+    "crates/lib/raven-thread",
+    "crates/lib/raven-scene",
     "crates/lib/raven-core",
     "crates/lib/raven-reflect",
     "crates/lib/raven-rhi",
     "crates/lib/raven-rg",
     "crates/lib/raven-render",
+
+    "crates/lib/raven-facade",
 ]

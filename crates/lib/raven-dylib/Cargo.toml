@@ -1,0 +1,13 @@
+[package]
+name = "raven-dylib"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["dylib"]
+
+[features]
+gpu_ray_tracing = ["raven-facade/gpu_ray_tracing"]
+
+[dependencies]
+raven-facade = { path = "../../lib/raven-facade/", default-features = false }

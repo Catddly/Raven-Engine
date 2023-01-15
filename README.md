@@ -41,4 +41,6 @@ This project is mainly learning from:
 * [kajiya](https://github.com/EmbarkStudios/kajiya)
 * [bevy](https://github.com/bevyengine/bevy)
 
-Above projects are all very fantastic learning material, hope you enjoy it.
+Above projects are all very fantastic learning material, definitly check those for better documentation.
+
+This repo is just for my clumsy learning purpose.

@@ -4,55 +4,5 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-anyhow = "1.0.0"  # error lib
-thiserror = "1.0.0"
-log = "0.4"       # logging lib
-fern = { version = "0.6", features = ["colored"] }      # logging lib
-chrono = "0.4"
-structopt = "0.3.0"
-num_cpus = "1.13.1" # get the number of cores of current cpu
-lazy_static = "1.4.0"
-# mut_static = "5.0.0"
-# thread_local = "1.1.4"
-memmap2 = "0.5.0"
-byteorder = "1.4.0"
-wyhash = "0.5.0"
-
-# TODO: Unchecked downcast
-downcast-rs = "1.2.0"
-
-# Math
-glam = { version = "0.21.0", features = ["glam-assert"] }
-mikktspace = "0.3.0"
-
-image = "0.24.0"
-
-# More compact and efficient implementations of the standard synchronization primitives.
-parking_lot = "0.12.0"
-
-arrayvec = "0.7.0"
-
-hotwatch = "0.4.6"
-bytes = "1.2.0"
-# May write our own on-demand computing library
-turbosloth = { git = "https://github.com/h3r2tic/turbosloth.git", rev = "540964c" }
-futures = "0.3.0"
-
-# asset relative
-gltf = { version = "1.0.0", features = ["KHR_texture_transform", "KHR_materials_pbrSpecularGlossiness"] }
-base64 = "0.13.0"
-# libktx-rs = "0.3.0"
-
-# async
-async-io = "1.9.0"
-once_cell = "1.15.0"
-smol = "1.2.0"
-
-winit = "0.27.0"  # cross-platform window creation library
-
-# for concurrent programming
-crossbeam-deque= "0.8.2"
-
-syn = { version = "1.0" }
-toml = "0.5.10"
-proc-macro2 = "1.0"
+log = "0.4.17"
+structopt = "0.3.26"

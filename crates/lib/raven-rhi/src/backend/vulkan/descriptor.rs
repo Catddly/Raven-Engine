@@ -2,7 +2,7 @@ use std::collections::{btree_map, BTreeMap};
 #[cfg(feature = "gpu_ray_tracing")]
 use std::cell::UnsafeCell;
 
-use raven_core::container::TempList;
+use raven_container::TempList;
 use rspirv_reflect::{DescriptorInfo, DescriptorType, BindingCount};
 use ash::vk;
 

@@ -1,4 +1,4 @@
-use raven_core::thiserror::Error;
+use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum RhiError {

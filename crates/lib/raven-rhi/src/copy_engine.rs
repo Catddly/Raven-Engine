@@ -2,7 +2,7 @@ use std::ops::Range;
 
 use ash::vk;
 
-use raven_core::math;
+use raven_math;
 
 use crate::backend::{Device, Buffer, BufferDesc, RhiError};
 
@@ -88,7 +88,7 @@ impl<'a> CopyEngine<'a> {
             source: Box::new(source),
             offset: offset_beg,
         });
-        self.current_offset = offset_beg + math::min_value_align_to(data_len, alignment) as u32;
+        self.current_offset = offset_beg + raven_math::min_value_align_to(data_len, alignment) as u32;
 
         offset_beg
     }

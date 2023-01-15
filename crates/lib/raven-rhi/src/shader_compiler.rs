@@ -8,7 +8,7 @@ use failure::Error as FailureError;
 use anyhow::Context;
 use parking_lot::Mutex;
 
-use raven_core::filesystem::{self, lazy};
+use raven_filesystem::{self, lazy};
 
 use crate::backend::{ShaderBinary, ShaderSource, PipelineShaderStage, PipelineShaderDesc, ShaderBinaryStage};
 
@@ -97,7 +97,7 @@ impl LazyWorker for CompileShader {
 
         if !self.force_recompile {
             // check if the spv shader is exists
-            if filesystem::exist(&spv_name, filesystem::ProjectFolder::ShaderBinary)? {
+            if raven_filesystem::exist(&spv_name, raven_filesystem::ProjectFolder::ShaderBinary)? {
                 // just load the compiled spv.
                 // TODO: notice that this can be the old version of current shader, need to cache the file version.
                 let spirv = lazy::LoadFile::new(self.source.clone())?.run(ctx).await?;
@@ -112,7 +112,7 @@ impl LazyWorker for CompileShader {
                 let spirv = lazy::LoadFile::new(self.source.clone())?.run(ctx.clone()).await?;
 
                 // store a copy in the ProjectFolder::ShaderBinary
-                lazy::StoreFile::new(spirv.clone(), filesystem::ProjectFolder::ShaderBinary, spv_name.clone()).run(ctx).await?;
+                lazy::StoreFile::new(spirv.clone(), raven_filesystem::ProjectFolder::ShaderBinary, spv_name.clone()).run(ctx).await?;
 
                 Ok(ShaderBinary { path: Some(spv_name), spirv })
             }
@@ -120,7 +120,7 @@ impl LazyWorker for CompileShader {
             "hlsl" => {
                 
                 let file_name = PathBuf::from(self.source.to_str().unwrap().to_owned());
-                let mut path = filesystem::get_project_folder_path_absolute(filesystem::ProjectFolder::ShaderSource)?;
+                let mut path = raven_filesystem::get_project_folder_path_absolute(raven_filesystem::ProjectFolder::ShaderSource)?;
                 path.extend(file_name.iter());
                 
                 let source = {

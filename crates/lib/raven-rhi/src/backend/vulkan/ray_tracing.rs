@@ -1,9 +1,9 @@
 use std::{sync::Arc, cell::RefCell};
 
 use ash::vk;
-use glam::Affine3A;
 use parking_lot::Mutex;
-use raven_core::math;
+
+use raven_math::{self, Affine3A};
 
 use crate::{dynamic_buffer::DynamicBuffer};
 
@@ -478,7 +478,7 @@ impl Device {
         let shader_group_handle_size = self.ray_tracing_extensions
             .ray_tracing_props
             .shader_group_handle_size as usize;
-        let shader_group_handle_size_aligned = math::min_value_align_to(
+        let shader_group_handle_size_aligned = raven_math::min_value_align_to(
             shader_group_handle_size,
             self.ray_tracing_extensions.ray_tracing_props.shader_group_handle_alignment as usize
         );
@@ -509,7 +509,7 @@ impl Device {
             
             // reserve byte update memory
             // no memory alignment requirement here
-            let mut shader_binding_table_bytes = vec![0u8; math::min_value_align_to(
+            let mut shader_binding_table_bytes = vec![0u8; raven_math::min_value_align_to(
                 (entry_count as usize * shader_group_handle_size_aligned) as usize,
                 self.ray_tracing_extensions.ray_tracing_props.shader_group_base_alignment as usize
             )];
@@ -546,7 +546,7 @@ impl Device {
 
         let ray_hit_shader_sbt_buffer = create_shader_binding_table_func(entry_offset, desc.hit_entry_count)?;
 
-        let raygen_shader_binding_table_stride = math::min_value_align_to(
+        let raygen_shader_binding_table_stride = raven_math::min_value_align_to(
             (desc.raygen_entry_count as usize * shader_group_handle_size_aligned) as usize,
             self.ray_tracing_extensions.ray_tracing_props.shader_group_base_alignment as usize
         ) as vk::DeviceSize;
@@ -563,7 +563,7 @@ impl Device {
             miss_shader_binding_table: vk::StridedDeviceAddressRegionKHR::builder()
                 .device_address(ray_miss_shader_sbt_buffer.as_ref().map(|buf| buf.device_address(self)).unwrap_or(0))
                 .stride(shader_group_handle_size_aligned as u64)
-                .size(math::min_value_align_to(
+                .size(raven_math::min_value_align_to(
                     (desc.miss_entry_count as usize * shader_group_handle_size_aligned) as usize,
                     self.ray_tracing_extensions.ray_tracing_props.shader_group_base_alignment as usize
                 ) as vk::DeviceSize)
@@ -573,7 +573,7 @@ impl Device {
             hit_shader_binding_table: vk::StridedDeviceAddressRegionKHR::builder()
                 .device_address(ray_hit_shader_sbt_buffer.as_ref().map(|buf| buf.device_address(self)).unwrap_or(0))
                 .stride(shader_group_handle_size_aligned as u64)
-                .size(math::min_value_align_to(
+                .size(raven_math::min_value_align_to(
                     (desc.hit_entry_count as usize * shader_group_handle_size_aligned) as usize,
                     self.ray_tracing_extensions.ray_tracing_props.shader_group_base_alignment as usize
                 ) as vk::DeviceSize)

@@ -4,7 +4,7 @@ use std::collections::hash_map::Entry;
 
 use turbosloth::*;
 
-use raven_core::concurrent::executor;
+use raven_thread::executor;
 
 use crate::{
     backend::{

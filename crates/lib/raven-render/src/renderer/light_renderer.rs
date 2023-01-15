@@ -1,9 +1,8 @@
 use std::sync::Arc;
 
 use ash::vk;
-use glam::{Vec3, Mat4, Quat};
 
-use raven_core::{math::AABB};
+use raven_math::{Vec3, Mat4, Quat, AABB};
 use raven_rg::{RgHandle, RenderGraphBuilder};
 use raven_rhi::{
     Rhi,

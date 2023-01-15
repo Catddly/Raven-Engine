@@ -1,0 +1,15 @@
+[package]
+name = "raven-log"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+raven-filesystem = { path = "../../lib/raven-filesystem/" } 
+
+anyhow = "1.0.68"
+chrono = "0.4.23"
+fern = { version = "0.6.1", features = ["colored"]}
+lazy_static = "1.4.0"
+log = "0.4.17"

@@ -4,8 +4,8 @@ use std::sync::Arc;
 use ash::vk;
 
 use super::constants;
-use super::util::debug;
-use super::util::platform;
+use super::debug;
+use super::platform;
 
 pub struct Instance {
     pub(crate) entry: ash::Entry, // should entry be here? 

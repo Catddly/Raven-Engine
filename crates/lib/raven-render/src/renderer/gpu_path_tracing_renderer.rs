@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use ash::vk;
 
-use raven_core::asset::PackedVertex;
+use raven_asset::PackedVertex;
 use raven_rg::{RenderGraphBuilder, RgHandle, IntoPipelineDescriptorBindings, RenderGraphPassBindable};
 use raven_rhi::{
     backend::{

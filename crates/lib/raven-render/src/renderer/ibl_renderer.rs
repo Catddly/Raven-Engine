@@ -2,7 +2,8 @@ use std::sync::Arc;
 
 use ash::vk;
 
-use raven_core::{utility::as_byte_slice_val, math::{self, SHBasis9}};
+use raven_container::as_bytes;
+use raven_math::{self, SHBasis9};
 use raven_rg::{RenderGraphBuilder, RgHandle, RenderGraphPassBindable, IntoPipelineDescriptorBindings};
 use raven_rhi::{backend::{Image, AccessType, ImageDesc, Buffer, BufferDesc}, Rhi, copy_engine::CopyEngine};
 
@@ -25,7 +26,7 @@ impl IblRenderer {
         //     .expect("Failed to create convolved cubamap!");
 
         let prefilter = rhi.device.create_image(ImageDesc::new_cube(PREFILTER_CUBEMAP_RESOLUTION as _, vk::Format::R16G16B16A16_SFLOAT)
-            .mipmap_level(math::max_mipmap_level_2d(PREFILTER_CUBEMAP_RESOLUTION as _, PREFILTER_CUBEMAP_RESOLUTION as _))
+            .mipmap_level(raven_math::max_mipmap_level_2d(PREFILTER_CUBEMAP_RESOLUTION as _, PREFILTER_CUBEMAP_RESOLUTION as _))
             .usage_flags(vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::STORAGE), None)
             .expect("Failed to create prefilter cubamap!");
 
@@ -103,7 +104,7 @@ impl IblRenderer {
                 let prefilter_cubemap_ref = pass.write(&mut prefilter_cubemap, AccessType::ComputeShaderWrite);
     
                 pass.render(move |ctx| {
-                    let mip_level = math::max_mipmap_level_2d(PREFILTER_CUBEMAP_RESOLUTION as _, PREFILTER_CUBEMAP_RESOLUTION as _);
+                    let mip_level = raven_math::max_mipmap_level_2d(PREFILTER_CUBEMAP_RESOLUTION as _, PREFILTER_CUBEMAP_RESOLUTION as _);
                     let bound_pipeline = ctx.bind_compute_pipeline(pipeline.into_bindings())?;
     
                     for level in 0..mip_level {
@@ -119,7 +120,7 @@ impl IblRenderer {
     
                         // TODO: bug found! When using three u32 value, the cmd_dispatch will crash
                         let push_constants = [PREFILTER_CUBEMAP_RESOLUTION as u32, convolved_res];
-                        bound_pipeline.push_constants(vk::ShaderStageFlags::COMPUTE, 0, as_byte_slice_val(&push_constants));
+                        bound_pipeline.push_constants(vk::ShaderStageFlags::COMPUTE, 0, as_bytes::as_byte_slice_val(&push_constants));
         
                         bound_pipeline.dispatch([convolved_res.max(8), convolved_res.max(8), 6]);
                     }

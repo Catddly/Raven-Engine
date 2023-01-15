@@ -1,36 +1,33 @@
+extern crate log as glog;
+
 mod user;
 pub mod prelude;
 
 use std::{collections::VecDeque, sync::Arc};
 
-use glam::{Vec3, Quat, Affine3A};
-
-use raven_core::{
-    winit::{
-        event_loop::{EventLoop},
-        dpi::{LogicalSize, LogicalPosition},
-        window::{Window, WindowBuilder},
-        event::{WindowEvent, Event, VirtualKeyCode, ElementState}, 
-        platform::run_return::EventLoopExtRunReturn
-    }, asset::{AssetManager, AssetLoadDesc, asset_registry::AssetHandle}, 
-    render::{camera::{self}, persistence::{PersistStates, IsStatesChanged}}, 
-    input::InputBinding, 
+use winit::{
+    event_loop::{EventLoop},
+    dpi::{LogicalSize, LogicalPosition},
+    window::{Window, WindowBuilder},
+    event::{WindowEvent, Event, VirtualKeyCode, ElementState}, 
+    platform::run_return::EventLoopExtRunReturn
 };
 
-extern crate log as glog;
+use raven_facade::math::{Vec3, Quat, Affine3A};
+use raven_facade::asset::{AssetManager, AssetLoadDesc, asset_registry::AssetHandle};
+use raven_facade::scene::{camera::{self}, persistence::{PersistStates, IsStatesChanged}};
+use raven_facade::input::{InputBinding};
 
-// Raven Engine APIs
-use raven_core::log;
-use raven_core::console;
-use raven_core::input::{InputManager, KeyCode, MouseButton};
-use raven_core::filesystem::{self, ProjectFolder};
-use raven_render::{WorldRenderer};
+use raven_facade::core::console;
+use raven_facade::input::{InputManager, KeyCode, MouseButton};
+use raven_facade::filesystem::{self, ProjectFolder};
+use raven_facade::container::OnceQueue;
+
+use raven_facade::render::{WorldRenderer};
 #[cfg(feature = "gpu_ray_tracing")]
-use raven_render::RenderMode;
-use raven_rhi::{RHIConfig, Rhi, backend};
-use raven_rg::{GraphExecutor, IntoPipelineDescriptorBindings, RenderGraphPassBindable, FrameConstants, LightFrameConstants};
-
-use raven_core::system::OnceQueue;
+use raven_facade::render::RenderMode;
+use raven_facade::rhi::{RHIConfig, Rhi, backend};
+use raven_facade::rg::{GraphExecutor, IntoPipelineDescriptorBindings, RenderGraphPassBindable, FrameConstants, LightFrameConstants};
 
 /// Global engine context to control engine on the user side.
 /// Facade Design Pattern to control different parts of engine without knowing the underlying implementation.
@@ -49,11 +46,11 @@ pub struct EngineContext<App> {
 }
 
 fn init_filesystem_module() -> anyhow::Result<()> {
-    filesystem::set_default_root_path()?;
+    raven_facade::filesystem::set_default_root_path()?;
     
-    filesystem::set_custom_mount_point(ProjectFolder::Baked, "../../resource/baked/")?;
-    filesystem::set_custom_mount_point(ProjectFolder::Assets, "../../resource/assets/")?;
-    filesystem::set_custom_mount_point(ProjectFolder::ShaderSource, "../../resource/shader_src/")?;
+    raven_facade::filesystem::set_custom_mount_point(ProjectFolder::Baked, "../../resource/baked/")?;
+    raven_facade::filesystem::set_custom_mount_point(ProjectFolder::Assets, "../../resource/assets/")?;
+    raven_facade::filesystem::set_custom_mount_point(ProjectFolder::ShaderSource, "../../resource/shader_src/")?;
 
     Ok(())
 }
@@ -61,7 +58,7 @@ fn init_filesystem_module() -> anyhow::Result<()> {
 fn init_log_module() -> anyhow::Result<()> {
     let console_var = console::from_args();
 
-    log::init_log(log::LogConfig {
+    raven_facade::log::init_log(raven_facade::log::LogConfig {
         level: console_var.level,
     })?;
 

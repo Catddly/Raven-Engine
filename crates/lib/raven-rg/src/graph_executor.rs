@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use ash::vk;
 
-use raven_core::render::camera::CameraFrameConstants;
+use raven_scene::camera::CameraFrameConstants;
 use raven_rhi::{Rhi, backend::{Device, barrier::{self, ImageBarrier}, Swapchain}, pipeline_cache::PipelineCache, dynamic_buffer::DynamicBuffer, global_constants_descriptor};
 
 use crate::{compiled_graph::CompiledRenderGraph, transient_resource_cache::TransientResourceCache, graph_builder::TemporalResource};

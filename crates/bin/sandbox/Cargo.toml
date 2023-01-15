@@ -6,7 +6,9 @@ edition = "2021"
 [features]
 default = ["gpu_ray_tracing"]
 # default = []
+
 gpu_ray_tracing = ["raven-engine/gpu_ray_tracing"]
+dynamic_linking = ["raven-engine/dynamic_linking"]
 
 [dependencies]
 raven-engine = { path = "../../lib/raven-engine/" }

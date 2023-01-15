@@ -3,10 +3,9 @@ use std::collections::BTreeSet;
 
 use ash::vk;
 
-use glam::{Affine3A};
-use raven_core::asset::{TextureGammaSpace, AsConcreteAsset};
-use raven_core::math::AABB;
-use raven_core::{asset::{asset_registry::{AssetHandle, get_runtime_asset_registry}, PackedVertex, VecArrayQueryParam}, utility};
+use raven_container::as_bytes;
+use raven_asset::{TextureGammaSpace, AsConcreteAsset, asset_registry::{AssetHandle, get_runtime_asset_registry}, PackedVertex, VecArrayQueryParam};
+use raven_math::{AABB, Affine3A};
 use raven_rg::{RenderGraphBuilder, RgHandle, IntoPipelineDescriptorBindings, RenderGraphPassBinding, image_clear};
 use raven_rhi::backend::{RasterPipelineCullMode, descriptor};
 use raven_rhi::{
@@ -767,7 +766,7 @@ impl MeshRenderer {
                                 bound_pipeline.push_constants(
                                     vk::ShaderStageFlags::ALL_GRAPHICS, 
                                     0,
-                                    utility::as_byte_slice_val(&push_constants)
+                                    as_bytes::as_byte_slice_val(&push_constants)
                                 );
                 
                                 raw.cmd_draw_indexed(ctx.cb.raw,
@@ -892,7 +891,7 @@ impl MeshRenderer {
                             bound_pipeline.push_constants(
                                 vk::ShaderStageFlags::ALL_GRAPHICS,
                                 0,
-                                utility::as_byte_slice_val(&push_constants)
+                                as_bytes::as_byte_slice_val(&push_constants)
                             );
             
                             raw.cmd_draw_indexed(ctx.cb.raw,

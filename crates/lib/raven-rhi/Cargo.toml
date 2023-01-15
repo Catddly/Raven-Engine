@@ -7,13 +7,19 @@ edition = "2021"
 gpu_ray_tracing = []
 
 [dependencies]
-raven-core = { path = "../../lib/raven-core/" }
+raven-math       = { path = "../../lib/raven-math/" }
+raven-container  = { path = "../../lib/raven-container/" }
+raven-filesystem = { path = "../../lib/raven-filesystem/" }
+raven-thread     = { path = "../../lib/raven-thread/" }
+
+thiserror = "1.0.38"
 anyhow = "1.0.0"  # error lib
 log = "0.4"       # logging lib
 
 # should this be removed?
 failure = "0.1.8"
 
+winit = "0.27.5"
 winapi = "0.3.9"
 bytes = "1.2.0"
 # relative-path = "1.7.0"
@@ -26,9 +32,6 @@ parking_lot = "0.12.0"
 arrayvec = "0.7.0"
 byte-slice-cast = "1.2.0"
 derive_builder = "0.11.0"
-
-# math
-glam = { version = "0.21.0", features = ["glam-assert"] }
 
 # May write our own on-demand computing library
 turbosloth = { git = "https://github.com/h3r2tic/turbosloth.git", rev = "540964c" }

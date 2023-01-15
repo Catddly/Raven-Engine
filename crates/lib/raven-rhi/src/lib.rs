@@ -12,9 +12,9 @@ pub mod global_bindless_descriptor;  // set 1
 pub mod global_constants_descriptor; // set 2
 
 use std::sync::Arc;
-use raven_core::winit::window::Window;
+use winit::window::Window;
 
-use crate::backend::vulkan::{Instance, Surface, debug, physical_device, Device, Swapchain};
+use crate::backend::vulkan::{Instance, Surface, physical_device, Device, Swapchain, debug};
 
 #[derive(Clone, Copy)]
 pub struct RHIConfig {

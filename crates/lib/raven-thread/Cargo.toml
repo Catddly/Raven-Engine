@@ -1,0 +1,13 @@
+[package]
+name = "raven-thread"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+async-io = "1.12.0"
+crossbeam-deque = "0.8.2"
+num_cpus = "1.15.0"
+once_cell = "1.17.0"
+smol = "1.3.0"

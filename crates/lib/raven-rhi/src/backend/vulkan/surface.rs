@@ -1,8 +1,8 @@
 use ash::vk;
 
-use super::util::platform;
+use winit;
 
-use raven_core::winit;
+use super::platform;
 use crate::backend::vulkan::Instance;
 
 pub struct Surface {

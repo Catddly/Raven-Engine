@@ -1,5 +1,7 @@
-//mod context;
-mod util;
+pub mod debug;
+mod utility;
+mod platform;
+
 pub mod constants;
 
 mod instance;
@@ -55,7 +57,3 @@ pub use ray_tracing::{
 
 pub use command::CommandBuffer;
 pub use error::RhiError;
-
-pub use util::debug;
-pub use util::platform;
-pub use util::utility;

@@ -5,7 +5,7 @@ use ash::vk;
 use derive_builder::Builder;
 use vk_sync::AccessType;
 
-use raven_core::math;
+use raven_math;
 
 use super::allocator::{MemoryLocation, AllocationCreateDesc, self, Allocation};
 use super::{Device, RhiError, BufferDesc, ImageBarrier};
@@ -393,7 +393,7 @@ impl ImageDesc {
     }
 
     pub fn full_mipmap_levels(mut self) -> Self {
-        self.mip_levels = math::max_mipmap_level_3d(self.extent[0], self.extent[1], self.extent[2]);
+        self.mip_levels = raven_math::max_mipmap_level_3d(self.extent[0], self.extent[1], self.extent[2]);
         self
     }
 
