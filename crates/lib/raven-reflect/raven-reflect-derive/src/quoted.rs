@@ -13,6 +13,12 @@ pub(crate) struct QuotedAny;
 
 pub(crate) struct QuotedBox;
 
+pub(crate) struct QuotedDefault;
+
+pub(crate) struct QuotedClone;
+
+pub(crate) struct QuotedResult;
+
 impl ToTokens for QuotedOption {
     fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
         quote!(::core::option::Option).to_tokens(tokens)
@@ -28,5 +34,23 @@ impl ToTokens for QuotedAny {
 impl ToTokens for QuotedBox {
     fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
         quote!(::std::boxed::Box).to_tokens(tokens)
+    }
+}
+
+impl ToTokens for QuotedDefault {
+    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+        quote!(::core::default::Default).to_tokens(tokens)
+    }
+}
+
+impl ToTokens for QuotedClone {
+    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+        quote!(::core::clone::Clone).to_tokens(tokens)
+    }
+}
+
+impl ToTokens for QuotedResult {
+    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+        quote!(::std::result::Result).to_tokens(tokens)
     }
 }

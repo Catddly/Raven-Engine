@@ -9,9 +9,9 @@ use crate::trait_attributes::ReflectTraits;
 /// // With traits
 /// 1. u32(Debug, CustomTraits...)
 /// // With type generic
-/// 2. u32<T1, T2...>(Debug, CustomTraits...)
+/// 2. Foo<T1, T2...>(Debug, CustomTraits...)
 /// // With where clause
-/// 3. u32<<T1, T2...> where T1: OtherTrait (Debug, CustomTraits...)
+/// 3. Foo<<T1, T2...> where T1: OtherTrait (Debug, CustomTraits...)
 /// ```
 pub(crate) struct PrimitiveParser {
     #[allow(dead_code)]

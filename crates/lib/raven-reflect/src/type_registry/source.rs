@@ -1,4 +1,4 @@
-use super::TypeRegistration;
+use super::{TypeRegistration};
 
 /// Trait to be used in #[derive(Reflect)] to generate TypedMeta. 
 pub trait FromType<T> {

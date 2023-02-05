@@ -20,7 +20,7 @@ use raven_facade::input::{InputBinding};
 
 use raven_facade::core::console;
 use raven_facade::input::{InputManager, KeyCode, MouseButton};
-use raven_facade::filesystem::{self, ProjectFolder};
+use raven_facade::filesystem::{ProjectFolder};
 use raven_facade::container::OnceQueue;
 
 use raven_facade::render::{WorldRenderer};

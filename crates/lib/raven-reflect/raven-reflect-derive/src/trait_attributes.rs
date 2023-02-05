@@ -1,5 +1,8 @@
-use proc_macro2::{Span};
+use proc_macro2::{Span, Ident, TokenStream};
+use quote::quote_spanned;
 use syn::{Path, punctuated::Punctuated, NestedMeta, token::Comma, Meta, spanned::Spanned, parse::Parse};
+
+use crate::quoted::{QuotedAny, QuotedOption, QuotedDefault};
 
 const DEBUG_TRAIT: &str = "Debug";
 const HASH_TRAIT: &str = "Hash";
@@ -43,7 +46,7 @@ pub(crate) struct ReflectTraits {
     debug_impl: TraitImplStatus,
     hash_impl: TraitImplStatus,
     partial_eq_impl: TraitImplStatus,
-    //idents: Vec<Ident>,
+    idents: Vec<Ident>,
 }
 
 impl ReflectTraits {
@@ -80,16 +83,15 @@ impl ReflectTraits {
                         PARTIAL_EQ_TRAIT => {
                             traits.partial_eq_impl = traits.partial_eq_impl.merge(TraitImplStatus::Implemented(span))?;
                         }
-                        // // we only track reflected idents for traits not considered special
-                        // _ => {
-                        //     // Create the reflect ident
-                        //     // We set the span to the old ident so any compile errors point to that ident instead
-                        //     let mut reflect_ident = utility::get_reflect_ident(&ident_name);
-                        //     reflect_ident.set_span(span);
+                        // we only track reflected idents for traits not considered special
+                        _ => {
+                            // Create the reflect ident
+                            // We set the span to the old ident so any compile errors point to that ident instead
+                            let mut reflect_ident = get_reflect_ident(&ident_name);
+                            reflect_ident.set_span(span);
 
-                        //     add_unique_ident(&mut traits.idents, reflect_ident)?;
-                        // }
-                        _ => {}
+                            add_unique_ident(&mut traits.idents, reflect_ident)?;
+                        }
                     }
                 }
                 // handle #[derive(Hash(custom_hash_func))]
@@ -136,14 +138,91 @@ impl ReflectTraits {
             debug_impl: self.debug_impl.merge(other.debug_impl)?,
             hash_impl: self.hash_impl.merge(other.hash_impl)?,
             partial_eq_impl: self.partial_eq_impl.merge(other.partial_eq_impl)?,
-            // idents: {
-            //     let mut idents = self.idents;
-            //     for ident in other.idents {
-            //         add_unique_ident(&mut idents, ident)?;
-            //     }
-            //     idents
-            // },
+            idents: {
+                let mut idents = self.idents;
+                for ident in other.idents {
+                    add_unique_ident(&mut idents, ident)?;
+                }
+                idents
+            },
         })
+    }
+
+    /// Returns true if the given reflected trait name (i.e. `ReflectDefault` for `Default`)
+    /// is registered for this type.
+    pub fn contains(&self, name: &str) -> bool {
+        self.idents.iter().any(|ident| ident == name)
+    }
+
+    /// The list of reflected traits by their reflected ident (i.e. `ReflectDefault` for `Default`).
+    pub fn idents(&self) -> &[Ident] {
+        &self.idents
+    }
+
+    /// Generate implementation for special trait Debug.
+    pub fn gen_debug_impl(&self) -> Option<TokenStream> {
+        match &self.debug_impl {
+            &TraitImplStatus::Implemented(span) => Some({quote_spanned! {span=>
+                fn debug(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+                    ::core::fmt::Debug::fmt(self, f)
+                }
+            }}),
+            &TraitImplStatus::CustomImpl(ref custom_impl, span) => Some({quote_spanned! {span=>
+                fn debug(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+                    // forward to custom impl function
+                    #custom_impl(self, f)
+                }
+            }}),
+            TraitImplStatus::NotImplemented => None,
+        }
+    }
+
+    /// Generate implementation for special trait Hash.
+    /// 
+    /// Use reflect_hash to avoid name collision with hash.
+    pub fn gen_hash_impl(&self, reflect_crate_path: &Path) -> Option<TokenStream> {
+        match &self.hash_impl {
+            &TraitImplStatus::Implemented(span) => Some(quote_spanned! {span=>
+                fn reflect_hash(&self) -> #QuotedOption<u64> {
+                    use ::core::hash::{Hash, Hasher};
+                    let mut hasher: #reflect_crate_path::ReflectHasher = #QuotedDefault::default();
+                    Hash::hash(&#QuotedAny::type_id(self), &mut hasher);
+                    Hash::hash(self, &mut hasher);
+                    #QuotedOption::Some(Hasher::finish(&hasher))
+                }
+            }),
+            &TraitImplStatus::CustomImpl(ref custom_impl, span) => Some(quote_spanned! {span=>
+                fn reflect_hash(&self) -> #QuotedOption<u64> {
+                    // forward to custom impl function
+                    #QuotedOption::Some(#custom_impl(self))
+                }
+            }),
+            TraitImplStatus::NotImplemented => None,
+        }
+    }
+
+    /// Generate implementation for special trait PartialEq.
+    /// 
+    /// Use reflect_partial_eq to avoid name collision with partial_eq.
+    pub fn gen_partial_eq_impl(&self, reflect_crate_path: &Path) -> Option<TokenStream> {
+        match &self.partial_eq_impl {
+            &TraitImplStatus::Implemented(span) => Some(quote_spanned! {span=>
+                fn reflect_partial_eq(&self, value: &dyn #reflect_crate_path::Reflect) -> #QuotedOption<bool> {
+                    let value = <dyn #reflect_crate_path::Reflect>::as_any(value);
+                    if let #QuotedOption::Some(value) = <dyn #QuotedAny>::downcast_ref::<Self>(value) {
+                        #QuotedOption::Some(::core::cmp::PartialEq::eq(self, value))
+                    } else {
+                        #QuotedOption::Some(false)
+                    }
+                }
+            }),
+            &TraitImplStatus::CustomImpl(ref custom_impl, span) => Some(quote_spanned! {span=>
+                fn reflect_partial_eq(&self, value: &dyn #reflect_crate_path::Reflect) -> #QuotedOption<bool> {
+                    #QuotedOption::Some(#custom_impl(self, value))
+                }
+            }),
+            TraitImplStatus::NotImplemented => None,
+        }
     }
 }
 
@@ -152,4 +231,30 @@ impl Parse for ReflectTraits {
         let punctuated = Punctuated::<NestedMeta, Comma>::parse_terminated(input)?;
         ReflectTraits::from_nested_meta(&punctuated)
     }
+}
+
+/// Returns the "reflected" ident for a given string.
+///
+/// # Example
+///
+/// ```ignore
+/// let reflected: Ident = get_reflect_ident("Hash");
+/// assert_eq!("ReflectHash", reflected.to_string());
+/// ```
+pub(crate) fn get_reflect_ident(name: &str) -> Ident {
+    let reflected = format!("Reflect{name}");
+    Ident::new(&reflected, Span::call_site())
+}
+
+/// Adds an identifier to a vector of identifiers if it is not already present.
+///
+/// Returns an error if the identifier already exists in the list.
+fn add_unique_ident(idents: &mut Vec<Ident>, ident: Ident) -> Result<(), syn::Error> {
+    let ident_name = ident.to_string();
+    if idents.iter().any(|i| i == ident_name.as_str()) {
+        return Err(syn::Error::new(ident.span(), "Conflict type data registration!"));
+    }
+
+    idents.push(ident);
+    Ok(())
 }

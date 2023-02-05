@@ -1,4 +1,4 @@
-use crate::field_attributes::ReflectFieldAttr;
+use crate::{field_attributes::ReflectFieldAttr, reflect_gen};
 
 use super::ReflectMeta;
 
@@ -24,12 +24,29 @@ impl<'a> StructMetaInfo<'a> {
         &self.meta
     }
 
+    #[allow(dead_code)]
     pub fn serialization_denylist(&self) -> &BitSet<u32> {
         &self.serialization_denylist
     }
 
+    #[allow(dead_code)]
     pub fn fields(&self) -> &[StructField] {
         &self.fields
+    }
+
+    /// Returns the `GetTypeRegistration` impl as a `TokenStream`.
+    ///
+    /// Returns a specific implementation for structs and this method should be preferred over the generic [`get_type_registration`](crate::ReflectMeta) method.
+    pub fn get_type_registration(&self) -> proc_macro2::TokenStream {
+        let reflect_crate_path = self.meta.reflect_crate_path();
+
+        reflect_gen::gen_type_registration(
+            self.meta.type_name(),
+            reflect_crate_path,
+            self.meta.traits().idents(),
+            self.meta.generics(),
+            Some(&self.serialization_denylist),
+        )
     }
 
     /// Get a collection of types of opaque fields.

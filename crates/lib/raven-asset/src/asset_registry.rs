@@ -95,7 +95,7 @@ impl<T> PartialEq for DiskAssetRef<T> {
 }
 impl<T> Eq for DiskAssetRef<T> {}
 
-pub struct RuntimeAssetRegistry {
+pub struct AssetRegistry {
     current_id: u64,
     id_free_list: Vec<u64>,
 
@@ -105,7 +105,7 @@ pub struct RuntimeAssetRegistry {
     mesh_relative_texs: HashMap<AssetHandle, Vec<AssetRef<Texture::Storage>>>,
 }
 
-impl RuntimeAssetRegistry {
+impl AssetRegistry {
     fn new() -> Self {
         Self {
             current_id: 0,
@@ -270,9 +270,9 @@ impl RuntimeAssetRegistry {
 }
 
 /// Lazy static global singleton 
-pub fn get_runtime_asset_registry() -> &'static RwLock<RuntimeAssetRegistry> {
-    static RUNTIME_ASSET_MANAGER: Lazy<RwLock<RuntimeAssetRegistry>> = Lazy::new(|| {
-        RwLock::new(RuntimeAssetRegistry::new())
+pub fn get_runtime_asset_registry() -> &'static RwLock<AssetRegistry> {
+    static RUNTIME_ASSET_MANAGER: Lazy<RwLock<AssetRegistry>> = Lazy::new(|| {
+        RwLock::new(AssetRegistry::new())
     });
 
     &RUNTIME_ASSET_MANAGER

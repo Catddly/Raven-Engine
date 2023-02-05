@@ -51,15 +51,26 @@ impl CrateManifest {
 
         let find_in_deps_func = |deps: &Map<String, Value>| -> Option<syn::Path> {
             let package = if let Some(dep) = deps.get(name) {
+                // directly depends on crate
                 return Some(Self::parse_str(get_deps(dep).unwrap_or(name)));
             } else if let Some(dep) = deps.get("raven-engine") {
-                // TODO: reconstruct engine framework
+                // access by raven-engine crate
                 get_deps(dep).unwrap_or("raven_engine")
+            } else if let Some(dep) = deps.get("raven-facade") {
+                // access by raven-facade crate
+                get_deps(dep).unwrap_or("raven_facade")
             } else {
+                // can't access raven-reflect crate in this situation
                 return None;
             };
 
-            let path = Self::parse_str::<syn::Path>(package);
+            let mut path = Self::parse_str::<syn::Path>(package);
+            // strip prefix to access inner crate
+            if let Some(module) = name.strip_prefix("raven_") {
+                // add mod name to path
+                // e.g. raven_facade::reflect
+                path.segments.push(Self::parse_str(module));
+            }
             Some(path)
         };
 
@@ -89,18 +100,3 @@ impl CrateManifest {
         syn::parse(path.parse::<TokenStream>().unwrap()).unwrap()
     }
 }
-
-// #[cfg(test)]
-// mod tests {
-//     use std::path::PathBuf;
-//     use super::CrateManifest;
-
-//     #[test]
-//     fn test_get_crate_manifest() {
-//         let manifest = CrateManifest::new(
-//             PathBuf::from("F://ILLmewWork//ProgrammingRelative//Raven-Engine//crates//bin//sandbox//Cargo.toml")
-//         );
-
-//         let path = manifest.get_path("raven-reflect");
-//     }
-// }

@@ -1,6 +1,6 @@
 use std::{any::TypeId, collections::HashMap, slice::Iter};
 
-use crate::Reflect;
+use crate::{Reflect, DynamicStruct};
 
 use super::field::{NamedField, GetField};
 
@@ -28,16 +28,19 @@ pub trait Struct: Reflect {
     /// Get the name of field by index.
     fn field_name_at(&self, index: usize) -> Option<&str>;
 
-    /// Iterate over every reflected fields.
-    fn iter(&self) -> FieldIter;
+    /// Return an iterator to iterate over every reflected fields.
+    fn iter(&self) -> StructFieldIter;
+
+    /// Clones the struct into a [`DynamicStruct`].
+    fn clone_dynamic(&self) -> DynamicStruct;
 }
 
-pub struct FieldIter<'a> {
+pub struct StructFieldIter<'a> {
     pub(crate) refl_struct: &'a dyn Struct,
     pub(crate) curr_index: usize,
 }
 
-impl<'a> FieldIter<'a> {
+impl<'a> StructFieldIter<'a> {
     pub fn new(refl_struct: &'a dyn Struct) -> Self {
         Self {
             refl_struct,
@@ -46,7 +49,7 @@ impl<'a> FieldIter<'a> {
     }
 }
 
-impl<'a> Iterator for FieldIter<'a> {
+impl<'a> Iterator for StructFieldIter<'a> {
     type Item = &'a dyn Reflect;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -143,7 +146,7 @@ impl StructTypeInfo {
         self.fields.get(index)
     }
 
-    pub fn field(&self, name: &'static str) -> Option<&NamedField> {
+    pub fn field(&self, name: &str) -> Option<&NamedField> {
         self.field_indices.get(name)
            .and_then(|idx| self.fields.get(*idx))
     }

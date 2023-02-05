@@ -109,25 +109,9 @@ impl RawMeshProcess {
     fn calculate_mesh_aabb(vertex_pos: &[[f32; 3]]) -> AABB {
         let mut aabb = AABB::new();
 
-        // let mut min_vertex: [f32; 3] = [f32::MAX; 3];
-        // let mut max_vertex: [f32; 3] = [f32::MIN; 3];
-
         for vertex in vertex_pos {
-            // min_vertex[0] = min_vertex[0].min(vertex[0]);
-            // min_vertex[1] = min_vertex[1].min(vertex[1]);
-            // min_vertex[2] = min_vertex[2].min(vertex[2]);
-
-            // max_vertex[0] = max_vertex[0].max(vertex[0]);
-            // max_vertex[1] = max_vertex[1].max(vertex[1]);
-            // max_vertex[2] = max_vertex[2].max(vertex[2]);
-
             aabb.merge_point_f32(vertex);
         }
-
-        // dbg!(min_vertex);
-        // dbg!(max_vertex);
-
-        dbg!(&aabb);
 
         aabb
     }

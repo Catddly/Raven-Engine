@@ -1,6 +1,6 @@
 use std::any::TypeId;
 
-use crate::Reflect;
+use crate::{Reflect, DynamicArray};
 
 /// Compile-time known-sized array that can be reflected at compile time.
 pub trait Array: Reflect {
@@ -13,11 +13,10 @@ pub trait Array: Reflect {
     /// Return the length of the array.
     fn len(&self) -> usize;
 
-    /// Consume all elements and collect them into a [`Vec`].
-    fn to_vec(self: Box<Self>) -> Vec<Box<dyn Reflect>>;
-
     /// Iterate over all elements in the array.
     fn iter(&self) -> ArrayIter;
+
+    fn clone_dynamic(&self) -> DynamicArray;
 }
 
 pub struct ArrayIter<'a> {

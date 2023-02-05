@@ -1,11 +1,12 @@
 use bit_set::BitSet;
 use quote::ToTokens;
-use syn::{Attribute, Meta, NestedMeta};
+use syn::{Attribute, Meta, NestedMeta, Lit};
 
 use crate::REFLECT_ATTR;
 
 pub(crate) static IGNORE_SERIALIZATION_ATTR: &str = "no_serialization";
 pub(crate) static IGNORE_ALL_ATTR: &str = "transparent";
+pub(crate) static DEFAULT_ATTR: &str = "default";
 
 /// Enum to define field should be ignore for serialization or reflection.
 /// 
@@ -54,10 +55,26 @@ pub(crate) fn ignore_behaviors_to_serialization_deny_lists<T: Iterator<Item = Re
     bitset
 }
 
+/// Controls how the default value is determined for a field.
+#[derive(Default)]
+pub(crate) enum DefaultBehavior {
+    /// Field is required.
+    #[default]
+    Required,
+    /// Field can be defaulted using `Default::default()`.
+    Default,
+    /// Field can be created using the given function name.
+    ///
+    /// This assumes the function is in scope, is callable with zero arguments,
+    /// and returns the expected type.
+    Func(syn::ExprPath),
+}
+
 /// container for attributes defined on a reflected type's field.
 #[derive(Default)]
 pub(crate) struct ReflectFieldAttr {
     pub ignore_behavior: ReflectIgnoreBehavior,
+    pub default_behavior: DefaultBehavior,
 }
 
 pub(crate) fn parse_field_attributes(attrs: &[Attribute]) -> anyhow::Result<ReflectFieldAttr, syn::Error> {
@@ -101,10 +118,29 @@ fn parse_attribute_meta(reflect_attr: &mut ReflectFieldAttr, meta: &Meta) -> any
                 .then(|| reflect_attr.ignore_behavior = ReflectIgnoreBehavior::IgnoreAll)
                 .ok_or_else(|| syn::Error::new_spanned(path, format!("Only one of ['{IGNORE_SERIALIZATION_ATTR}','{IGNORE_ALL_ATTR}'] is allowed")))
         }
+        Meta::Path(path) if path.is_ident(DEFAULT_ATTR) => {
+            reflect_attr.default_behavior = DefaultBehavior::Default;
+            Ok(())
+        }
         Meta::Path(path) => Err(
             syn::Error::new_spanned(path, format!("Unknown reflect attributes: {}", path.to_token_stream()))
         ),
         // a name-value meta is like the path = "..." in #[path = "sys/windows.rs"].
+        Meta::NameValue(pair) if pair.path.is_ident(DEFAULT_ATTR) => {
+            let lit = &pair.lit;
+            match lit {
+                Lit::Str(lit_str) => {
+                    reflect_attr.default_behavior = DefaultBehavior::Func(lit_str.parse()?);
+                    Ok(())
+                }
+                err => {
+                    Err(syn::Error::new(
+                        err.span(),
+                        format!("Expected a string literal containing the name of a function, but found: {}", err.to_token_stream()),
+                    ))
+                }
+            }
+        }
         Meta::NameValue(named) => Err(
             syn::Error::new_spanned(named, format!("Unexpected named attributes: {}", named.to_token_stream()))
         ),

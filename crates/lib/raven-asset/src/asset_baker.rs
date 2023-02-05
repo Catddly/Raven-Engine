@@ -6,7 +6,7 @@ use turbosloth::*;
 
 use raven_filesystem;
 
-use super::{asset_registry::{AssetHandle, self, RuntimeAssetRegistry}, error::AssetPipelineError, AssetType, Mesh, Material, Texture, get_uri_bake_stem, AsConcreteAsset};
+use super::{asset_registry::{AssetHandle, self, AssetRegistry}, error::AssetPipelineError, AssetType, Mesh, Material, Texture, get_uri_bake_stem, AsConcreteAsset};
 
 #[derive(Clone, Hash)]
 pub struct AssetBaker {
@@ -73,7 +73,7 @@ impl LazyWorker for AssetBaker {
 }
 
 impl AssetBaker {
-    fn bake_mesh_asset<'a>(path: &PathBuf, asset: &Mesh::Storage, read_guard: &RwLockReadGuard<'a, RuntimeAssetRegistry>) -> anyhow::Result<()> {
+    fn bake_mesh_asset<'a>(path: &PathBuf, asset: &Mesh::Storage, read_guard: &RwLockReadGuard<'a, AssetRegistry>) -> anyhow::Result<()> {
         // TODO: use StoreFile
         let mut file = std::fs::File::create(path)?;
         asset.write_packed(&mut file);
