@@ -1,7 +1,5 @@
 use std::fmt::Formatter;
 
-use syn::token::Dyn;
-
 use crate::{Reflect, Array, List, TypeInfo, Typed, NonGenericTypeInfoOnceCell, DynamicTypeInfo, ReflectRef, special_traits::{debug, partial_eq}};
 
 /// A runtime extensible array of reflected values.
@@ -75,6 +73,11 @@ impl Array for DynamicList {
         crate::ArrayIter::new(self)
     }
 
+    #[inline]
+    fn drain(self: Box<Self>) -> Vec<Box<dyn Reflect>> {
+        self.values
+    }
+
     fn clone_dynamic(&self) -> crate::DynamicArray {
         let mut dyn_aray = crate::DynamicArray::new(self.values
             .iter()
@@ -88,6 +91,16 @@ impl Array for DynamicList {
 
 // impl List
 impl List for DynamicList {
+    #[inline]
+    fn insert(&mut self, index: usize, element: Box<dyn Reflect>) {
+        self.values.insert(index, element)
+    }
+
+    #[inline]
+    fn remove(&mut self, index: usize) -> Box<dyn Reflect> {
+        self.values.remove(index)
+    }
+
     #[inline]
     fn push(&mut self, value: Box<dyn Reflect>) {
         self.values.push(value)
@@ -143,19 +156,7 @@ impl Reflect for DynamicList {
     }
 
     fn assign(&mut self, reflected: &dyn Reflect) {
-        if let ReflectRef::List(list_value) = reflected.reflect_ref() {
-            for (i, value) in list_value.iter().enumerate() {
-                if i < self.len() {
-                    if let Some(v) = self.get_mut(i) {
-                        v.assign(value);
-                    }
-                } else {
-                    List::push(self, value.clone_value());
-                }
-            }
-        } else {
-            panic!("Attempted to apply a non-list type to a list type.");
-        }
+        list_assign(self, reflected);
     }
 
     fn reflect_ref<'a>(&'a self) -> crate::ReflectRef<'a> {
@@ -178,5 +179,22 @@ impl Reflect for DynamicList {
         write!(f, "DynamicList(")?;
         debug::list_debug(self, f)?;
         write!(f, ")")
+    }
+}
+
+#[inline]
+pub(crate) fn list_assign(lhs: &mut dyn List, rhs: &dyn Reflect) {
+    if let ReflectRef::List(list_value) = rhs.reflect_ref() {
+        for (i, value) in list_value.iter().enumerate() {
+            if i < lhs.len() {
+                if let Some(v) = lhs.get_mut(i) {
+                    v.assign(value);
+                }
+            } else {
+                List::push(lhs, value.clone_value());
+            }
+        }
+    } else {
+        panic!("Attempted to apply a non-list type to a list type.");
     }
 }

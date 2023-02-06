@@ -7,6 +7,7 @@ pub struct ReflectDefault {
 }
 
 impl ReflectDefault {
+    #[allow(dead_code)]
     pub fn default(&self) -> Box<dyn Reflect> {
         (self.default_func)()
     }

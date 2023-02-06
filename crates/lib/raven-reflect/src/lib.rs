@@ -30,6 +30,8 @@ pub use crate::serde::*;
 
 #[cfg(test)]
 mod tests {
+    use std::collections::{VecDeque};
+
     use crate::{self as raven_reflect, type_info::Struct};
     use raven_reflect::*;
     use raven_reflect_derive::{Reflect};
@@ -66,6 +68,7 @@ mod tests {
             DataCompound {
                 hello: usize,
                 no: String,
+                deque: VecDeque<u32>,
             }
         }
 
@@ -73,7 +76,7 @@ mod tests {
 
         let test_unit = Test::One;
         let test_tuple = Test::Data(368, 4);
-        let mut test_struct = Test::DataCompound { hello: 7, no: String::from("Hello!") };
+        let mut test_struct = Test::DataCompound { hello: 7, no: String::from("Hello!"), deque: VecDeque::from([6, 3, 8, 7]) };
 
         assert!(test_unit.is_form(VariantForm::Unit));
         assert!(test_tuple.is_form(VariantForm::Tuple));
@@ -113,18 +116,18 @@ mod tests {
     #[test]
     fn test_reflect_tuple_struct() {
         #[derive(Reflect)]
-        struct TestTupleStruct(usize, String, i32);
+        struct TestTupleStruct(usize, String, Vec<i32>);
 
         dbg!(TestTupleStruct::type_info());
 
-        let test_struct = TestTupleStruct(645, String::from("Hello!"), -58);
+        let test_struct = TestTupleStruct(645, String::from("Hello!"), vec![-85, 69, 15]);
 
         let field_0 = test_struct.field_at(0).unwrap().downcast_ref::<usize>().unwrap();
         let field_1 = test_struct.field_at(1).unwrap().downcast_ref::<String>().unwrap();
-        let field_2 = test_struct.field_at(2).unwrap().downcast_ref::<i32>().unwrap();
+        let field_2 = test_struct.field_at(2).unwrap().downcast_ref::<Vec<i32>>().unwrap();
 
         assert_eq!(*field_0, 645);
         assert_eq!(*field_1, String::from("Hello!"));
-        assert_eq!(*field_2, -58);
+        assert_eq!(*field_2, vec![-85, 69, 15]);
     }
 }

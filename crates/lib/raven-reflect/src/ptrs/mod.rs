@@ -61,6 +61,7 @@ macro_rules! impl_ptr {
             ///
             /// [ptr_offset]: https://doc.rust-lang.org/std/primitive.pointer.html#method.offset
             #[inline]
+            #[allow(dead_code)]
             pub unsafe fn byte_offset(self, count: isize) -> Self {
                 Self(
                     NonNull::new_unchecked(self.as_ptr().offset(count)),
@@ -79,6 +80,7 @@ macro_rules! impl_ptr {
             ///
             /// [ptr_add]: https://doc.rust-lang.org/std/primitive.pointer.html#method.add
             #[inline]
+            #[allow(dead_code)]
             pub unsafe fn byte_add(self, count: usize) -> Self {
                 Self(
                     NonNull::new_unchecked(self.as_ptr().add(count)),
@@ -91,6 +93,7 @@ macro_rules! impl_ptr {
             /// # Safety
             /// The lifetime for the returned item must not exceed the lifetime `inner` is valid for
             #[inline]
+            #[allow(dead_code)]
             pub unsafe fn new(inner: NonNull<u8>) -> Self {
                 Self(inner, PhantomData)
             }
@@ -118,6 +121,7 @@ impl<'a> Ptr<'a> {
     /// # Safety
     /// Another [`PtrMut`] for the same [`Ptr`] must not be created until the first is dropped.
     #[inline]
+    #[allow(dead_code)]
     pub unsafe fn assert_unique(self) -> PtrMut<'a> {
         PtrMut(self.0, PhantomData)
     }
@@ -193,6 +197,7 @@ impl<'a, T> From<&'a mut T> for PtrMut<'a> {
 impl<'a> OwningPtr<'a> {
     /// Consumes a value and creates an [`OwningPtr`] to it while ensuring a double drop does not happen.
     #[inline]
+    #[allow(dead_code)]
     pub fn make<T, F: FnOnce(OwningPtr<'_>) -> R, R>(val: T, f: F) -> R {
         let mut temp = ManuallyDrop::new(val);
         // SAFETY: The value behind the pointer will not get dropped or observed later,
@@ -205,6 +210,7 @@ impl<'a> OwningPtr<'a> {
     /// # Safety
     /// Must point to a valid `T`.
     #[inline]
+    #[allow(dead_code)]
     pub unsafe fn read<T>(self) -> T {
         self.as_ptr().cast::<T>().read()
     }
@@ -214,6 +220,7 @@ impl<'a> OwningPtr<'a> {
     /// # Safety
     /// Must point to a valid `T`.
     #[inline]
+    #[allow(dead_code)]
     pub unsafe fn drop_as<T>(self) {
         self.as_ptr().cast::<T>().drop_in_place();
     }
@@ -223,6 +230,7 @@ impl<'a> OwningPtr<'a> {
     /// If possible, it is strongly encouraged to use the other more type-safe functions
     /// over this function.
     #[inline]
+    #[allow(dead_code)]
     #[allow(clippy::wrong_self_convention)]
     pub fn as_ptr(&self) -> *mut u8 {
         self.0.as_ptr()

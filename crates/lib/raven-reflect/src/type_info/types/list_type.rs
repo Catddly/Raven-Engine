@@ -9,6 +9,20 @@ use super::array_type::Array;
 /// This is just a extension to [`Array`] trait to have ability to _push_ and _pop_
 /// element at runtime and change the length of the array.
 pub trait List: Reflect + Array {
+    /// Inserts an element at position `index` within the list,
+    /// shifting all elements after it towards the back of the list.
+    ///
+    /// # Panics
+    /// Panics if `index > len`.
+    fn insert(&mut self, index: usize, element: Box<dyn Reflect>);
+
+    /// Removes and returns the element at position `index` within the list,
+    /// shifting all elements before it towards the front of the list.
+    ///
+    /// # Panics
+    /// Panics if `index` is out of bounds.
+    fn remove(&mut self, index: usize) -> Box<dyn Reflect>;
+
     fn push(&mut self, value: Box<dyn Reflect>);
 
     fn pop(&mut self) -> Option<Box<dyn Reflect>>;

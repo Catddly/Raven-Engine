@@ -16,7 +16,16 @@ pub trait Array: Reflect {
     /// Iterate over all elements in the array.
     fn iter(&self) -> ArrayIter;
 
-    fn clone_dynamic(&self) -> DynamicArray;
+    /// Drain the elements of this array to get a vector of owned values.
+    fn drain(self: Box<Self>) -> Vec<Box<dyn Reflect>>;
+
+    fn clone_dynamic(&self) -> DynamicArray {
+        let mut dyn_array = DynamicArray::new(
+            self.iter().map(|value| value.clone_value()).collect(),
+        );
+        dyn_array.set_name(self.type_name().to_string());
+        dyn_array
+    }
 }
 
 pub struct ArrayIter<'a> {

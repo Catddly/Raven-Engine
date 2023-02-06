@@ -5,6 +5,26 @@ pub trait FromReflect: Reflect + Sized {
     /// Construct a concrete instance from a dyn Reflect.
     /// Return None if the type check fails.
     fn from_reflect(reflected: &dyn Reflect) -> Option<Self>;
+
+    /// Attempts to downcast the given value to `Self` using,
+    /// constructing the value using [`from_reflect`] if that fails.
+    ///
+    /// This method is more efficient than using [`from_reflect`] for cases where
+    /// the given value is likely a boxed instance of `Self` (i.e. `Box<Self>`)
+    /// rather than a boxed dynamic type (e.g. [`DynamicStruct`], [`DynamicList`], etc.).
+    ///
+    /// [`from_reflect`]: Self::from_reflect
+    /// [`DynamicStruct`]: crate::DynamicStruct
+    /// [`DynamicList`]: crate::DynamicList
+    fn take_from_reflect(reflect: Box<dyn Reflect>) -> Result<Self, Box<dyn Reflect>> {
+        match reflect.take::<Self>() {
+            Ok(value) => Ok(value),
+            Err(value) => match Self::from_reflect(value.as_ref()) {
+                None => Err(value),
+                Some(value) => Ok(value),
+            },
+        }
+    }
 }
 
 /// Convert function container of trait FromReflect.

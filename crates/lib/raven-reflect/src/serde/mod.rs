@@ -16,7 +16,7 @@ pub use reflect_de::ReflectDeserialize;
 
 #[cfg(test)]
 mod tests {
-    use std::{ops::Range};
+    use std::{ops::Range, collections::VecDeque};
 
     use crate::{self as raven_reflect,
         type_registry::TypeRegistry,
@@ -29,32 +29,35 @@ mod tests {
 
     #[test]
     fn test_serialize_struct() {
-        #[derive(Reflect, Default, Debug)]
+        #[derive(Reflect, Default, Debug, Eq, PartialEq)]
         #[reflect(Default)]
         struct TestStruct {
             a: u32,
             #[reflect(transparent)]
-            b: char,
+            _b: char,
             c: i32,
             #[reflect(no_serialization)]
             d: bool,
             #[reflect(no_serialization)]
             range: Range<u32>,
             str: String,
+            deque: VecDeque<u8>,
         }
 
         let mut registry = TypeRegistry::default();
         registry.register::<TestStruct>();
         registry.register::<String>();
+        registry.register::<VecDeque<u8>>();
 
         // test_struct can be constructed from pointer.
         let test_struct = TestStruct {
             a: 3,
-            b: 'g',
+            _b: 'g',
             c: -5,
             d: false,
             range: 3..8,
             str: String::from("TestStruct!"),
+            deque: VecDeque::from([2, 7, 9, 4]),
         };
 
         let serializer = ReflectSerializer::new(&test_struct, &registry);

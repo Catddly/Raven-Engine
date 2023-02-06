@@ -73,6 +73,10 @@ impl Array for DynamicArray {
     }
 
     #[inline]
+    fn drain(self: Box<Self>) -> Vec<Box<dyn Reflect>> {
+        self.values.into_vec()
+    }
+
     fn clone_dynamic(&self) -> DynamicArray {
         DynamicArray { 
             name: self.name.clone(),

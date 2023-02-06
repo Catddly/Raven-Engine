@@ -110,3 +110,11 @@ impl Typed for dyn Reflect {
         CELL.get_or_set(|| TypeInfo::Primitive(PrimitiveTypeInfo::new::<Self>()))
     }
 }
+
+impl dyn Reflect {
+    /// Try to downcast dyn Reflect to concrete type T.
+    /// If failed, return origin Box<dyn Reflect>
+    pub fn take<T: Reflect>(self: Box<dyn Reflect>) -> Result<T, Box<dyn Reflect>> {
+        self.downcast::<T>().map(|v| *v)
+    }
+}

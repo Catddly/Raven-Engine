@@ -27,6 +27,7 @@ impl Default for CrateManifest {
 }
 
 impl CrateManifest {
+    #[allow(dead_code)]
     pub fn new(cargo_manifest_path: PathBuf) -> Self {
         Self {
             manifest: {

@@ -1,6 +1,6 @@
 use std::{collections::{HashMap, HashSet}, any::TypeId};
 
-use crate::{Reflect, Typed};
+use crate::{Reflect};
 
 use super::{TypeRegistration, GetTypeRegistration, TypeMeta, FromType};
 
