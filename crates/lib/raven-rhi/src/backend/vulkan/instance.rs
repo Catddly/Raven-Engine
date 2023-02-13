@@ -52,7 +52,7 @@ impl Instance {
         builder: &InstanceBuilder,
     ) -> ash::Instance {
         let app_info = vk::ApplicationInfo::builder()
-            .api_version(vk::make_api_version(0, 1, 2, 0))
+            .api_version(vk::make_api_version(0, 1, 3, 0))
             .application_name(CString::new("Raven Engine").unwrap().as_c_str())
             .engine_name(CString::new("Raven Vulkan RenderDevice").unwrap().as_c_str())
             .build();

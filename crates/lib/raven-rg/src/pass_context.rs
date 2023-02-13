@@ -777,8 +777,7 @@ fn rg_pass_binding_to_descriptor_set_bindings(
                 RenderGraphPassBinding::DynamicStorageBuffer(offset) => DescriptorSetBinding::DynamicStorageBuffer {
                     buffer_info: vk::DescriptorBufferInfo::builder()
                         .buffer(ctx.global_dynamic_buffer.buffer.raw)
-                        //.range(self.context.global_dynamic_buffer.max_storage_buffer_range() as _)
-                        .range(vk::WHOLE_SIZE)
+                        .range(ctx.global_dynamic_buffer.max_storage_buffer_range() as _)
                         .build(),
                     offset: *offset,
                 },

@@ -196,13 +196,22 @@ impl MeshRenderer {
             }
         );
 
+        #[cfg(feature = "gpu_ray_tracing")]
+        let universal_draw_data_buffer_usage_flag = vk::BufferUsageFlags::STORAGE_BUFFER |
+            vk::BufferUsageFlags::INDEX_BUFFER |
+            vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS |
+            vk::BufferUsageFlags::TRANSFER_DST |
+            vk::BufferUsageFlags::ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_KHR;
+        #[cfg(not(feature = "gpu_ray_tracing"))]
+        let universal_draw_data_buffer_usage_flag = vk::BufferUsageFlags::STORAGE_BUFFER |
+            vk::BufferUsageFlags::INDEX_BUFFER |
+            vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS |
+            vk::BufferUsageFlags::TRANSFER_DST;
+
         // create giant buffers to contain mesh vertex data and index data
         let universal_draw_data_buffer_desc: BufferDesc = BufferDesc::new_gpu_only(
             1024 * 1024 * 512, // 512 MB
-            vk::BufferUsageFlags::STORAGE_BUFFER |
-                vk::BufferUsageFlags::INDEX_BUFFER |
-                vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS |
-                vk::BufferUsageFlags::TRANSFER_DST
+            universal_draw_data_buffer_usage_flag
         );
         
         let universal_mesh_buffer_desc: BufferDesc = BufferDesc::new_cpu_to_gpu(

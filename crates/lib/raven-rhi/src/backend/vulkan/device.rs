@@ -205,6 +205,8 @@ impl Device {
             vk::KhrMaintenance2Fn::name(),
             vk::KhrMaintenance3Fn::name(),
 
+            vk::KhrSamplerMirrorClampToEdgeFn::name(),
+
             //vk::KhrMaintenance4Fn::name(),
             vk::KhrBufferDeviceAddressFn::name(),
 

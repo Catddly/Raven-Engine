@@ -43,6 +43,6 @@ ash = "0.33"
 gpu-allocator = "0.11.0"
 vk-sync = { git = "https://github.com/gwihlidal/vk-sync-rs", rev = "496dbbc" }
 
-hassle-rs = "0.9.0"
+hassle-rs = { git = "https://github.com/CrystaLamb/hassle-rs.git", rev = "0d50d58" }
 shader-prepper = "0.2.0"
 rspirv-reflect = "0.7.0"

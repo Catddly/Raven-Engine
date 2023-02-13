@@ -13,6 +13,7 @@ lazy_static::lazy_static! {
         "gpu_allocator::vulkan",
         "gpu_allocator::allocator::free_list_allocator",
         "gpu_allocator::allocator::dedicated_block_allocator",
+        "async_io::driver",
     ]);
 }
 

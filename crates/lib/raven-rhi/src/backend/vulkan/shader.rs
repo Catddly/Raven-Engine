@@ -41,6 +41,8 @@ pub struct ShaderBinary {
 // }
 
 pub struct ShaderBinaryStage {
+    /// For debug purpose
+    pub source: PathBuf,
     pub stage: PipelineShaderStage,
     pub entry: String,
     pub binary: Option<Arc<ShaderBinary>>,

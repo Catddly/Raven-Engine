@@ -646,7 +646,7 @@ impl Device {
 
         let max_primitive_counts = [new_instance_count as u32]; // have only one tlas
     
-        self.update_acceleration_structure(
+        self.rebuild_acceleration_structure(
             cb_raw,
             geometry_build_info,
             &build_range_infos,
@@ -663,7 +663,7 @@ impl Device {
     /// Due to the fact that we only update tlas for now.
     /// 
     /// Update blas will be inefficient, prefer building a new blas.
-    fn update_acceleration_structure(
+    fn rebuild_acceleration_structure(
         &self,
         cb_raw: vk::CommandBuffer,
         mut geometry_build_info: vk::AccelerationStructureBuildGeometryInfoKHR,

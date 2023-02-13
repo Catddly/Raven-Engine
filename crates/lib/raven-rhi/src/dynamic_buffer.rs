@@ -22,18 +22,30 @@ pub struct DynamicBuffer {
 
 impl DynamicBuffer {
     pub fn new(rhi: &Rhi) -> Self {
+        #[cfg(feature = "gpu_ray_tracing")]
+        let dynamic_buffer_flags = vk::BufferUsageFlags::UNIFORM_BUFFER |
+            vk::BufferUsageFlags::STORAGE_BUFFER |
+            vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS |
+            vk::BufferUsageFlags::ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_KHR;
+
+        #[cfg(not(feature = "gpu_ray_tracing"))]
+        let dynamic_buffer_flags = vk::BufferUsageFlags::UNIFORM_BUFFER |
+            vk::BufferUsageFlags::STORAGE_BUFFER |
+            vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS |
+            vk::BufferUsageFlags::ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_KHR;
+
         // total size of the buffer should be MAX_DYNAMIC_BUFFER_FRAME_COUNT * MAX_DYNAMIC_BUFFER_SIZE_BYTES;
         let buffer = rhi.device.create_buffer(
             BufferDesc::new_cpu_to_gpu(
                 MAX_DYNAMIC_BUFFER_FRAME_COUNT * MAX_DYNAMIC_BUFFER_SIZE_BYTES, 
-                vk::BufferUsageFlags::UNIFORM_BUFFER |
-                vk::BufferUsageFlags::STORAGE_BUFFER |
-                vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
+                dynamic_buffer_flags,
             ),
             "dynamic buffer"
         ).expect("Failed to create dynamic buffer!");
 
         let limits = &rhi.device.physical_device.properties.limits;
+        dbg!(&limits.max_uniform_buffer_range);
+        dbg!(&limits.max_storage_buffer_range);
         let alignment = limits.min_uniform_buffer_offset_alignment.max(limits.min_storage_buffer_offset_alignment);
 
         Self {
@@ -55,7 +67,11 @@ impl DynamicBuffer {
     
     #[inline]
     pub fn max_storage_buffer_range(&self) -> u32 {
-        self.max_storage_buffer_range
+        // Sadly we can't have unsized dynamic storage buffers sub-allocated from dynamic constants because WHOLE_SIZE blows up.
+        // https://github.com/KhronosGroup/Vulkan-ValidationLayers/issues/2846#issuecomment-851744837
+        // For now, just a max size.
+        pub const MAX_DYNAMIC_CONSTANTS_STORAGE_BUFFER_BYTES: u32 = 1024 * 1024;
+        self.max_storage_buffer_range.min(MAX_DYNAMIC_CONSTANTS_STORAGE_BUFFER_BYTES)
     }
 
     pub fn advance_frame(&mut self) {

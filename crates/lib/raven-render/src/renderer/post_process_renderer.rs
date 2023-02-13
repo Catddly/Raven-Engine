@@ -422,7 +422,10 @@ impl PostProcessRenderer {
         post_exposure_mult: f32,
         contrast: f32,
     ) -> RgHandle<Image> {
-        let mut output = rg.new_resource(input_image.desc().format(vk::Format::B10G11R11_UFLOAT_PACK32));
+        let output_img_desc = input_image.desc().format(vk::Format::B10G11R11_UFLOAT_PACK32);
+        //dbg!(input_image.desc());
+        //dbg!(output_img_desc);
+        let mut output = rg.new_resource(output_img_desc);
 
         let bloom_output = self.bloom(rg, &input_image, 0.92);
         let bloom_mip_level = bloom_output.desc().mip_levels as u32;

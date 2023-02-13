@@ -205,6 +205,8 @@ pub fn create_raster_pipeline(
     desc: RasterPipelineDesc, 
     shader_binaries: &[ShaderBinaryStage]
 ) -> anyhow::Result<RasterPipeline, RhiError> {
+    //glog::debug!("Creating raster pipeline: {:?}", shader_binaries[0].source);
+
     let (set_layouts, push_constants): (Vec<PipelineSetLayouts>, Vec<(Option<PushConstantInfo>, PipelineShaderStage)>) = shader_binaries.iter()
         .map(|binary| {
             let reflection_data = rspirv_reflect::Reflection::new_from_spirv(&binary.binary.as_ref().unwrap().spirv)
@@ -440,6 +442,8 @@ pub fn create_compute_pipeline(
     desc: ComputePipelineDesc,
     shader_binary: &ShaderBinary,
 ) -> anyhow::Result<ComputePipeline, RhiError> {
+    // glog::debug!("Creating compute pipeline: {:?}", desc.source);
+
     let (mut set_layouts, push_constants, group_size) = {
         let reflection_data = rspirv_reflect::Reflection::new_from_spirv(&shader_binary.spirv)
             .expect("Failed to get spirv reflection data!");
@@ -568,6 +572,8 @@ pub fn create_ray_tracing_pipeline(
     desc: RayTracingPipelineDesc,
     shader_binaries: &[ShaderBinaryStage]
 ) -> anyhow::Result<RayTracingPipeline, RhiError>  {
+    // glog::debug!("Creating ray tracing pipeline: {:?}", shader_binaries[0].source);
+
     let (set_layouts, push_constants): (Vec<PipelineSetLayouts>, Vec<(Option<PushConstantInfo>, PipelineShaderStage)>) = shader_binaries.iter()
         .map(|binary| {
             let reflection_data = rspirv_reflect::Reflection::new_from_spirv(&binary.binary.as_ref().unwrap().spirv)

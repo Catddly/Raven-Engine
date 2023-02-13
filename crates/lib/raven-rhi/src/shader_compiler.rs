@@ -118,7 +118,6 @@ impl LazyWorker for CompileShader {
             }
             "glsl" => unimplemented!(),
             "hlsl" => {
-                
                 let file_name = PathBuf::from(self.source.to_str().unwrap().to_owned());
                 let mut path = raven_filesystem::get_project_folder_path_absolute(raven_filesystem::ProjectFolder::ShaderSource)?;
                 path.extend(file_name.iter());
@@ -134,7 +133,7 @@ impl LazyWorker for CompileShader {
                 let source = source
                     .map_err(|err| anyhow::anyhow!("{}", err))
                     .with_context(|| format!("shader path: {:?}", self.source))?;
-                let target_profile = format!("{}_6_4", self.profile);
+                let target_profile = format!("{}_6_6", self.profile);
 
                 let mut source_text = String::new();
                 for s in source {
@@ -164,7 +163,7 @@ impl LazyWorker for CompileShaderStage {
         //glog::debug!("Run batched on thread: {:?}", std::thread::current().name());
 
         let stages: Vec<_> = self.shaders.iter()
-            .map(|(stage, compile_info)| (stage.clone(), compile_info.entry.clone()))
+            .map(|(stage, compile_info)| (stage.clone(), compile_info.entry.clone(), compile_info.source.clone()))
             .collect();
 
         let compiled_shaders: Vec<Arc<ShaderBinary>> = futures::future::try_join_all(self.shaders.into_iter()
@@ -178,6 +177,7 @@ impl LazyWorker for CompileShaderStage {
             .map(|(binary, compile_info)| ShaderBinaryStage {
                 stage: compile_info.0,
                 entry: compile_info.1,
+                source: compile_info.2,
                 binary: Some(binary.clone()),
             })
             .collect::<Vec<_>>())
@@ -273,14 +273,14 @@ fn compile_shader_hlsl(
 ) -> anyhow::Result<Bytes> {
     let t = std::time::Instant::now();
 
-    let spirv = hassle_rs::compile_hlsl(
+    let spirv = hassle_rs::compile_hlsl_vulkan_sdk(
         name,
         &source,
         &entry,
         target_profile,
         &[
             "-spirv",
-            "-enable-templates",
+            //"-enable-templates",
             "-fspv-target-env=vulkan1.2", // hlsl for vulkan
             "-WX",  // warnings as errors
             "-Ges", // strict mode
@@ -291,7 +291,7 @@ fn compile_shader_hlsl(
     .map_err(|err| anyhow::anyhow!("{}", err))?;
 
     if entry.is_empty() {
-        glog::info!("DX Compiler compile {} % with {:?}", name, t.elapsed());
+        glog::info!("DX Compiler compile {} $entry$ with {:?}", name, t.elapsed());
     } else {
         glog::info!("DX Compiler compile {} {} with {:?}", name, entry, t.elapsed());
     }
