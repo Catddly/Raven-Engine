@@ -12,7 +12,7 @@ dynamic_linking = ["raven-dylib"]
 # Force dynamic linking
 # See https://doc.rust-lang.org/reference/linkage.html
 raven-dylib  = { path = "../../lib/raven-dylib/", default-features = false, optional = true }
-raven-facade = { path = "../../lib/raven-facade/", default-features = false }
+raven-facade = { path = "../../lib/raven-facade/" }
 
 log = "0.4.17"
 winit = "0.27.5"

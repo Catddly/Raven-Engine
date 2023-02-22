@@ -44,8 +44,6 @@ impl DynamicBuffer {
         ).expect("Failed to create dynamic buffer!");
 
         let limits = &rhi.device.physical_device.properties.limits;
-        dbg!(&limits.max_uniform_buffer_range);
-        dbg!(&limits.max_storage_buffer_range);
         let alignment = limits.min_uniform_buffer_offset_alignment.max(limits.min_storage_buffer_offset_alignment);
 
         Self {

@@ -514,7 +514,7 @@ impl MeshRenderer {
         mesh_tex_mask
     }
 
-    pub fn add_mesh_instance(&mut self, transform: Affine3A, handle: MeshHandle) -> MeshInstanceHandle {
+    pub fn add_mesh_instance(&mut self, handle: MeshHandle, transform: Affine3A) -> MeshInstanceHandle {
         debug_assert!(MeshHandle::is_valid(handle));
         let instance_handle = MeshInstanceHandle(self.mesh_instances.len() as _);
 

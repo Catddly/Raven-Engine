@@ -6,6 +6,9 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+raven-core = { path = "../../lib/raven-core/" }
 raven-math = { path = "../../lib/raven-math/" }
 
 winit = "0.27.5"
+
+once_cell = "1.15.0"

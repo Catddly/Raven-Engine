@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{VecDeque};
 
 use parking_lot::{Once, OnceState};
 use thiserror::Error;
@@ -16,48 +16,60 @@ pub enum OnceQueueError {
 struct OnceJob {
     once: Once,
     job: OnceJobFunc,
+    job_name: String,
 }
 
 /// Queue to do all job once and check if they all success.
 pub struct OnceQueue {
-    queue: VecDeque<(OnceJob, String)>,
+    init_queue: VecDeque<OnceJob>,
+    shutdown_queue: VecDeque<OnceJob>,
 }
 
 impl OnceQueue {
     pub fn new() -> Self {
         Self {
-            queue: VecDeque::new(),
+            init_queue: VecDeque::new(),
+            shutdown_queue: VecDeque::new(),
         }
     }
 
-    pub fn push_job<F>(&mut self, func: F)
+    pub fn push_job<F1, F2>(&mut self, init_func: F1, shutdown_func: F2)
     where
-        F: FnOnce() -> anyhow::Result<()> + 'static,
+        F1: FnOnce() -> anyhow::Result<()> + 'static,
+        F2: FnOnce() -> anyhow::Result<()> + 'static,
     {
-        let func_name = std::any::type_name::<F>().to_string();
-        self.queue.push_back((OnceJob {
+        let init_func_name = std::any::type_name::<F1>().to_string();
+        let shutdown_func_name = std::any::type_name::<F2>().to_string();
+
+        self.init_queue.push_back(OnceJob {
             once: Once::new(),
-            job: Box::new(func)
-        }, func_name));
+            job: Box::new(init_func),
+            job_name: init_func_name,
+        });
+
+        self.shutdown_queue.push_back(OnceJob {
+            once: Once::new(),
+            job: Box::new(shutdown_func),
+            job_name: shutdown_func_name,
+        });
     }
 
-    pub fn execute(&mut self) -> anyhow::Result<(), OnceQueueError> {
-        let drained_queue = self.queue.drain(..);
-        Self::execute_impl(drained_queue)
+    pub fn initialize<'a>(&mut self) -> anyhow::Result<(), OnceQueueError> {
+        let queue = self.init_queue.drain(..);
+        Self::execute_impl(queue)
     }
 
-    pub fn execute_backwards(&mut self) -> anyhow::Result<(), OnceQueueError> {
-        let drained_queue = self.queue.drain(..).rev();
-        Self::execute_impl(drained_queue)
+    pub fn shutdown(&mut self) -> anyhow::Result<(), OnceQueueError> {
+        let queue = self.shutdown_queue.drain(..).rev();
+        Self::execute_impl(queue)
     }
 
-    fn execute_impl(iter: impl Iterator<Item = (OnceJob, String)>) -> anyhow::Result<(), OnceQueueError> {
+    fn execute_impl(iter: impl Iterator<Item = OnceJob>) -> anyhow::Result<(), OnceQueueError> {
         for job in iter {
-            let (job, name) = job;
-            let job_func = job.job;
-
+            let (job_func, name) = (job.job, job.job_name);
+            
             // here we call unwarp(), it this once call failed, we get poisoned result.
-            job.once.call_once(move || { job_func().unwrap() });
+            job.once.call_once(|| { job_func().unwrap() });
             let result = job.once.state();
 
             if let OnceState::Poisoned = &result {
@@ -69,7 +81,12 @@ impl OnceQueue {
     }
 
     #[inline]
-    pub fn is_finished(&self) -> bool {
-        self.queue.is_empty()
+    pub fn all_initialized(&self) -> bool {
+        self.init_queue.is_empty()
+    }
+
+    #[inline]
+    pub fn all_shutdowned(&self) -> bool {
+        self.shutdown_queue.is_empty()
     }
 }

@@ -12,7 +12,6 @@ mod impls;
 mod type_info;
 mod type_registry;
 mod serde;
-mod ptrs;
 
 mod special_traits {
     pub(crate) mod debug;

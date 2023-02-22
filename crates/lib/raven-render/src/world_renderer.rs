@@ -171,8 +171,8 @@ impl WorldRenderer {
     }
 
     #[inline]
-    pub fn add_mesh_instance(&mut self, transform: Affine3A, handle: MeshHandle) -> MeshInstanceHandle {
-        self.mesh_renderer.add_mesh_instance(transform, handle)
+    pub fn add_mesh_instance(&mut self, handle: MeshHandle, transform: Affine3A) -> MeshInstanceHandle {
+        self.mesh_renderer.add_mesh_instance(handle, transform)
     }
 
     // TODO: move to scene

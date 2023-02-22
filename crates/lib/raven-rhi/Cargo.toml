@@ -12,6 +12,8 @@ raven-container  = { path = "../../lib/raven-container/" }
 raven-filesystem = { path = "../../lib/raven-filesystem/" }
 raven-thread     = { path = "../../lib/raven-thread/" }
 
+raven-input      = { path = "../../lib/raven-input" }
+
 thiserror = "1.0.38"
 anyhow = "1.0.0"  # error lib
 log = "0.4"       # logging lib

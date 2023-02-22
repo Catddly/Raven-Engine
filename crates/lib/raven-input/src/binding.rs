@@ -1,51 +1,11 @@
 use std::collections::HashMap;
 
-use winit::event::VirtualKeyCode;
+use crate::manager::KeyCode;
 
-use super::{mouse::{MouseButton, MouseInputState}, keyboard::KeyboardInputState};
+use super::{mouse::{MouseInputState}, keyboard::KeyboardInputState};
 
 pub type InputBindingKey = &'static str;
 pub type InputMap = HashMap<InputBindingKey, f32>;
-
-#[derive(Hash, Copy, Clone)]
-pub enum KeyCode {
-    VirtualKeyCode(VirtualKeyCode),
-    Mouse(MouseButton),
-}
-
-impl PartialEq for KeyCode {
-    fn eq(&self, other: &Self) -> bool {
-        match self {
-            Self::VirtualKeyCode(vk) => {
-                if let KeyCode::VirtualKeyCode(vk_other) = other {
-                    return vk == vk_other;
-                } else {
-                    false
-                }
-            }
-            Self::Mouse(mouse) => {
-                if let KeyCode::Mouse(mouse_other) = other {
-                    return mouse == mouse_other;
-                } else {
-                    false
-                }
-            }
-        }
-    }
-}
-impl Eq for KeyCode {}
-
-impl KeyCode {
-    #[inline]
-    pub fn vkcode(vk: VirtualKeyCode) -> Self {
-        Self::VirtualKeyCode(vk)
-    }
-    
-    #[inline]
-    pub fn mouse(mouse: MouseButton) -> Self {
-        Self::Mouse(mouse)
-    }
-}
 
 pub struct InputBinding {
     key: InputBindingKey,
@@ -70,7 +30,7 @@ impl InputBinding {
     pub fn activation_time(mut self, activation_time: f32) -> Self {
         self.activation_time = activation_time;
         self
-    } 
+    }
 }
 
 pub struct InputBindingMap {
@@ -115,7 +75,7 @@ impl InputBindingMap {
             let curr_activation_time = if binding.activation_time > 1e-10 {
                 let dt = match keycode {
                     KeyCode::VirtualKeyCode(vk) => {
-                        if vkinput.is_button_pressed(*vk) { dt } else { -dt }
+                        if vkinput.is_keyboard_pressed(*vk) { dt } else { -dt }
                     }
                     KeyCode::Mouse(mouse) => {
                         if mouse_input.is_button_hold(*mouse) { dt } else { -dt }
@@ -127,7 +87,7 @@ impl InputBindingMap {
             } else { // no activation time
                 let activated = match keycode {
                     KeyCode::VirtualKeyCode(vk) => {
-                        if vkinput.is_button_pressed(*vk) { true } else { false }
+                        if vkinput.is_keyboard_pressed(*vk) { true } else { false }
                     }
                     KeyCode::Mouse(mouse) => {
                         if mouse_input.is_button_hold(*mouse) { true } else { false }

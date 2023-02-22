@@ -2,7 +2,9 @@ use std::{collections::HashMap, any::TypeId, fmt::Debug};
 
 use downcast_rs::{Downcast, impl_downcast};
 
-use crate::{TypeInfo, Reflect, Typed, type_info_cell, ptrs::{Ptr, PtrMut}};
+use raven_core::ptr::{Ptr, PtrMut};
+
+use crate::{TypeInfo, Reflect, Typed, type_info_cell};
 
 use super::FromType;
 

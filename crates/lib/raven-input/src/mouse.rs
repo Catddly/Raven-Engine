@@ -1,5 +1,6 @@
-use raven_math::Vec2;
 use winit::{dpi::PhysicalPosition, event::{Event, DeviceEvent, WindowEvent, MouseButton as WinitMouseButton, ElementState, MouseScrollDelta}};
+
+use raven_math::Vec2;
 
 #[derive(Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct MouseButton(usize);
@@ -10,12 +11,12 @@ impl MouseButton {
     pub const MIDDLE  : Self = Self(2);
     pub const RIGHT   : Self = Self(3);
 
-    fn as_usize(&self) -> usize {
+    pub fn as_usize(&self) -> usize {
         self.0
     }
 
     #[allow(dead_code)]
-    fn from_usize(v: usize) -> Self {
+    pub fn from_usize(v: usize) -> Self {
         Self(v)
     }
 }

@@ -9,7 +9,7 @@ use turbosloth::*;
 use bytes::Bytes;
 use wyhash::WyHash;
 
-use raven_math::AABB;
+use raven_math::{AABB, Vec3};
 
 use super::asset_registry::{AssetHandle, AssetRef};
 use super::error::AssetPipelineError;
@@ -112,6 +112,10 @@ impl RawMeshProcess {
         for vertex in vertex_pos {
             aabb.merge_point_f32(vertex);
         }
+
+        // Note: add some boundary to aabb
+        aabb.max += Vec3::new(0.01, 0.01, 0.01);
+        aabb.min -= Vec3::new(0.01, 0.01, 0.01);
 
         aabb
     }

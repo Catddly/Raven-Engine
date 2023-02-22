@@ -4,6 +4,16 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
+default = [
+    "default_core_api",
+    "default_input_api",
+    "default_render_api"
+]
+
+default_core_api = []
+default_input_api = []
+default_render_api = ["default_core_api"]
+
 gpu_ray_tracing = [
     "raven-rhi/gpu_ray_tracing",
     "raven-rg/gpu_ray_tracing",
@@ -25,3 +35,13 @@ raven-reflect    = { path = "../../lib/raven-reflect/" }
 raven-rhi        = { path = "../../lib/raven-rhi/" }
 raven-rg         = { path = "../../lib/raven-rg/" }
 raven-render     = { path = "../../lib/raven-render/" }
+
+# error lib
+anyhow = "1.0.0"
+
+# Input api dependencies
+parking_lot = "0.12.1"
+lazy_static = "1.4.0"
+
+# Core api dependencies
+winit = "0.27.5"

@@ -17,7 +17,7 @@ use winit::window::Window;
 use crate::backend::vulkan::{Instance, Surface, physical_device, Device, Swapchain, debug};
 
 #[derive(Clone, Copy)]
-pub struct RHIConfig {
+pub struct RhiConfig {
     pub swapchain_extent: [u32; 2],
     pub enable_debug: bool,
     pub enable_vsync: bool,
@@ -31,7 +31,7 @@ pub struct Rhi {
 }
 
 impl Rhi {
-    pub fn new(config: RHIConfig, window: &Window) -> anyhow::Result<Self> {
+    pub fn new(config: RhiConfig, window: &Window) -> anyhow::Result<Self> {
         let instance = Instance::builder().build()?;
         let surface = Arc::new(Surface::new(&instance, &window)?);
 

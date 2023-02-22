@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 
 // TODO: use engine's own keycode
-use winit::event::{VirtualKeyCode, Event, WindowEvent, ElementState};
+use winit::event::{Event, WindowEvent, ElementState};
+
+pub use winit::event::VirtualKeyCode as VirtualKeyCode; 
 
 #[derive(Copy, Clone)]
 struct KeyState {
@@ -24,7 +26,7 @@ impl KeyboardInputState {
         self.input_record_map.get(&vk).map_or(false, |state| state.tick_count == 1)
     }
 
-    pub fn is_button_pressed(&self, vk: VirtualKeyCode) -> bool {
+    pub fn is_keyboard_pressed(&self, vk: VirtualKeyCode) -> bool {
         self.input_record_map.contains_key(&vk)
     }
 

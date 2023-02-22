@@ -6,59 +6,51 @@ pub mod prelude;
 use std::{collections::VecDeque, sync::Arc};
 
 use winit::{
-    event_loop::{EventLoop},
-    dpi::{LogicalSize, LogicalPosition},
-    window::{Window, WindowBuilder},
-    event::{WindowEvent, Event, VirtualKeyCode, ElementState}, 
+    event::{WindowEvent, Event, ElementState, VirtualKeyCode},
     platform::run_return::EventLoopExtRunReturn
 };
 
+use raven_facade::{log, input, render::{LightFrameConstants, FrameConstants}};
 use raven_facade::math::{Vec3, Quat, Affine3A};
 use raven_facade::asset::{AssetManager, AssetLoadDesc, asset_registry::AssetHandle};
 use raven_facade::scene::{camera::{self}, persistence::{PersistStates, IsStatesChanged}};
-use raven_facade::input::{InputBinding};
+use raven_facade::input::{InputApi, KeyCode, InputBinding, MouseButton};
 
-use raven_facade::core::console;
-use raven_facade::input::{InputManager, KeyCode, MouseButton};
-use raven_facade::filesystem::{ProjectFolder};
-use raven_facade::container::OnceQueue;
+use raven_facade::core::{self, console, CoreApi};
+use raven_facade::filesystem::{self, ProjectFolder};
 
-use raven_facade::render::{WorldRenderer};
+use raven_facade::render::{self, RenderApi};
 #[cfg(feature = "gpu_ray_tracing")]
 use raven_facade::render::RenderMode;
-use raven_facade::rhi::{RHIConfig, Rhi, backend};
-use raven_facade::rg::{GraphExecutor, IntoPipelineDescriptorBindings, RenderGraphPassBindable, FrameConstants, LightFrameConstants};
+
+static mut ENGINE_CONTEXT: Option<EngineContext> = None;
 
 /// Global engine context to control engine on the user side.
 /// Facade Design Pattern to control different parts of engine without knowing the underlying implementation.
-pub struct EngineContext<App> {
-    pub main_window: Window,
-    event_loop: EventLoop<()>,
-    input_manager: InputManager,
-
-    rhi: Rhi,
-    rg_executor: GraphExecutor,
-    renderer: WorldRenderer,
+struct EngineContext {
+    core_api: CoreApi,
+    input_api: InputApi,
+    render_api: RenderApi,
 
     asset_manager: AssetManager,
 
-    app: App,
+    app: Box<dyn user::App>,
 }
 
-fn init_filesystem_module() -> anyhow::Result<()> {
-    raven_facade::filesystem::set_default_root_path()?;
+fn init_filesystem() -> anyhow::Result<()> {
+    filesystem::set_default_root_path()?;
     
-    raven_facade::filesystem::set_custom_mount_point(ProjectFolder::Baked, "../../resource/baked/")?;
-    raven_facade::filesystem::set_custom_mount_point(ProjectFolder::Assets, "../../resource/assets/")?;
-    raven_facade::filesystem::set_custom_mount_point(ProjectFolder::ShaderSource, "../../resource/shader_src/")?;
+    filesystem::set_custom_mount_point(ProjectFolder::Baked, "../../resource/baked/")?;
+    filesystem::set_custom_mount_point(ProjectFolder::Assets, "../../resource/assets/")?;
+    filesystem::set_custom_mount_point(ProjectFolder::ShaderSource, "../../resource/shader_src/")?;
 
     Ok(())
 }
 
-fn init_log_module() -> anyhow::Result<()> {
+fn init_log() -> anyhow::Result<()> {
     let console_var = console::from_args();
 
-    raven_facade::log::init_log(raven_facade::log::LogConfig {
+    log::init_log(log::LogConfig {
         level: console_var.level,
     })?;
 
@@ -66,345 +58,303 @@ fn init_log_module() -> anyhow::Result<()> {
 }
 
 /// Initialize raven engine.
-pub fn init(app: impl user::App) -> anyhow::Result<EngineContext<impl user::App>> {
-    let mut init_queue = OnceQueue::new();
+pub fn init(app: Box<dyn user::App>) -> anyhow::Result<()> {
+    init_filesystem()?;
+    init_log()?;
 
-    init_queue.push_job(init_filesystem_module);
-    init_queue.push_job(init_log_module);
-
-    init_queue.execute()?;
-
-    // init event loop
-    let event_loop = EventLoop::new();
-    let primary_monitor = event_loop.primary_monitor()
-        .expect("Must have at least one monitor!");
-    primary_monitor.video_modes()
-        .next()
-        .expect("Must have at least one video modes!");
-
-    let scale_factor = primary_monitor.scale_factor();
-    let monitor_resolution = primary_monitor.size().to_logical::<f64>(scale_factor);
-
-    let window_resolution = LogicalSize::new(
-        1920.0,
-        1080.0
-    );
-    let window_position = LogicalPosition::new (
-        (monitor_resolution.width - window_resolution.width) / 2.0,
-        (monitor_resolution.height - window_resolution.height) / 2.0,
-    );  
-
-    // create main window
-    let main_window = WindowBuilder::new()
-        .with_inner_size(window_resolution)
-        .with_position(window_position)
-        .with_resizable(false)
-        .with_title("Raven Engine")
-        .build(&event_loop)
-        .expect("Failed to create a window!");
-
-    let render_resolution = main_window.inner_size();
-    let render_resolution = [render_resolution.width, render_resolution.height];
-
-    // create render device
-    let rhi_config = RHIConfig {
-        enable_debug: true,
-        enable_vsync: false,
-        swapchain_extent: main_window.inner_size().into(),
-    };
-    let rhi = Rhi::new(rhi_config, &main_window)?;
-
-    let rg_executor = GraphExecutor::new(&rhi)?;
-    let renderer = WorldRenderer::new(&rhi, render_resolution);
+    let core_api = core::CoreApi::new();
+    let input_api = input::InputApi::new();
+    let render_api = render::RenderApi::new();
 
     let mut app = app;
     app.init()?;
 
     glog::trace!("Raven Engine initialized!");
-    Ok(EngineContext { 
-        main_window,
-        event_loop,
-        input_manager: InputManager::new(),
+    unsafe {
+        ENGINE_CONTEXT = Some(EngineContext { 
+            core_api,
+            input_api,
+            render_api,
+    
+            asset_manager: AssetManager::new(),
+    
+            app,
+        });
+    
+        if let Some(ctx) = &mut ENGINE_CONTEXT {
+            ctx.core_api.init();
+            core::connect(&mut ctx.core_api);
 
-        rhi,
-        rg_executor,
-        renderer,
+            ctx.input_api.init();
+            input::connect(&mut ctx.input_api);
 
-        asset_manager: AssetManager::new(),
+            ctx.render_api.init();
+            render::connect(&mut ctx.render_api);
+        }
+    }
 
-        app,
-    })
+    Ok(())
 }
 
 /// Start engine main loop.
-pub fn main_loop(engine_context: &mut EngineContext<impl user::App>) {
-    let EngineContext { 
-        event_loop,
-        main_window: _,
-        input_manager,
-        
-        rhi,
-        rg_executor,
-        renderer,
+pub fn main_loop() {
+    unsafe {
+        let EngineContext {
+            core_api: _,
+            input_api,
+            render_api,
 
-        asset_manager,
+            asset_manager,
 
-        app,
-    } = engine_context;
+            app,
+        } = ENGINE_CONTEXT.as_mut().unwrap();
 
-    asset_manager.load_asset(AssetLoadDesc::load_mesh("mesh/cerberus_gun/scene.gltf")).unwrap();
-    //asset_manager.load_asset(AssetLoadDesc::load_mesh("mesh/cornell_box/scene.gltf")).unwrap();
-    asset_manager.load_asset(AssetLoadDesc::load_texture("texture/skybox/right.jpg")).unwrap();
-    asset_manager.load_asset(AssetLoadDesc::load_texture("texture/skybox/left.jpg")).unwrap();
-    asset_manager.load_asset(AssetLoadDesc::load_texture("texture/skybox/top.jpg")).unwrap();
-    asset_manager.load_asset(AssetLoadDesc::load_texture("texture/skybox/bottom.jpg")).unwrap();
-    asset_manager.load_asset(AssetLoadDesc::load_texture("texture/skybox/front.jpg")).unwrap();
-    asset_manager.load_asset(AssetLoadDesc::load_texture("texture/skybox/back.jpg")).unwrap();
+        asset_manager.load_asset(AssetLoadDesc::load_mesh("mesh/cerberus_gun/scene.gltf")).unwrap();
+        //asset_manager.load_asset(AssetLoadDesc::load_mesh("mesh/cornell_box/scene.gltf")).unwrap();
+        asset_manager.load_asset(AssetLoadDesc::load_texture("texture/skybox/right.jpg")).unwrap();
+        asset_manager.load_asset(AssetLoadDesc::load_texture("texture/skybox/left.jpg")).unwrap();
+        asset_manager.load_asset(AssetLoadDesc::load_texture("texture/skybox/top.jpg")).unwrap();
+        asset_manager.load_asset(AssetLoadDesc::load_texture("texture/skybox/bottom.jpg")).unwrap();
+        asset_manager.load_asset(AssetLoadDesc::load_texture("texture/skybox/front.jpg")).unwrap();
+        asset_manager.load_asset(AssetLoadDesc::load_texture("texture/skybox/back.jpg")).unwrap();
 
-    let handles = asset_manager.dispatch_load_tasks().unwrap();
-    let tex_handles: &[Arc<AssetHandle>; 6] = handles.split_at(1).1.try_into().unwrap();
+        let handles = asset_manager.dispatch_load_tasks().unwrap();
+        let tex_handles: &[Arc<AssetHandle>; 6] = handles.split_at(1).1.try_into().unwrap();
 
-    renderer.add_cubemap_split(&rhi, tex_handles);
-    let mesh_handle = renderer.add_mesh(&handles[0]);
+        {
+            let mut render_api = render_api.write(); 
+            render_api.add_cubemap_split(tex_handles);
+            let mesh_handle = render_api.add_mesh(&handles[0]);
 
-    let gun_xform = Affine3A::from_scale_rotation_translation(
-        Vec3::splat(0.05),
-        Quat::from_rotation_y(90_f32.to_radians()),
-        Vec3::splat(0.0)
-    );
-    // let cornell_xform = Affine3A::from_scale_rotation_translation(
-    //     Vec3::splat(1.0),
-    //     Quat::IDENTITY,
-    //     Vec3::splat(0.0)
-    // );
-    let _instance = renderer.add_mesh_instance(gun_xform, mesh_handle);
-
-    let resolution = renderer.get_render_resolution();
-    let camera = camera::Camera::builder()
-        .aspect_ratio(resolution[0] as f32 / resolution[1] as f32)
-        .build();
-    let camera_controller = camera::controller::FirstPersonController::new(Vec3::new(0.0, 0.5, 5.0), Quat::IDENTITY);
-
-    renderer.set_main_camera(camera, camera_controller);
-
-    input_manager.add_binding(
-        KeyCode::vkcode(VirtualKeyCode::W), 
-        InputBinding::new("walk", 1.0).activation_time(0.2)
-    );
-    input_manager.add_binding(
-        KeyCode::vkcode(VirtualKeyCode::S), 
-        InputBinding::new("walk", -1.0).activation_time(0.2)
-    );
-    input_manager.add_binding(
-        KeyCode::vkcode(VirtualKeyCode::A), 
-        InputBinding::new("strafe", -1.0).activation_time(0.2)
-    );
-    input_manager.add_binding(
-        KeyCode::vkcode(VirtualKeyCode::D), 
-        InputBinding::new("strafe", 1.0).activation_time(0.2)
-    );
-    input_manager.add_binding(
-        KeyCode::vkcode(VirtualKeyCode::Q), 
-        InputBinding::new("lift", -1.0).activation_time(0.2)
-    );
-    input_manager.add_binding(
-        KeyCode::vkcode(VirtualKeyCode::E), 
-        InputBinding::new("lift", 1.0).activation_time(0.2)
-    );
-
-    let mut static_events = Vec::new();
-    let mut last_frame_time = std::time::Instant::now();
-
-    const FILTER_FRAME_COUNT: usize = 10;
-    let mut dt_filter_queue = VecDeque::with_capacity(FILTER_FRAME_COUNT);
-
-    let mut frame_index: u32 = 0;
-    let mut persist_states = PersistStates::new();
-
-    #[cfg(feature = "gpu_ray_tracing")]
-    let mut use_reference_mode = false;
-
-    let mut running = true;
-    while running { // main loop start
-        // filter delta time to get a smooth dt for simulation and rendering
-        let dt = {
-            let now = std::time::Instant::now();
-            let delta = now - last_frame_time;
-            last_frame_time = now;
-
-            let delta_desc = delta.as_secs_f32();
-
-            if dt_filter_queue.len() >= FILTER_FRAME_COUNT {
-                dt_filter_queue.pop_front();
-            }
-            dt_filter_queue.push_back(delta_desc);
-
-            dt_filter_queue.iter().copied().sum::<f32>() / (dt_filter_queue.len() as f32)
-        };
-
-        // tick logic begin
-        let mut frame_constants = {
-            let old_persist_states = persist_states.clone();
-
-            // system messages
-            event_loop.run_return(|event, _, control_flow| {
-                control_flow.set_poll();
-        
-                match &event {
-                    Event::WindowEvent {
-                        event,
-                        ..
-                    } => match event {
-                        WindowEvent::KeyboardInput { 
-                            input,
-                            ..
-                        } => {
-                            if Some(VirtualKeyCode::Escape) == input.virtual_keycode && input.state == ElementState::Released {
-                                control_flow.set_exit();
-                                running = false;
-                            }
-                        }
-                        WindowEvent::CloseRequested => {
-                            control_flow.set_exit();
-                            running = false;
-                        }
-                        WindowEvent::Resized(physical_size) => {
-                            glog::trace!("Window resized (Physical): [{}, {}]", physical_size.width, physical_size.height);
-                        }
-                        _ => {}
-                    },
-                    Event::MainEventsCleared => {
-                        control_flow.set_exit();
-                    }
-                    _ => (),
-                }
-
-                static_events.extend(event.to_static());
-            });
-
-            input_manager.update(&static_events);
-            let input = input_manager.map(dt);
-            let mouse_delta = input_manager.mouse_pos_delta() * dt;
-
-            renderer.update_camera(
-                mouse_delta, input_manager.is_mouse_hold(MouseButton::LEFT), &input
+            let gun_xform = Affine3A::from_scale_rotation_translation(
+                Vec3::splat(0.05),
+                Quat::from_rotation_y(90_f32.to_radians()),
+                Vec3::splat(0.0)
             );
-            let cam_matrices = renderer.get_camera_render_data();
+            // let cornell_xform = Affine3A::from_scale_rotation_translation(
+            //     Vec3::splat(1.0),
+            //     Quat::IDENTITY,
+            //     Vec3::splat(0.0)
+            // );
 
-            persist_states.camera.position = renderer.get_camera_position();
-            persist_states.camera.rotation = renderer.get_camera_rotation();
+            let _instance = render_api.add_mesh_instance(mesh_handle, gun_xform);
 
-            #[cfg(feature = "gpu_ray_tracing")]
-            if input_manager.is_keyboard_just_pressed(VirtualKeyCode::T) {
-                use_reference_mode = !use_reference_mode;
+            let resolution = render_api.get_render_resolution();
+            let camera = camera::Camera::builder()
+                .aspect_ratio(resolution[0] as f32 / resolution[1] as f32)
+                .build();
+            let camera_controller = camera::controller::FirstPersonController::new(Vec3::new(0.0, 0.5, 5.0), Quat::IDENTITY);
 
-                if use_reference_mode {
-                    renderer.set_render_mode(RenderMode::GpuPathTracing);
-                } else {
-                    renderer.set_render_mode(RenderMode::Raster);
+            render_api.set_main_camera(camera, camera_controller);
+        }
+
+        {
+            let mut input_api = input_api.write();
+            input_api.add_binding(
+                KeyCode::vkcode(VirtualKeyCode::W), 
+                InputBinding::new("walk", 1.0).activation_time(0.2)
+            );
+            input_api.add_binding(
+                KeyCode::vkcode(VirtualKeyCode::S), 
+                InputBinding::new("walk", -1.0).activation_time(0.2)
+            );
+            input_api.add_binding(
+                KeyCode::vkcode(VirtualKeyCode::A), 
+                InputBinding::new("strafe", -1.0).activation_time(0.2)
+            );
+            input_api.add_binding(
+                KeyCode::vkcode(VirtualKeyCode::D), 
+                InputBinding::new("strafe", 1.0).activation_time(0.2)
+            );
+            input_api.add_binding(
+                KeyCode::vkcode(VirtualKeyCode::Q), 
+                InputBinding::new("lift", -1.0).activation_time(0.2)
+            );
+            input_api.add_binding(
+                KeyCode::vkcode(VirtualKeyCode::E), 
+                InputBinding::new("lift", 1.0).activation_time(0.2)
+            );
+            drop(input_api);
+        }
+
+        let mut static_events = Vec::new();
+        
+        let mut last_frame_time = std::time::Instant::now();
+        const FILTER_FRAME_COUNT: usize = 10;
+        let mut dt_filter_queue = VecDeque::with_capacity(FILTER_FRAME_COUNT);
+
+        //let mut frame_index: u32 = 0;
+        let mut persist_states = PersistStates::new();
+
+        #[cfg(feature = "gpu_ray_tracing")]
+        let mut use_reference_mode = false;
+
+        let mut running = true;
+        // main loop start
+        while running {
+            // filter delta time to get a smooth dt for simulation and rendering
+            let dt = {
+                let now = std::time::Instant::now();
+                let delta = now - last_frame_time;
+                last_frame_time = now;
+
+                let delta_desc = delta.as_secs_f32();
+
+                if dt_filter_queue.len() >= FILTER_FRAME_COUNT {
+                    dt_filter_queue.pop_front();
                 }
-            }
+                dt_filter_queue.push_back(delta_desc);
 
-            // user-side app tick
-            app.tick(dt);
-
-            static_events.clear();
-
-            if persist_states.is_states_changed(&old_persist_states) {
-                #[cfg(feature = "gpu_ray_tracing")]
-                renderer.reset_path_tracing_accumulation();
-            }
-
-            let mut light_constants: [LightFrameConstants; 10] = Default::default();
-            light_constants[0] = LightFrameConstants {
-                color: [1.0, 1.0, 1.0],
-                shadowed: 1, // true
-                direction: [-0.32803, 0.90599, 0.26749],
-                intensity: 1.0
+                dt_filter_queue.iter().copied().sum::<f32>() / (dt_filter_queue.len() as f32)
             };
 
-            FrameConstants {
-                cam_matrices,
-                light_constants,
+            // tick logic begin
+            let frame_constants = {
+                let old_persist_states = persist_states.clone();
 
-                frame_index,
-                // TODO: this should be delayed
-                pre_exposure_mult: 1.0,
-                pre_exposure_prev_frame_mult: 1.0,
-                pre_exposure_delta: 1.0,
-
-                // TODO: add scene, no hardcode here
-                directional_light_count: 1,
-                pad0: 0,
-                pad1: 0,
-                pad2: 0,
-            }
-        };
-        // tick render end
-        
-        // tick render begin
-        {
-            // prepare and compile render graph
-            let prepare_result = rg_executor.prepare(|rg| {
-                let main_img = renderer.prepare_rg(rg, dt);
-                let exposure_state = renderer.current_exposure_state();
-
-                frame_constants.pre_exposure_mult = exposure_state.pre_mult;
-                frame_constants.pre_exposure_prev_frame_mult = exposure_state.pre_mult_prev_frame;
-                frame_constants.pre_exposure_delta = exposure_state.pre_mult_delta;
-    
-                // copy final image to swapchain
-                let mut swapchain_img = rg.get_swapchain(resolution);
+                // collect system messages
                 {
-                    let mut pass = rg.add_pass("final blit");
-                    let pipeline = pass.register_compute_pipeline("image_blit.hlsl");
-                                    
-                    let main_img_ref = pass.read(&main_img, backend::AccessType::ComputeShaderReadSampledImageOrUniformTexelBuffer);
-                    let swapchain_img_ref = pass.write(&mut swapchain_img, backend::AccessType::ComputeShaderWrite);
-    
-                    pass.render(move |context| {
-                        // bind pipeline and descriptor set
-                        let bound_pipeline = context.bind_compute_pipeline(pipeline.into_bindings()
-                            .descriptor_set(0, &[
-                                main_img_ref.bind(), 
-                                swapchain_img_ref.bind()
-                            ])
-                        )?;
-    
-                        bound_pipeline.dispatch([resolution[0], resolution[1], 1]);
-    
-                        Ok(())
+                    let mut core_api = core::get().write();
+
+                    let event_loop = core_api.event_loop_mut();
+
+                    event_loop.run_return(|event, _, control_flow| {
+                        control_flow.set_poll();
+                
+                        match &event {
+                            Event::WindowEvent {
+                                event,
+                                ..
+                            } => match event {
+                                WindowEvent::KeyboardInput { 
+                                    input,
+                                    ..
+                                } => {
+                                    if Some(VirtualKeyCode::Escape) == input.virtual_keycode && input.state == ElementState::Released {
+                                        control_flow.set_exit();
+                                        running = false;
+                                    }
+                                }
+                                WindowEvent::CloseRequested => {
+                                    control_flow.set_exit();
+                                    running = false;
+                                }
+                                WindowEvent::Resized(physical_size) => {
+                                    glog::trace!("Window resized (Physical): [{}, {}]", physical_size.width, physical_size.height);
+                                }
+                                _ => {}
+                            },
+                            Event::MainEventsCleared => {
+                                control_flow.set_exit();
+                            }
+                            _ => (),
+                        }
+        
+                        static_events.extend(event.to_static());
                     });
                 }
-            });
-    
-            // draw
-            match prepare_result {
-                Ok(()) => {
-                    rg_executor.draw(
-                        &frame_constants,
-                        &mut rhi.swapchain
+
+                let cam_matrices = {
+                    let mut input_api = input_api.write();
+                    let mut render_api = render_api.write();
+
+                    input_api.update(&static_events);
+                    let input = input_api.map(dt);
+                    let mouse_delta = input_api.mouse_pos_delta() * dt;
+        
+                    // TODO: update this using event system
+                    render_api.update_camera(
+                        mouse_delta, input_api.is_mouse_button_hold(MouseButton::LEFT), &input
                     );
+                    let cam_matrices = render_api.get_camera_render_data();
+        
+                    persist_states.camera.position = render_api.get_camera_position();
+                    persist_states.camera.rotation = render_api.get_camera_rotation();
+        
+                    #[cfg(feature = "gpu_ray_tracing")]
+                    if input_api.is_keyboard_just_pressed(VirtualKeyCode::T) {
+                        use_reference_mode = !use_reference_mode;
+        
+                        if use_reference_mode {
+                            render_api.set_render_mode(RenderMode::GpuPathTracing);
+                        } else {
+                            render_api.set_render_mode(RenderMode::Raster);
+                        }
+                    }
 
-                    frame_index = frame_index.wrapping_add(1);
-                },
-                Err(err) => {
-                    panic!("Failed to prepare render graph with {:?}", err);
+                    cam_matrices
+                };
+
+                // user-side app tick
+                app.tick_logic(dt);
+
+                static_events.clear();
+
+                if persist_states.is_states_changed(&old_persist_states) {
+                    #[cfg(feature = "gpu_ray_tracing")]
+                    render_api.write().reset_path_tracing_accumulation();
                 }
-            }
-        } // tick render end
-    } // main loop end
 
-    glog::trace!("Exit main loop successfully!");
+                let mut light_constants: [LightFrameConstants; 10] = Default::default();
+                light_constants[0] = LightFrameConstants {
+                    color: [1.0, 1.0, 1.0],
+                    shadowed: 1, // true
+                    direction: [-0.32803, 0.90599, 0.26749],
+                    intensity: 1.0
+                };
+
+                FrameConstants {
+                    cam_matrices,
+                    light_constants,
+
+                    frame_index: render_api.read().current_frame_index(),
+                    // TODO: this should be delayed
+                    pre_exposure_mult: 1.0,
+                    pre_exposure_prev_frame_mult: 1.0,
+                    pre_exposure_delta: 1.0,
+
+                    // TODO: add scene, no hardcode here
+                    directional_light_count: 1,
+                    pad0: 0,
+                    pad1: 0,
+                    pad2: 0,
+                }
+            };
+            // tick render end
+            
+            // tick render begin
+            render_api.write().prepare_frame(dt);
+            render_api.write().draw_frame(frame_constants);
+            // tick render end
+        } // main loop end
+
+        glog::trace!("Exit main loop successfully!");
+    }
 }
 
 /// Shutdown raven engine.
-pub fn shutdown(engine_context: EngineContext<impl user::App>) {
-    let rhi = engine_context.rhi;
-    rhi.device.wait_idle();
+pub fn shutdown() {
+    unsafe {
+        if let Some(engine_ctx) = ENGINE_CONTEXT.take() {
+            let EngineContext {
+                core_api,
+                input_api,
+                render_api,
+    
+                asset_manager: _,
+    
+                mut app,
+            } = engine_ctx;
 
-    engine_context.app.shutdown();
-    engine_context.renderer.clean(&rhi);
-    engine_context.rg_executor.shutdown();
+            render_api.read().device_wait_idle();
+
+            app.shutdown();
+
+            render_api.shutdown();
+            input_api.shutdown();
+            core_api.shutdown();
+        }
+    }
+
     glog::trace!("Raven Engine shutdown.");
 }

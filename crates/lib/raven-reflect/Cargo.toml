@@ -6,6 +6,8 @@ edition = "2021"
 [dependencies]
 raven-reflect-derive = { path = "raven-reflect-derive" }
 
+raven-core = { path = "../../lib/raven-core" }
+
 syn = { version = "1.0" }
 
 anyhow = "1.0.0"  # error lib
