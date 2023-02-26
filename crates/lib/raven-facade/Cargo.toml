@@ -7,11 +7,13 @@ edition = "2021"
 default = [
     "default_core_api",
     "default_input_api",
-    "default_render_api"
+    "default_render_api",
+    "default_asset_api",
 ]
 
 default_core_api = []
 default_input_api = []
+default_asset_api = []
 default_render_api = ["default_core_api"]
 
 gpu_ray_tracing = [

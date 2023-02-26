@@ -34,7 +34,7 @@ pub mod thread {
 }
 
 pub mod asset {
-    pub use raven_asset::*;
+    pub use crate::api::asset_api::*;
 }
 
 pub mod scene {

@@ -5,7 +5,6 @@ use parking_lot::RwLock;
 use winit::{dpi::{LogicalSize, LogicalPosition}, window::WindowBuilder};
 use winit::{window::Window, event_loop::EventLoop};
 
-#[cfg(feature = "default_core_api")]
 #[non_exhaustive]
 pub struct CoreApiInner {
     event_loop: EventLoop<()>,

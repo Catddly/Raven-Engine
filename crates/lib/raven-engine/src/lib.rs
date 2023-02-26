@@ -3,7 +3,7 @@ extern crate log as glog;
 mod user;
 pub mod prelude;
 
-use std::{collections::VecDeque, sync::Arc};
+use std::{collections::VecDeque};
 
 use winit::{
     event::{WindowEvent, Event, ElementState, VirtualKeyCode},
@@ -11,10 +11,9 @@ use winit::{
 };
 
 use raven_facade::{log, input, render::{LightFrameConstants, FrameConstants}};
-use raven_facade::math::{Vec3, Quat, Affine3A};
-use raven_facade::asset::{AssetManager, AssetLoadDesc, asset_registry::AssetHandle};
-use raven_facade::scene::{camera::{self}, persistence::{PersistStates, IsStatesChanged}};
-use raven_facade::input::{InputApi, KeyCode, InputBinding, MouseButton};
+use raven_facade::asset::{self, AssetApi};
+use raven_facade::scene::{persistence::{PersistStates, IsStatesChanged}};
+use raven_facade::input::{InputApi, MouseButton};
 
 use raven_facade::core::{self, console, CoreApi};
 use raven_facade::filesystem::{self, ProjectFolder};
@@ -32,7 +31,7 @@ struct EngineContext {
     input_api: InputApi,
     render_api: RenderApi,
 
-    asset_manager: AssetManager,
+    asset_api: AssetApi,
 
     app: Box<dyn user::App>,
 }
@@ -64,10 +63,8 @@ pub fn init(app: Box<dyn user::App>) -> anyhow::Result<()> {
 
     let core_api = core::CoreApi::new();
     let input_api = input::InputApi::new();
+    let asset_api = asset::AssetApi::new();
     let render_api = render::RenderApi::new();
-
-    let mut app = app;
-    app.init()?;
 
     glog::trace!("Raven Engine initialized!");
     unsafe {
@@ -76,7 +73,7 @@ pub fn init(app: Box<dyn user::App>) -> anyhow::Result<()> {
             input_api,
             render_api,
     
-            asset_manager: AssetManager::new(),
+            asset_api,
     
             app,
         });
@@ -85,11 +82,16 @@ pub fn init(app: Box<dyn user::App>) -> anyhow::Result<()> {
             ctx.core_api.init();
             core::connect(&mut ctx.core_api);
 
+            ctx.asset_api.init();
+            asset::connect(&mut ctx.asset_api);
+
             ctx.input_api.init();
             input::connect(&mut ctx.input_api);
 
             ctx.render_api.init();
             render::connect(&mut ctx.render_api);
+
+            ctx.app.init()?;
         }
     }
 
@@ -104,78 +106,10 @@ pub fn main_loop() {
             input_api,
             render_api,
 
-            asset_manager,
+            asset_api: _,
 
             app,
         } = ENGINE_CONTEXT.as_mut().unwrap();
-
-        asset_manager.load_asset(AssetLoadDesc::load_mesh("mesh/cerberus_gun/scene.gltf")).unwrap();
-        //asset_manager.load_asset(AssetLoadDesc::load_mesh("mesh/cornell_box/scene.gltf")).unwrap();
-        asset_manager.load_asset(AssetLoadDesc::load_texture("texture/skybox/right.jpg")).unwrap();
-        asset_manager.load_asset(AssetLoadDesc::load_texture("texture/skybox/left.jpg")).unwrap();
-        asset_manager.load_asset(AssetLoadDesc::load_texture("texture/skybox/top.jpg")).unwrap();
-        asset_manager.load_asset(AssetLoadDesc::load_texture("texture/skybox/bottom.jpg")).unwrap();
-        asset_manager.load_asset(AssetLoadDesc::load_texture("texture/skybox/front.jpg")).unwrap();
-        asset_manager.load_asset(AssetLoadDesc::load_texture("texture/skybox/back.jpg")).unwrap();
-
-        let handles = asset_manager.dispatch_load_tasks().unwrap();
-        let tex_handles: &[Arc<AssetHandle>; 6] = handles.split_at(1).1.try_into().unwrap();
-
-        {
-            let mut render_api = render_api.write(); 
-            render_api.add_cubemap_split(tex_handles);
-            let mesh_handle = render_api.add_mesh(&handles[0]);
-
-            let gun_xform = Affine3A::from_scale_rotation_translation(
-                Vec3::splat(0.05),
-                Quat::from_rotation_y(90_f32.to_radians()),
-                Vec3::splat(0.0)
-            );
-            // let cornell_xform = Affine3A::from_scale_rotation_translation(
-            //     Vec3::splat(1.0),
-            //     Quat::IDENTITY,
-            //     Vec3::splat(0.0)
-            // );
-
-            let _instance = render_api.add_mesh_instance(mesh_handle, gun_xform);
-
-            let resolution = render_api.get_render_resolution();
-            let camera = camera::Camera::builder()
-                .aspect_ratio(resolution[0] as f32 / resolution[1] as f32)
-                .build();
-            let camera_controller = camera::controller::FirstPersonController::new(Vec3::new(0.0, 0.5, 5.0), Quat::IDENTITY);
-
-            render_api.set_main_camera(camera, camera_controller);
-        }
-
-        {
-            let mut input_api = input_api.write();
-            input_api.add_binding(
-                KeyCode::vkcode(VirtualKeyCode::W), 
-                InputBinding::new("walk", 1.0).activation_time(0.2)
-            );
-            input_api.add_binding(
-                KeyCode::vkcode(VirtualKeyCode::S), 
-                InputBinding::new("walk", -1.0).activation_time(0.2)
-            );
-            input_api.add_binding(
-                KeyCode::vkcode(VirtualKeyCode::A), 
-                InputBinding::new("strafe", -1.0).activation_time(0.2)
-            );
-            input_api.add_binding(
-                KeyCode::vkcode(VirtualKeyCode::D), 
-                InputBinding::new("strafe", 1.0).activation_time(0.2)
-            );
-            input_api.add_binding(
-                KeyCode::vkcode(VirtualKeyCode::Q), 
-                InputBinding::new("lift", -1.0).activation_time(0.2)
-            );
-            input_api.add_binding(
-                KeyCode::vkcode(VirtualKeyCode::E), 
-                InputBinding::new("lift", 1.0).activation_time(0.2)
-            );
-            drop(input_api);
-        }
 
         let mut static_events = Vec::new();
         
@@ -341,7 +275,7 @@ pub fn shutdown() {
                 input_api,
                 render_api,
     
-                asset_manager: _,
+                asset_api,
     
                 mut app,
             } = engine_ctx;
@@ -352,6 +286,7 @@ pub fn shutdown() {
 
             render_api.shutdown();
             input_api.shutdown();
+            asset_api.shutdown();
             core_api.shutdown();
         }
     }

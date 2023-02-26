@@ -11,6 +11,16 @@ pub mod core {
     };
 }
 
+// asset module
+pub mod asset {
+    pub use crate::asset::{
+        AssetApi,
+        AssetLoadDesc, AssetHandle,
+        AssetType, AsConcreteRawAsset, AsConcreteAsset,
+        get,
+    };
+}
+
 // input module
 pub mod input {
     pub use crate::input::{
@@ -27,5 +37,19 @@ pub mod render {
         LightFrameConstants, FrameConstants,
         MeshHandle, MeshInstanceHandle, RgHandle,
         get,
+    };
+}
+
+// math module
+pub mod math {
+    pub use raven_facade::math::{
+        *
+    };
+}
+
+// scene
+pub mod scene {
+    pub use raven_facade::scene::{
+        camera
     };
 }
